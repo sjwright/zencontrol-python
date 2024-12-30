@@ -1,0 +1,21 @@
+homeassistant:
+  discovery_prefix: homeassistant
+
+mqtt:
+  host: 10.0.0.0
+  port: 1883
+  user: mqttuser
+  password: mqttpassword
+  keepalive: 60
+
+zencontrol:
+  - name: zen1
+    label: Zencontrol 1
+    mac: 00:00:00:00:00:01
+    host: 10.0.0.1
+    port: 5108
+  - name: zen2
+    label: Zencontrol 2
+    mac: 00:00:00:00:00:02
+    host: 10.0.0.2
+    port: 5108
