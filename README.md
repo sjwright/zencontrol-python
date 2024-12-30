@@ -1,12 +1,10 @@
 # py-zencontrol
 
-This is an implementation of the Zencontrol TPI Advanced protocol in python. At this stage is has only been exposed to extremely basic testing with one zc-controller-pro sitting on one bench, connected to one light and one wall switch. It could also work for you, but I promise nothing.
+This is an implementation of the **Zencontrol TPI Advanced** protocol written in python. This implememtation has only been exposed to extremely basic testing with one zc-controller-pro sitting on one bench, connected to one light and one wall switch. It could also work for you, but I promise nothing.
 
-Right now the API is mostly 1:1 with Zencontrol documentation but I'll probably end up changing stuff to make it more consistent. Expect method names to change. Expect tuples to be replaced with dicts, or dicts to be replaced with tuples. Assume nothing.
+Right now this is mostly 1:1 with Zencontrol documentation. However I may end up changing stuff to make it more consistent, or to accept/return data in a more usefully structured way. Expect tuples to be replaced with dicts, or dicts to be replaced with tuples. Expect change. Assume nothing.
 
-No "real" code has been developed yet using this implementation.
-
-Supported:
+Nominally supported:
 
 * Most documented commands
 * Multicast UDP event packets
@@ -18,21 +16,35 @@ Not yet supported:
 * Unicast UDP event packets
 * Event filters
 
-Support not planned:
+No support planned:
 
-* Any commands involving DMX, Control4, or virtual instances
-* Commands described in the documentation as "legacy"
+* Any commands involving DMX, Control4, or virtual instances (I don't have licenses for any of these, nor a use case)
+* Any commands described in the documentation as "legacy" (though they'd be extremely trivial to add if someone had a use case)
 
-## TPI errata
+## Use cases
 
-The following TPI Advanced commands are not working as documented:
+In order to test the code, I have started writing an MQTT bridge to Home Assistant, which can be run by editing **config.yaml** to suit your environment, setting up a vdev, calling pip install -r requirements.txt, and running **mqtt.py** within the vdev. (Note: this is bog standard stuff for anyone familiar with python, but a labyrinth of confusion for everyone else.)
 
-* QUERY_DALI_COLOUR — This command is supposed to be able to return a light's current colour temperature, but right now it doesn't.
+## TPI Advanced errata
 
-## TPI wishlist
+The following TPI Advanced commands currently don't work as documented:
 
-The following is not possible with the current TPI Advanced
+* QUERY_DALI_COLOUR — This command is supposed to be able to return a light's current colour temperature, but it does not. The documentation (page 52) says it can report back with TC colour type.
 
-* Fetching the colour temperature setting defined for a scene (per the "colour scene assignment" section of Zen cloud)
-* Event notification when a system variables changes
-* Event notification for motion/light sensor lux level changes
+The following TPI Advanced events are not firing:
+
+* COLOUR_CHANGE_EVENT — This event is supposed to fire when a light's colour temperature changes, but it does not. The documentation (page 105) even provideds a sample response with a colour type of 0x20 ("Colour Mode TC") and a Kelvin value as two bytes.
+
+## TPI Advanced documentation errata
+
+* On page 30, *TPI Event Multicast Frame* is incorrect. It shows 3 bytes for Target instead of 2, and then all subsequent bytes are off-by-one.
+
+* On pages 32 and 79, group IDs are said to be integers between 64–80, which is 17 groups, not 16. Page 79 says address 81 is for broadcast, which is either wrong or inconsistent.
+
+## TPI Advanced wishlist
+
+The following is not yet possible with the current TPI Advanced:
+
+* Fetching scene colour temperatures (as entered in the "colour scene assignment" section of the cloud grid view)
+* Event notification when a system variables changes (this is supported and works in their MQTT integration)
+* Event notification for ambient light sensor values
