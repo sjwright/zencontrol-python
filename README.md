@@ -23,7 +23,15 @@ No support planned:
 
 ## Use cases
 
-In order to test the code, I have started writing an MQTT bridge to Home Assistant, which can be run by editing **config.yaml** to suit your environment, setting up a vdev, calling pip install -r requirements.txt, and running **mqtt.py** within the vdev. (Note: this is bog standard stuff for anyone familiar with python, but a labyrinth of confusion for everyone else.)
+In order to test the code, I have started writing an MQTT bridge to Home Assistant, which can be run by editing **config.yaml** to suit your environment, setting up a vdev, calling pip install -r requirements.txt, and running **mqtt.py** within the vdev.
+
+```
+git clone <repo>
+cd <repo>
+python3 -m venv .
+source ./.venv/bin/activate
+pip3 install -r requirements.txt
+```
 
 ## TPI Advanced errata
 
