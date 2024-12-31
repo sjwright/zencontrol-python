@@ -37,9 +37,13 @@ The following TPI Advanced events are not firing:
 
 ## TPI Advanced documentation errata
 
+* The TPI Advanced API document includes the MQTT API Documentation.
 * On page 30, *TPI Event Multicast Frame* is incorrect. It shows 3 bytes for Target instead of 2, and then all subsequent bytes are off-by-one.
-
-* On pages 32 and 79, group IDs are said to be integers between 64–80, which is 17 groups, not 16. Page 79 says address 81 is for broadcast, which is either wrong or inconsistent.
+* On page 32, ECDs are said to be integers between 64–128, but it should be 64–127.
+* On pages 32 and 79, groups are said to be integers between 64–80, but it should be 64–79.
+* On page 79, address 81 is said to be for broadcast, which is either wrong or inconsistent.
+* On page 36, the TPI Event Types table uses inconsistent event labels.
+* On page 36, some listed TPI Event Types are not documented.
 
 ## TPI Advanced wishlist
 
@@ -47,4 +51,5 @@ The following is not yet possible with the current TPI Advanced:
 
 * Fetching scene colour temperatures (as entered in the "colour scene assignment" section of the cloud grid view)
 * Event notification when a system variables changes (this is supported and works in their MQTT integration)
-* Event notification for ambient light sensor values
+* Event notification for ambient light sensor lux values
+* Event notification for IS_UNOCCUPIED (Not tested, but documentation says "Not currently used".)
