@@ -165,7 +165,7 @@ class ZenProtocol:
         
         # Command socket for sending/receiving direct commands
         self.command_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.command_socket.settimeout(1.0)
+        self.command_socket.settimeout(0.5)
         
         # Event monitoring setup
         self.event_socket = None
@@ -228,6 +228,8 @@ class ZenProtocol:
             raise ValueError("data must be 0-3 bytes")
         data = data + [0x00] * (3 - len(data))  # Pad data to 3 bytes
         response_data, response_code = self.send_packet(controller, command, [address] + data, control)
+        if response_data is None or response_code is None:
+            return None
         match response_code:
             case 0xA0: # OK
                 match return_type:
@@ -368,7 +370,7 @@ class ZenProtocol:
         while self._send_lock:
             if time.time() - start_time > 1.0:
                 print("Timeout waiting for lock")
-                return None
+                return None, None
             time.sleep(0.01)
             
         self._send_lock = True
@@ -383,7 +385,6 @@ class ZenProtocol:
             complete_packet = bytes(packet + [checksum])
             
             try:
-                self.command_socket.settimeout(2.0)  # Set 2 second timeout
                 self.command_socket.sendto(complete_packet, (controller.host, controller.port))
                 response, addr = self.command_socket.recvfrom(1024)
                 
@@ -397,7 +398,7 @@ class ZenProtocol:
                 # Verify response format and sequence counter
                 if len(response) < 4:  # Minimum valid response is 4 bytes
                     print("Response too short")
-                    return None
+                    return None, None
                     
                 response_type = response[0]
                 sequence = response[1]
@@ -406,13 +407,13 @@ class ZenProtocol:
                 # Verify sequence counter matches
                 if sequence != self._sequence_counter:
                     print("Response sequence counter mismatch")
-                    return None
+                    return None, None
                     
                 # Verify total packet length matches data_length
                 expected_length = 4 + data_length  # type + seq + len + data + checksum
                 if len(response) != expected_length:
                     print(f"Invalid response length. Expected {expected_length}, got {len(response)}")
-                    return None
+                    return None, None
                 
                 # Return data bytes if present, otherwise None
                 if data_length > 0:
@@ -420,10 +421,10 @@ class ZenProtocol:
                 return None, response_type
             except socket.timeout:
                 print("No response received in time")
-                return None
+                return None, None
             except Exception as e:
                 print(f"Error sending command: {e}")
-                return None
+                return None, None
                 
         finally:
             # Always release lock when done
