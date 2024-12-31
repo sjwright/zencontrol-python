@@ -1,4 +1,4 @@
-# py-zencontrol
+# zencontrol-python
 
 This is an implementation of the **Zencontrol TPI Advanced** protocol written in python. This implememtation has only been exposed to extremely basic testing with one zc-controller-pro sitting on one bench, connected to one light and one wall switch. It could also work for you, but I promise nothing.
 
