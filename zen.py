@@ -1,6 +1,7 @@
 import socket
 import struct
 import time
+import logging
 from typing import Optional, Tuple, List, Union, Dict
 from threading import Thread, Event
 from colorama import Fore, Back, Style
@@ -158,11 +159,18 @@ class ZenProtocol:
         0x80: "DALI_STATUS_POWER_FAILURE"           # Power failure has occurred
     }
 
-    def __init__(self, controllers: List[ZenController], multicast_group: str = "239.255.90.67", multicast_port: int = 6969):
-        self.controllers = controllers # List of controllers, used to match events to controllers and return controller object with callbacks
+    def __init__(self, controllers: List[ZenController], logger: logging.Logger=None, narration: bool = True, multicast_group: str = "239.255.90.67", multicast_port: int = 6969):
+        self.controllers = controllers # List of controllers, used to match events to controllers and to include controller object in callbacks
+        self.logger = logger
+        self.narration = narration
         self.multicast_group = multicast_group
         self.multicast_port = multicast_port
         
+        # Setup logging if none provided
+        if not self.logger:
+            self.logger = logging.getLogger('ZenProtocol')
+            self.logger.setLevel(logging.INFO)
+
         # Command socket for sending/receiving direct commands
         self.command_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.command_socket.settimeout(0.5)
@@ -251,7 +259,7 @@ class ZenProtocol:
                     case 'bool':
                         if response_data and len(response_data) == 1: return bool(response_data[0])
                     case 'ok':
-                        raise ValueError(f"type 'ok' should not return a value")
+                        raise ValueError(f"Type 'ok' should not return a value")
                     case _:
                         raise ValueError(f"Invalid return_type: {return_type}")
             case 0xA2: # NO_ANSWER
@@ -262,11 +270,11 @@ class ZenProtocol:
                 if response_data:
                     error_code = response_data[0]
                     error_label = self.ERROR_CODES.get(error_code, f"UNKNOWN_ERROR_CODE_{hex(error_code)}")
-                    print(f"Command error code: {error_label}")
+                    if self.narration: print(f"Command error code: {error_label}")
                 else:
-                    print("Command error (no error code)")
+                    if self.narration: print("Command error (no error code)")
             case _:
-                print(f"Unknown response code: {response_code}")
+                if self.narration: print(f"Unknown response code: {response_code}")
         return None
         
     def send_colour(self,
@@ -304,18 +312,18 @@ class ZenProtocol:
                 pass  # Answer is in data bytes
             case 0xA2: # NO_ANSWER
                 if response_data > 0:
-                    print(f"No answer with code: {response_data}")
+                    if self.narration: print(f"No answer with code: {response_data}")
                 return None
             case 0xA3: # ERROR
                 if response_data:
                     error_code = response_data[0]
                     error_label = self.ERROR_CODES.get(error_code, f"UNKNOWN_ERROR_CODE_{hex(error_code)}")
-                    print(f"Command error code: {error_label}")
+                    if self.narration: print(f"Command error code: {error_label}")
                 else:
-                    print("Command error (no error code)")
+                    if self.narration: print("Command error (no error code)")
                 return None
             case _:
-                print(f"Unknown response type: {response_code}")
+                if self.narration: print(f"Unknown response type: {response_code}")
                 return None
         if response_data:
             return response_data
@@ -338,18 +346,18 @@ class ZenProtocol:
                 pass  # Answer is in data bytes
             case 0xA2: # NO_ANSWER
                 if response_data > 0:
-                    print(f"No answer with code: {response_data}")
+                    if self.narration: print(f"No answer with code: {response_data}")
                 return None
             case 0xA3: # ERROR
                 if response_data:
                     error_code = response_data[0]
                     error_label = self.ERROR_CODES.get(error_code, f"UNKNOWN_ERROR_CODE_{hex(error_code)}")
-                    print(f"Command error code: {error_label}")
+                    if self.narration: print(f"Command error code: {error_label}")
                 else:
-                    print("Command error (no error code)")
+                    if self.narration: print("Command error (no error code)")
                 return None
             case _:
-                print(f"Unknown response type: {response_code}")
+                if self.narration: print(f"Unknown response type: {response_code}")
                 return None
         if response_data:
             return response_data
@@ -369,7 +377,7 @@ class ZenProtocol:
         start_time = time.time()
         while self._send_lock:
             if time.time() - start_time > 1.0:
-                print("Timeout waiting for lock")
+                if self.narration: print("Timeout waiting for lock")
                 return None, None
             time.sleep(0.01)
             
@@ -385,19 +393,17 @@ class ZenProtocol:
             complete_packet = bytes(packet + [checksum])
             
             try:
+                self.logger.debug(f"UDP packet sent to {controller.host}:{controller.port}: [{', '.join(f'0x{b:02x}' for b in complete_packet)}]")
                 self.command_socket.sendto(complete_packet, (controller.host, controller.port))
                 response, addr = self.command_socket.recvfrom(1024)
                 
-                if hasattr(self, 'debug') and self.debug:
-                    print(Fore.MAGENTA
-                          + f"    SEND: [{', '.join(f'0x{b:02x}' for b in complete_packet)}]"
-                          + Fore.CYAN
-                          + f"     RECV: [{', '.join(f'0x{b:02x}' for b in response)}]"
-                          + Style.RESET_ALL)
+                self.logger.debug(f"UDP response: [{', '.join(f'0x{b:02x}' for b in response)}]")
+                if self.narration: print(Fore.MAGENTA + f"    SEND: [{', '.join(f'0x{b:02x}' for b in complete_packet)}]" + Fore.CYAN + f"     RECV: [{', '.join(f'0x{b:02x}' for b in response)}]" + Style.RESET_ALL)
 
                 # Verify response format and sequence counter
                 if len(response) < 4:  # Minimum valid response is 4 bytes
-                    print("Response too short")
+                    self.logger.debug(f"UDP response too short (len={len(response)})")
+                    if self.narration: print(f"UDP response too short (len={len(response)})")
                     return None, None
                     
                 response_type = response[0]
@@ -406,13 +412,15 @@ class ZenProtocol:
                 
                 # Verify sequence counter matches
                 if sequence != self._sequence_counter:
-                    print("Response sequence counter mismatch")
+                    self.logger.debug(f"UDP response sequence counter mismatch (expected {self._sequence_counter}, got {sequence})")
+                    if self.narration: print(f"UDP response sequence counter mismatch (expected {self._sequence_counter}, got {sequence})")
                     return None, None
                     
                 # Verify total packet length matches data_length
                 expected_length = 4 + data_length  # type + seq + len + data + checksum
                 if len(response) != expected_length:
-                    print(f"Invalid response length. Expected {expected_length}, got {len(response)}")
+                    self.logger.debug(f"UDP response length mismatch (expected {expected_length}, got {len(response)})")
+                    if self.narration: print(f"UDP response length mismatch (expected {expected_length}, got {len(response)})")
                     return None, None
                 
                 # Return data bytes if present, otherwise None
@@ -420,10 +428,12 @@ class ZenProtocol:
                     return response[3:3+data_length], response_type
                 return None, response_type
             except socket.timeout:
-                print("No response received in time")
+                self.logger.debug(f"UDP packet response not received in time")
+                if self.narration: print("UDP packet response not received in time")
                 return None, None
             except Exception as e:
-                print(f"Error sending command: {e}")
+                self.logger.debug(f"UDP packet error sending command: {e}")
+                if self.narration: print(f"UDP packet error sending command: {e}")
                 return None, None
                 
         finally:
@@ -449,7 +459,7 @@ class ZenProtocol:
 
         # Check if event monitoring is already running
         if self.event_thread and self.event_thread.is_alive():
-            print("Event monitoring already running")
+            if self.narration: print("Event monitoring already running")
             return
             
         # Setup event listeners
@@ -497,16 +507,13 @@ class ZenProtocol:
             while not self.stop_event.is_set():
                 data, ip_address = self.event_socket.recvfrom(1024)
                 
-                if hasattr(self, 'debug') and self.debug:
-                    print(Fore.MAGENTA
-                          + f"    MULTICAST FROM: {ip_address}"
-                          + Fore.CYAN
-                          + f"     RECV: [{', '.join(f'0x{b:02x}' for b in data)}]"
-                          + Style.RESET_ALL)
+                self.logger.debug(f"Received multicast from {ip_address}: [{', '.join(f'0x{b:02x}' for b in data)}]")
+                if self.narration: print(Fore.MAGENTA + f"    MULTICAST FROM: {ip_address}" + Fore.CYAN + f"     RECV: [{', '.join(f'0x{b:02x}' for b in data)}]" + Style.RESET_ALL)
                 
                 # Drop packet if it doesn't match the expected structure
                 if len(data) < 2 or data[0:2] != bytes([0x5a, 0x43]):
-                    print(f"Received multicast invalid packet: {ip_address} - {', '.join(f'0x{b:02x}' for b in data)}")
+                    self.logger.debug(f"Received multicast invalid packet: {ip_address} - {', '.join(f'0x{b:02x}' for b in data)}")
+                    if self.narration: print(f"Received multicast invalid packet: {ip_address} - {', '.join(f'0x{b:02x}' for b in data)}")
                     continue
 
                 # Extract packet fields
@@ -519,29 +526,29 @@ class ZenProtocol:
                 payload = data[12:-1]
                 received_checksum = data[-1]
 
-                if hasattr(self, 'debug') and self.debug:
-                    print(Fore.CYAN
-                          + Style.DIM
-                          + f"         IP: {ip_address} - MAC: {mac_address} - EVENT: {event_name} - TARGET: {target} - PAYLOAD: {payload}" + Style.RESET_ALL)
+                self.logger.debug(f" ... IP: {ip_address} - MAC: {mac_address} - EVENT: {event_name} - TARGET: {target} - PAYLOAD: {payload}")
+                if self.narration: print(Fore.CYAN + Style.DIM + f"         IP: {ip_address} - MAC: {mac_address} - EVENT: {event_name} - TARGET: {target} - PAYLOAD: {payload}" + Style.RESET_ALL)
                 
                 # Find controller where macbytes matches mac_address
                 controller = next((c for c in self.controllers if c.mac_bytes == macbytes), None)
 
                 # If no controller found, skip event
                 if not controller:
-                    print(f"Received multicast from unknown controller: {ip_address} - {', '.join(f'0x{b:02x}' for b in data)}")
+                    self.logger.debug(f"Multicast packet is from unknown controller")
+                    if self.narration: print(f"Multicast packet is from unknown controller")
                     continue
 
                 # Verify data length
                 if len(payload) != payload_len:
-                    print(f"Invalid multicast payload length: {len(payload)} != {payload_len}")
+                    self.logger.debug(f"Multicast packet has invalid payload length: {len(payload)} != {payload_len}")
+                    if self.narration: print(f"Multicast packet has invalid payload length: {len(payload)} != {payload_len}")
                     continue
                 
                 # Verify checksum
                 calculated_checksum = self.calculate_checksum(list(data[:-1]))
                 if received_checksum != calculated_checksum:
-                    # Drop packet if checksum is invalid
-                    print(f"Invalid multicast checksum: {calculated_checksum} != {received_checksum}")
+                    self.logger.debug(f"Multicast packet has invalid checksum: {calculated_checksum} != {received_checksum}")
+                    if self.narration: print(f"Multicast packet has invalid checksum: {calculated_checksum} != {received_checksum}")
                     continue
                 
                 # Create event data dictionary with core data
@@ -615,7 +622,7 @@ class ZenProtocol:
                             self.profile_changed_callback(controller=controller, profile=payload_int, event_data=event_data)
                 
         except Exception as e:
-            print(f"Event listener error: {e}")
+            if self.narration: print(f"Event listener error: {e}")
         finally:
             if self.event_socket:
                 self.event_socket.close()

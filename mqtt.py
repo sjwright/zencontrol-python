@@ -60,26 +60,10 @@ class ZenMQTTBridge:
         
         # Setup logging
         self.setup_logging()
+        self.logger.setLevel(logging.DEBUG)
+        self.logger.info("==================================== Starting ZenMQTTBridge ====================================")
         
         # Load configuration
-        self._load_config(config_path)
-        
-        # Initialize controller
-        self._setup_controller()
-        
-        # Initialize MQTT
-        self._setup_mqtt()
-
-    def _load_config(self, config_path: str) -> None:
-        """Load and validate configuration from YAML file.
-        
-        Args:
-            config_path: Path to YAML configuration file
-            
-        Raises:
-            ValueError: If required configuration sections are missing
-            yaml.YAMLError: If YAML parsing fails
-        """
         try:
             with open(config_path) as f:
                 self.config = yaml.safe_load(f)
@@ -100,19 +84,16 @@ class ZenMQTTBridge:
         except Exception as e:
             self.logger.error(f"Failed to load config file: {e}")
             raise
-
-    def _setup_controller(self) -> None:
-        """Initialize Zen controller and protocol."""
+        
+        # Initialize controller
         try:
             self.ctrl = ZenController(**self.config['zencontrol'][0])
-            self.tpi = ZenProtocol(controllers=[self.ctrl])
-            self.tpi.debug = True
+            self.tpi = ZenProtocol(controllers=[self.ctrl], logger=self.logger, narration=True)
         except Exception as e:
-            self.logger.error(f"Failed to initialize controller: {e}")
+            self.logger.error(f"Failed to initialize ZenProtocol: {e}")
             raise
-
-    def _setup_mqtt(self) -> None:
-        """Initialize MQTT client and connection."""
+        
+        # Initialize MQTT
         try:
             self.mqttc = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
             self.mqttc.on_connect = self._on_mqtt_connect
@@ -133,7 +114,7 @@ class ZenMQTTBridge:
         """Handle MQTT disconnection events."""
         self.logger.warning(f"Disconnected from MQTT broker with code: {rc}")
         if rc != 0:
-            self.logger.info("Attempting to reconnect...")
+            self.logger.info("Attempting to reconnect to MQTT broker")
 
     def setup_logging(self) -> None:
         """Configure logging with both file and console handlers."""
@@ -146,17 +127,15 @@ class ZenMQTTBridge:
             maxBytes=Constants.LOG_MAX_BYTES,
             backupCount=Constants.LOG_BACKUP_COUNT
         )
-        file_handler.setFormatter(logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        ))
+        file_handler.setFormatter(logging.Formatter(fmt="%(asctime)s\t%(levelname)s\t%(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
         self.logger.addHandler(file_handler)
 
         # Console handler
-        console_handler = logging.StreamHandler()
-        console_handler.setFormatter(logging.Formatter(
-            '%(levelname)s: %(message)s'
-        ))
-        self.logger.addHandler(console_handler)
+        # console_handler = logging.StreamHandler()
+        # console_handler.setFormatter(logging.Formatter(
+        #     '%(levelname)s: %(message)s'
+        # ))
+        # self.logger.addHandler(console_handler)
 
     def _on_mqtt_connect(self, client: mqtt.Client, userdata: Any, flags: Dict, 
                         reason_code: int, properties: Any) -> None:
@@ -237,7 +216,6 @@ class ZenMQTTBridge:
                 self.logger.info(f"Turning on gear {gear}")
                 self.tpi.dali_go_to_last_active_level(controller=self.ctrl, gear=gear)
                 
-
     # ================================
     # SEND TO HOME ASSISTANT
     # ================================
@@ -407,7 +385,6 @@ class ZenMQTTBridge:
         X = round(Constants.LOG_A + Constants.LOG_B * math.log(value))
         print(f"brightness_to_arc({value}) = {X}")
         return X
-
     
     # ================================
     # MAIN LOOP
