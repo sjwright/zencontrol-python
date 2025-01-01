@@ -228,7 +228,7 @@ class ZenProtocol:
             raise ValueError("data must be 0-3 bytes")
         data = data + [0x00] * (3 - len(data))  # Pad data to 3 bytes
         response_data, response_code = self.send_packet(controller, command, [address] + data, control)
-        if response_data is None or response_code is None:
+        if response_data is None and response_code is None:
             return None
         match response_code:
             case 0xA0: # OK
@@ -905,18 +905,18 @@ class ZenProtocol:
             for i in range(0, len(response), 4):
                 if i + 3 < len(response):
                     instance_num = response[i]
-                    instance_type = self.INSTANCE_TYPE.get(response[i+1], "UNKNOWN")
-                    status_bits = response[i+2]
-                    state_bits = response[i+3]
-                    is_selected = bool(state_bits & 0x01)
-                    is_disabled = bool(state_bits & 0x02)
-                    no_targets = bool(state_bits & 0x04)
-                    is_soft_disabled = bool(state_bits & 0x08)
-                    has_sysvar_targets = bool(state_bits & 0x10)
-                    has_db_ops = bool(state_bits & 0x20)
+                    instance_type = response[i+1] # self.INSTANCE_TYPE.get(response[i+1], "UNKNOWN")
+                    status_bits = response[i+2] # probably junk, see page 35
+                    state_bits = response[i+3] # likely junk, see page 34
                     instances.append((instance_num, instance_type, status_bits, state_bits))
             return instances
         return None
+                    # is_selected = bool(state_bits & 0x01)
+                    # is_disabled = bool(state_bits & 0x02)
+                    # no_targets = bool(state_bits & 0x04)
+                    # is_soft_disabled = bool(state_bits & 0x08)
+                    # has_sysvar_targets = bool(state_bits & 0x10)
+                    # has_db_ops = bool(state_bits & 0x20)
 
     def query_operating_mode_by_address(self, controller: ZenController, address: Optional[int]=None, gear: Optional[int]=None, ecd: Optional[int]=None) -> Optional[int]:
         """Query the operating mode for a DALI device at the given address.
