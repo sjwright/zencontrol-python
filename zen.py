@@ -18,6 +18,14 @@ class ZenController:
     def __post_init__(self):
         self.mac_bytes = bytes.fromhex(self.mac.replace(':', ''))
 
+@dataclass
+class ZenInstance:
+    address: int
+    number: int
+    type: int
+    active: bool
+    error: bool
+
 class ZenProtocol:
 
     # Define commands as a class dictionary
@@ -157,6 +165,14 @@ class ZenProtocol:
         0x20: "DALI_STATUS_RESET",                  # Device has been reset
         0x40: "DALI_STATUS_MISSING_SHORT_ADDRESS",  # Device hasn't been assigned a short-address
         0x80: "DALI_STATUS_POWER_FAILURE"           # Power failure has occurred
+    }
+
+    INSTANCE_TYPE = {
+        0x01: "PUSH_BUTTON",            # Push button - generates short/long press events
+        0x02: "ABSOLUTE_INPUT",         # Absolute input (slider/dial) - generates integer values
+        0x03: "OCCUPANCY_SENSOR",       # Occupancy/motion sensor - generates occupied/unoccupied events
+        0x04: "LIGHT_SENSOR",           # Light sensor - events not currently forwarded
+        0x06: "GENERAL_PURPOSE_SENSOR"  # General sensor (water flow, power etc) - events not currently forwarded
     }
 
     def __init__(self, controllers: List[ZenController], logger: logging.Logger=None, narration: bool = True, multicast_group: str = "239.255.90.67", multicast_port: int = 6969):
@@ -648,7 +664,7 @@ class ZenProtocol:
         address = self.valid_dali_address(group=group)
         return self.send_basic(controller, self.CMD["QUERY_GROUP_LABEL"], address, return_type='str')
     
-    def query_dali_device_label(self, controller: ZenController, address: Optional[int]=None, gear: Optional[int]=None, ecd: Optional[int]=None) -> Optional[str]:
+    def query_dali_device_label(self, controller: ZenController, generic_if_none: bool=False, address: Optional[int]=None, gear: Optional[int]=None, ecd: Optional[int]=None) -> Optional[str]:
         """Query the label for a DALI device (control gear or control device).
         
         Args:
@@ -662,7 +678,10 @@ class ZenProtocol:
             or if the query fails
         """
         address = self.valid_dali_address(address=address, gear=gear, ecd=ecd)
-        return self.send_basic(controller, self.CMD["QUERY_DALI_DEVICE_LABEL"], address, return_type='str')
+        label = self.send_basic(controller, self.CMD["QUERY_DALI_DEVICE_LABEL"], address, return_type='str')
+        if label is None and generic_if_none:
+            label = f"{controller.label} ECD {address}"
+        return label
         
     def query_profile_label(self, controller: ZenController, profile: int) -> Optional[str]:
         """Get the label for a Profile given a Profile number.
@@ -852,12 +871,12 @@ class ZenProtocol:
             return profile_numbers
         return None
 
-    def query_occupancy_instance_timers(self, controller: ZenController, instance: int, ecd: Optional[int]=None) -> Optional[Tuple[int, int, int, int]]:
+    def query_occupancy_instance_timers(self, controller: ZenController, instance: int|ZenInstance, ecd: Optional[int]=None) -> Optional[Tuple[int, int, int, int]]:
         """Query timer values for a DALI occupancy sensor instance.
         
         Args:
             controller: ZenController instance
-            instance: Instance number of the occupancy sensor (0-31)
+            instance: ZenInstance or Instance number of the occupancy sensor (0-31)
             ecd: DALI ECD address (0-63)
             
         Returns:
@@ -870,7 +889,9 @@ class ZenProtocol:
             Returns None if query fails
         """
         address = self.valid_dali_address(ecd=ecd)
-        response = self.send_basic(controller, self.CMD["QUERY_OCCUPANCY_INSTANCE_TIMERS"], address, [0x00, 0x00, instance])
+        instance_number = instance.number if isinstance(instance, ZenInstance) else instance
+        if not 0 <= instance_number <= 31: raise ValueError("Instance number must be between 0 and 31")
+        response = self.send_basic(controller, self.CMD["QUERY_OCCUPANCY_INSTANCE_TIMERS"], address, [0x00, 0x00, instance_number])
         if response and len(response) >= 5:
             deadtime = response[0]
             hold = response[1] 
@@ -878,15 +899,6 @@ class ZenProtocol:
             last_detect = response[4]  # Only using low byte since high byte is never populated
             return (deadtime, hold, report, last_detect)
         return None
-
-
-    INSTANCE_TYPE = {
-        0x01: "PUSH_BUTTON",            # Push button - generates short/long press events
-        0x02: "ABSOLUTE_INPUT",         # Absolute input (slider/dial) - generates integer values
-        0x03: "OCCUPANCY_SENSOR",       # Occupancy/motion sensor - generates occupied/unoccupied events
-        0x04: "LIGHT_SENSOR",           # Light sensor - events not currently forwarded
-        0x06: "GENERAL_PURPOSE_SENSOR"  # General sensor (water flow, power etc) - events not currently forwarded
-    }
 
     def query_instances_by_address(self, controller: ZenController, ecd: int) -> Optional[List[Tuple[int, int, int, int]]]:
         """Query instances associated with a DALI address.
@@ -911,19 +923,15 @@ class ZenProtocol:
             # Process groups of 4 bytes for each instance
             for i in range(0, len(response), 4):
                 if i + 3 < len(response):
-                    instance_num = response[i]
-                    instance_type = response[i+1] # self.INSTANCE_TYPE.get(response[i+1], "UNKNOWN")
-                    status_bits = response[i+2] # probably junk, see page 35
-                    state_bits = response[i+3] # likely junk, see page 34
-                    instances.append((instance_num, instance_type, status_bits, state_bits))
+                    instances.append(ZenInstance(
+                        address=address-64, # Converted to 64-127 range above, return to 0-63 range here
+                        number=response[i], # first byte
+                        type=response[i+1], # second byte
+                        active=bool(response[i+2] & 0x02), # third byte, second bit
+                        error=bool(response[i+2] & 0x01), # third byte, first bit
+                    ))
             return instances
         return None
-                    # is_selected = bool(state_bits & 0x01)
-                    # is_disabled = bool(state_bits & 0x02)
-                    # no_targets = bool(state_bits & 0x04)
-                    # is_soft_disabled = bool(state_bits & 0x08)
-                    # has_sysvar_targets = bool(state_bits & 0x10)
-                    # has_db_ops = bool(state_bits & 0x20)
 
     def query_operating_mode_by_address(self, controller: ZenController, address: Optional[int]=None, gear: Optional[int]=None, ecd: Optional[int]=None) -> Optional[int]:
         """Query the operating mode for a DALI device at the given address.
@@ -1077,7 +1085,7 @@ class ZenProtocol:
             return sorted(groups)
         return None
     
-    def query_dali_addresses_with_instances(self, controller: ZenController, start_address: int) -> Optional[List[int]]:
+    def query_dali_addresses_with_instances(self, controller: ZenController, start_address: int=0) -> Optional[List[int]]:
         """Query for DALI addresses that have instances associated with them.
         
         Due to payload restrictions, this needs to be called multiple times with different
@@ -1601,21 +1609,26 @@ class ZenProtocol:
         address = self.valid_dali_address(address=address, gear=gear, group=group)
         return self.send_basic(controller, self.CMD["DALI_GO_TO_LAST_ACTIVE_LEVEL"], address, return_type='ok')
     
-    def query_dali_instance_label(self, controller: ZenController, instance: int, ecd: int) -> Optional[str]:
+    def query_dali_instance_label(self, controller: ZenController, instance: int|ZenInstance, ecd: int, generic_if_none: bool=False, device_label: Optional[str]=None) -> Optional[str]:
         """Query the label for a DALI Instance given a Control Device and Instance Number.
         (Note: TPI expects ECD number between 64-127 but this implementation expects 0-63)
         
         Args:
             controller: ZenController instance
-            instance: Instance number (0-31)
+            instance: ZenInstance or Instance number (0-31)
             ecd: Control Device address (0-63)
             
         Returns:
             Optional[str]: The instance label if successful, None if query fails
         """
         address = self.valid_dali_address(ecd=ecd)
-        if not 0 <= instance <= 31: raise ValueError("Instance number must be between 0 and 31")
-        return self.send_basic(controller, self.CMD["QUERY_DALI_INSTANCE_LABEL"], address, [0x00, 0x00, instance], return_type='str')
+        instance_number = instance.number if isinstance(instance, ZenInstance) else instance
+        if not 0 <= instance_number <= 31: raise ValueError("Instance number must be between 0 and 31")
+        label = self.send_basic(controller, self.CMD["QUERY_DALI_INSTANCE_LABEL"], address, [0x00, 0x00, instance_number], return_type='str')
+        if label is None and generic_if_none:
+            instance_type = instance.type if isinstance(instance, ZenInstance) else 0
+            label = device_label + " " + self.INSTANCE_TYPE.get(instance_type, "UNKNOWN").title().replace("_", " ")  + " " + str(instance_number)
+        return label
 
     def change_profile_number(self, controller: ZenController, profile: int) -> bool:
         """Change the active profile number.
@@ -1631,15 +1644,12 @@ class ZenProtocol:
         profile_lo = profile & 0xFF
         return self.send_basic(controller, self.CMD["CHANGE_PROFILE_NUMBER"], 0x00, [0x00, profile_hi, profile_lo], return_type='ok')
     
-    def return_to_scheduled_profile(self, controller: ZenController) -> bool: # Use 0xFFFF for scheduled profile
-        return self.send_basic(controller, self.CMD["CHANGE_PROFILE_NUMBER"], 0x00, [0x00, 0xFF, 0xFF], return_type='ok')
-    
-    def query_instance_groups(self, controller: ZenController, instance: int, ecd: int) -> Optional[Tuple[int, int, int]]:
+    def query_instance_groups(self, controller: ZenController, instance: int|ZenInstance, ecd: int) -> Optional[Tuple[int, int, int]]:
         """Query the group targets associated with a DALI instance.
         
         Args:
             controller: ZenController instance
-            instance: Instance number (0-31)
+            instance: ZenInstance or Instance number (0-31)
             ecd: Control Device address (0-63)
             
         Returns:
@@ -1653,19 +1663,22 @@ class ZenProtocol:
         The Primary group typically represents where the physical device resides.
         A group number of 255 (0xFF) indicates that no group has been configured.
         """
+        instance_number = instance.number if isinstance(instance, ZenInstance) else instance
         if not 0 <= ecd <= 63: raise ValueError("Control Device address must be between 0 and 63")
-        if not 0 <= instance <= 31: raise ValueError("Instance number must be between 0 and 31")
-            
+        if not 0 <= instance_number <= 31: raise ValueError("Instance number must be between 0 and 31")
         response = self.send_basic(
             controller,
             self.CMD["QUERY_INSTANCE_GROUPS"], 
             64+ecd,
-            [0x00, 0x00, instance],
+            [0x00, 0x00, instance_number],
             return_type='list'
         )
-        
-        if response and len(response) >= 3:
-            return (response[0], response[1], response[2])
+        if response and len(response) == 3:
+            return (
+                response[0] if response[0] != 0xFF else None,
+                response[1] if response[1] != 0xFF else None,
+                response[2] if response[2] != 0xFF else None
+            )
         return None
     
     def query_dali_fitting_number(self, controller: ZenController, address: Optional[int]=None, gear: Optional[int]=None, ecd: Optional[int]=None) -> Optional[str]:
@@ -1688,12 +1701,12 @@ class ZenProtocol:
         address = self.valid_dali_address(address=address, gear=gear, ecd=ecd)
         return self.send_basic(controller, self.CMD["QUERY_DALI_FITTING_NUMBER"], address, return_type='str')
         
-    def query_dali_instance_fitting_number(self, controller: ZenController, instance: int, ecd: int) -> Optional[str]:
+    def query_dali_instance_fitting_number(self, controller: ZenController, instance: int|ZenInstance, ecd: int) -> Optional[str]:
         """Query the fitting number string (e.g. '1.2.0') for a DALI instance.
         
         Args:
             controller: ZenController instance
-            instance: Instance number (0-31)
+            instance: ZenInstance or Instance number (0-31)
             ecd: Control Device address (0-63)
             
         Returns:
@@ -1701,8 +1714,9 @@ class ZenProtocol:
             Returns None if query fails
         """
         address = self.valid_dali_address(ecd=ecd)
-        if not 0 <= instance <= 31: raise ValueError("Instance number must be between 0 and 31")
-        return self.send_basic(controller, self.CMD["QUERY_DALI_INSTANCE_FITTING_NUMBER"], address, [0x00, 0x00, instance], return_type='str')
+        instance_number = instance.number if isinstance(instance, ZenInstance) else instance
+        if not 0 <= instance_number <= 31: raise ValueError("Instance number must be between 0 and 31")
+        return self.send_basic(controller, self.CMD["QUERY_DALI_INSTANCE_FITTING_NUMBER"], address, [0x00, 0x00, instance_number], return_type='str')
     
     def query_controller_label(self, controller: ZenController) -> Optional[str]:
         """Request the label for the controller.
@@ -1755,28 +1769,29 @@ class ZenProtocol:
         """
         return self.send_basic(controller, self.CMD["QUERY_CONTROLLER_STARTUP_COMPLETE"], return_type='ok')
     
-    def override_dali_button_led_state(self, controller: ZenController, led_state: bool, instance: int, ecd: int) -> bool:
+    def override_dali_button_led_state(self, controller: ZenController, led_state: bool, instance: int|ZenInstance, ecd: int) -> bool:
         """Override the LED state for a DALI push button.
         
         Args:
             controller: ZenController instance
             led_state: True for LED on, False for LED off
-            instance: Instance number (0-31)
+            instance: ZenInstance or Instance number (0-31)
             ecd: Control Device address (0-63)
             
         Returns:
             bool: True if command succeeded, False otherwise
         """
         address = self.valid_dali_address(ecd=ecd)
-        if not 0 <= instance <= 31: raise ValueError("Instance number must be between 0 and 31")
-        return self.send_basic(controller, self.CMD["OVERRIDE_DALI_BUTTON_LED_STATE"], 64 + address, [0x00, 0x00, instance], return_type='ok')
+        instance_number = instance.number if isinstance(instance, ZenInstance) else instance
+        if not 0 <= instance_number <= 31: raise ValueError("Instance number must be between 0 and 31")
+        return self.send_basic(controller, self.CMD["OVERRIDE_DALI_BUTTON_LED_STATE"], 64 + address, [0x00, 0x00, instance_number], return_type='ok')
     
-    def query_last_known_dali_button_led_state(self, controller: ZenController, instance: int, ecd: int) -> Optional[bool]:
+    def query_last_known_dali_button_led_state(self, controller: ZenController, instance: int|ZenInstance, ecd: int) -> Optional[bool]:
         """Query the last known LED state for a DALI push button.
         
         Args:
             controller: ZenController instance
-            instance: Instance number (0-31)
+            instance: ZenInstance or Instance number (0-31)
             ecd: Control Device address (0-63)
             
         Returns:
@@ -1787,8 +1802,9 @@ class ZenProtocol:
         the LED state. In many cases, the control device itself manages its own LED.
         """
         address = self.valid_dali_address(ecd=ecd)
-        if not 0 <= instance <= 31: raise ValueError("Instance number must be between 0 and 31")
-        response = self.send_basic(controller, self.CMD["QUERY_LAST_KNOWN_DALI_BUTTON_LED_STATE"], address, [0x00, 0x00, instance])
+        instance_number = instance.number if isinstance(instance, ZenInstance) else instance
+        if not 0 <= instance_number <= 31: raise ValueError("Instance number must be between 0 and 31")
+        response = self.send_basic(controller, self.CMD["QUERY_LAST_KNOWN_DALI_BUTTON_LED_STATE"], address, [0x00, 0x00, instance_number])
         
         if response and len(response) == 1:
             match response[0]:
@@ -1929,6 +1945,9 @@ class ZenProtocol:
     # ============================
     # CUSTOM COMMANDS
     # ============================  
+    
+    def return_to_scheduled_profile(self, controller: ZenController) -> bool: # Use 0xFFFF for scheduled profile, see page 91
+        return self.send_basic(controller, self.CMD["CHANGE_PROFILE_NUMBER"], 0x00, [0x00, 0xFF, 0xFF], return_type='ok')
 
     def disable_tpi_event_emit(self, controller: ZenController):
         """Disable TPI event emit.
@@ -1951,9 +1970,9 @@ class ZenProtocol:
         """
         address = self.valid_dali_address(address=address, gear=gear, group=group)
         if not 0 <= arc_level <= 255:
-            raise ValueError("Arc level must be between 0 and 255") # 255 = no change
-        if not 2000 <= kelvin <= 65535:
-            raise ValueError("Kelvin must be between 0 and 65535")
+            raise ValueError("Arc level must be between 0 and 254, or 255 for no change")
+        if not 1000 <= kelvin <= 20000:
+            raise ValueError("Kelvin must be between 1000 and 20000")
         kelvin_hi = (kelvin >> 8) & 0xFF
         kelvin_lo = kelvin & 0xFF
         return self.send_colour(controller, self.CMD["DALI_COLOUR"], address, arc_level, 0x20, [kelvin_hi, kelvin_lo])
@@ -1980,19 +1999,10 @@ class ZenProtocol:
             bool: True if command succeeded, False otherwise
         """
         address = self.valid_dali_address(address=address, gear=gear, group=group)
-        if kelvin is not None: 
-            if not 1000 <= kelvin <= 20000:
-                raise ValueError("Kelvin must be between 1000 and 20000")
-            kelvin_hi = (kelvin >> 8) & 0xFF
-            kelvin_lo = kelvin & 0xFF
-            if level is not None and not 0 <= level <= 254:
-                raise ValueError("Arc level must be between 0 and 254")
-            return self.send_colour(controller, self.CMD["DALI_COLOUR"], address, level if level is not None else 255, 0x20, [kelvin_hi, kelvin_lo])
+        if kelvin is not None:
+            return self.dali_colour_tc(controller, kelvin, level if level is not None else 255, address=address)
         elif level is not None:
             self.dali_arc_level(controller, level, address=address)
-            if not 0 <= level <= 254:
-                raise ValueError("Arc level must be between 0 and 254")
-            return self.send_basic(controller, self.CMD["DALI_ARC_LEVEL"], address, [0x00, 0x00, level], return_type='ok')
         else:
             raise ValueError("Either kelvin or arc_level must be provided")
     
