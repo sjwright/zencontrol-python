@@ -61,3 +61,8 @@ The following is not yet possible with the current TPI Advanced:
 * Event notification when a system variables changes (this is supported and works in their MQTT integration)
 * Event notification for ambient light sensor lux values
 * Event notification for IS_UNOCCUPIED (Not tested, but documentation says "Not currently used".)
+
+## Links
+
+[About Zencontrol TPI Advanced](https://support.zencontrol.com/hc/en-us/articles/360000337175-What-is-the-Third-Party-Interface-TPI)
+[TPI Advanced documentation PDF](https://support.zencontrol.com/hc/en-us/article_attachments/10831057855503)
