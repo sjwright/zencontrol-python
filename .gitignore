@@ -1,0 +1,13 @@
+**/__pycache__/
+**/.venv/
+**/bin/
+**/build/
+**/dist/
+**/env/
+**/venv/
+**/lib/
+**/include/
+pyvenv.cfg
+*.log
+*.log.*
+config.yaml

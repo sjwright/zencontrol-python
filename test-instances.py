@@ -1,4 +1,4 @@
-from zen import ZenProtocol, ZenController, ZenInstance
+from zen import ZenProtocol, ZenController, ZenAddress, ZenInstance
 import yaml
 
 config = yaml.safe_load(open("config.yaml"))
@@ -7,7 +7,7 @@ tpi = ZenProtocol(controllers=[ctrl], narration=False)
 
 
 addresses = tpi.query_dali_addresses_with_instances(ctrl, 0)
-print(f"Addresses with instances: {addresses}")
+print(f"Addresses with instances:")
 
 
 for address in addresses:

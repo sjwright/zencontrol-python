@@ -21,9 +21,6 @@ for address in addresses:
     type = tpi.dali_query_cg_type(address)
     print(f"    type: {type}")
 
-    groups = tpi.query_group_membership_by_address(address)
-    print(f"    groups: {groups}")
-
     scenes = tpi.query_scene_numbers_by_address(address)
     print(f"    scenes: {scenes}")
 

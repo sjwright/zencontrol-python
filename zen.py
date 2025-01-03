@@ -90,7 +90,58 @@ class ZenInstance:
     def __post_init__(self):
         if not 0 <= self.number <= 31: raise ValueError("Instance number must be between 0 and 31")
 
+class ZenColourType(Enum):
+    XY = 0x10
+    TC = 0x20
+    RGBWAF = 0x80
 
+@dataclass
+class ZenColour:
+    type: ZenColourType = field(init=False)
+    level: int
+    def __post_init__(self):
+        if self.level is None: self.level = 255
+        if not 0 <= self.level <= 255: raise ValueError("Level must be between 0 and 254, or 255 for no level")
+
+@dataclass
+class ZenColourRGBWAF(ZenColour):
+    r: int
+    g: int
+    b: int
+    w: int
+    a: int
+    f: int
+    def __post_init__(self):
+        self.type = ZenColourType.RGBWAF
+        if not 0 <= self.r <= 255: raise ValueError("R must be between 0 and 255")
+        if not 0 <= self.g <= 255: raise ValueError("G must be between 0 and 255")
+        if not 0 <= self.b <= 255: raise ValueError("B must be between 0 and 255")
+        if not 0 <= self.w <= 255: raise ValueError("W must be between 0 and 255")
+        if not 0 <= self.a <= 255: raise ValueError("A must be between 0 and 255")
+        if not 0 <= self.f <= 255: raise ValueError("F must be between 0 and 255")
+    def data(self) ->bytes:
+        return struct.pack('BBBBBBBBB', self.level, 0x80, self.r, self.g, self.b, self.w, self.a, self.f)
+
+@dataclass
+class ZenColourXY(ZenColour):
+    x: int
+    y: int
+    def __post_init__(self):
+        self.type = ZenColourType.XY
+        if not 0 <= self.x <= 65535: raise ValueError("X must be between 0 and 65535")
+        if not 0 <= self.y <= 65535: raise ValueError("Y must be between 0 and 65535")
+    def data(self) -> bytes:
+        return struct.pack('>BBHH', self.level, 0x10, self.x, self.y)
+
+@dataclass
+class ZenColourTC(ZenColour):
+    kelvin: int
+    def __post_init__(self):
+        if not 1000 <= self.kelvin <= 20000: raise ValueError("Kelvin must be between 1000 and 20000")
+        self.type = ZenColourType.TC
+    def data(self) -> bytes:
+        return struct.pack('>BBH', self.level, 0x20, self.kelvin)
+        
 class ZenProtocol:
 
     # Define commands as a class dictionary
@@ -311,12 +362,11 @@ class ZenProtocol:
                    command: int,
                    address: int = 0x00,
                    data: List[int] = [0x00, 0x00, 0x00], 
-                   control: int = 0x04,
                    return_type: str = 'bytes') -> Optional[Union[bytes, str, List[int], int, bool]]:
         if len(data) > 3: 
             raise ValueError("data must be 0-3 bytes")
         data = data + [0x00] * (3 - len(data))  # Pad data to 3 bytes
-        response_data, response_code = self.send_packet(controller, command, [address] + data, control)
+        response_data, response_code = self.send_packet(controller, command, [address] + data)
         if response_data is None and response_code is None:
             return None
         match response_code:
@@ -358,67 +408,19 @@ class ZenProtocol:
                 if self.narration: print(f"Unknown response code: {response_code}")
         return None
         
-    def send_colour(self,
-                   controller: ZenController,
-                   command: int,
-                   address: int,
-                   arc_level: int,
-                   colour_type: int,
-                   colour_data: List[int],
-                   control: int = 0x04
-                   ) -> Optional[bytes]:
-        """Send a DALI colour command.
-        
-        Args:
-            command: Command byte (0x0E for DALI colour command)
-            address: DALI address (0-63)
-            arc_level: DALI arc level (0-254)
-            colour_type: Colour type (0x10=XY, 0x20=TC, 0x80=RGBWAF)
-            colour_data: List of colour values based on type:
-                XY: [X_hi, X_lo, Y_hi, Y_lo]
-                TC: [TC_hi, TC_lo]
-                RGBWAF: [Red, Green, Blue, White, Amber, Free]
-            control: Control byte (default 0x04)
-            
-        Returns:
-            Optional[bytes]: Response data if successful, None otherwise
-        """
-        data = [address, arc_level, colour_type] + colour_data
-        response_data, response_code = self.send_packet(controller, command, data, control)
-        # Check response type
+    def send_colour(self, controller: ZenController, command: int, address: int, colour: ZenColour) -> Optional[bool]:
+        """Send a DALI colour command."""
+        response_data, response_code = self.send_packet(controller, command, [address] + list(colour.data()))
         match response_code:
             case 0xA0: # OK
-                pass  # Request processed successfully
-            case 0xA1: # ANSWER
-                pass  # Answer is in data bytes
+                return True
             case 0xA2: # NO_ANSWER
-                if response_data > 0:
-                    if self.narration: print(f"No answer with code: {response_data}")
-                return None
-            case 0xA3: # ERROR
-                if response_data:
-                    error_code = response_data[0]
-                    error_label = self.ERROR_CODES.get(error_code, f"UNKNOWN_ERROR_CODE_{hex(error_code)}")
-                    if self.narration: print(f"Command error code: {error_label}")
-                else:
-                    if self.narration: print("Command error (no error code)")
-                return None
-            case _:
-                if self.narration: print(f"Unknown response type: {response_code}")
-                return None
-        if response_data:
-            return response_data
+                return False
         return None
-        
 
-    def send_dynamic(self, 
-                    controller: ZenController,
-                    command: int,
-                    data: List[int],
-                    control: int = 0x04
-                    ) -> Optional[bytes]:
+    def send_dynamic(self, controller: ZenController, command: int, data: List[int]) -> Optional[bytes]:
         # Calculate data length and prepend it to data
-        response_data, response_code = self.send_packet(controller, command, [len(data)] + data, control)
+        response_data, response_code = self.send_packet(controller, command, [len(data)] + data)
         # Check response type
         match response_code:
             case 0xA0: # OK
@@ -444,12 +446,9 @@ class ZenProtocol:
             return response_data
         return None
     
-    def send_packet(self,
-                    controller: ZenController,
-                    command: int,
-                    data: List[int],
-                    control: int = 0x04
-                    ) -> Optional[Tuple[bytes, int]]:
+    def send_packet(self, controller: ZenController, command: int, data: List[int]) -> Optional[Tuple[bytes, int]]:
+        MAGIC_BYTE = 0x04
+
         # Acquire lock to ensure serial execution
         if not hasattr(self, '_send_lock'):
             self._send_lock = False
@@ -469,7 +468,7 @@ class ZenProtocol:
             self._sequence_counter = (self._sequence_counter + 1) % 256 if hasattr(self, '_sequence_counter') else 0
             
             # Construct packet with checksum
-            packet = [control, self._sequence_counter, command] + data
+            packet = [MAGIC_BYTE, self._sequence_counter, command] + data
             checksum = self.calculate_checksum(packet)
             complete_packet = bytes(packet + [checksum])
             
@@ -738,7 +737,7 @@ class ZenProtocol:
             generic_if_none: If True, return a generic label if the device has no label, else return None
         """
         label = self.send_basic(address.controller, self.CMD["QUERY_DALI_DEVICE_LABEL"], address.ecg_or_ecd(), return_type='str')
-        if label is None and generic_if_none: label = f"{address.controller.label} ECD {address}"
+        if label is None and generic_if_none: label = f"{address.controller.label} ECD {address.number}"
         return label
         
     def query_profile_label(self, controller: ZenController, profile: int) -> Optional[str]:
@@ -981,43 +980,9 @@ class ZenProtocol:
             return response[0]  # Operating mode is in first byte
         return None
 
-    def dali_colour(self, address: ZenAddress, arc_level: int, colour_type: int, colour_values: List[int]) -> bool:
-        """Send a DALI Colour command to set colour values on a DALI device. Returns True if successful, False if failed.
-        
-        Args:
-            address: ZenAddress
-            arc_level: Arc level (0-254, 254=MASK)
-            colour_type: Colour type (0=RGBWAF, 1=XY)
-            colour_values: List of colour values based on type:
-                         - For RGBWAF: [red, green, blue, white, amber, free] (0-255 each)
-                         - For XY: [x, y] (0-65535 each)
-        """
-        
-        if not 0 <= arc_level <= 254: raise ValueError("Arc level must be between 0 and 254")
-        if not 0 <= colour_type <= 1: raise ValueError("Colour type must be 0 (RGBWAF) or 1 (XY)")
-            
-        # Validate colour values based on type
-        if colour_type == 0:  # RGBWAF
-            if len(colour_values) != 6:
-                raise ValueError("RGBWAF requires 6 colour values")
-            if not all(0 <= x <= 255 for x in colour_values):
-                raise ValueError("RGBWAF values must be between 0 and 255")
-                
-            data = [arc_level, colour_type] + colour_values
-                
-        else:  # XY
-            if len(colour_values) != 2:
-                raise ValueError("XY requires 2 colour values")
-            if not all(0 <= x <= 65535 for x in colour_values):
-                raise ValueError("XY values must be between 0 and 65535")
-                
-            # Convert XY values to bytes
-            data = [arc_level, colour_type]
-            for value in colour_values:
-                data.append((value >> 8) & 0xFF)  # High byte
-                data.append(value & 0xFF)         # Low byte
-                
-        return self.send_colour(address.controller, self.CMD["DALI_COLOUR"], address.ecg_or_group_or_broadcast(), arc_level, colour_type, colour_values)
+    def dali_colour(self, address: ZenAddress, colour: ZenColour) -> bool:
+        """Set a DALI address (ECG, group, broadcast) to a colour. Returns True if command succeeded, False otherwise."""
+        return self.send_colour(address.controller, self.CMD["DALI_COLOUR"], address.ecg_or_group_or_broadcast(), colour=colour)
 
     def query_group_by_number(self, address: ZenAddress) -> Optional[Tuple[int, bool, int]]: # TODO: Work out what to do here
         """Query information for a DALI group by its number (0-15)
@@ -1713,49 +1678,24 @@ class ZenProtocol:
         return None
 
     # ============================
-    # CUSTOM COMMANDS
+    # CONVENIENCE COMMANDS
     # ============================  
     
     def return_to_scheduled_profile(self, controller: ZenController) -> bool: # Use 0xFFFF for scheduled profile, see page 91
         return self.send_basic(controller, self.CMD["CHANGE_PROFILE_NUMBER"], 0x00, [0x00, 0xFF, 0xFF], return_type='ok')
 
     def disable_tpi_event_emit(self, controller: ZenController):
-        """Disable TPI event emit.
-        """
+        """Disable TPI event emit."""
         self.enable_tpi_event_emit(controller, False)
 
-    def dali_colour_tc(self, address: ZenAddress, kelvin: int, arc_level: int=255) -> bool:
-        """Set a DALI address to a colour temperature.
-        
-        Args:
-            address: ZenAddress
-            kelvin: DALI colour temperature in Kelvin (1000-20000)
-            arc_level: DALI arc level (0-255)
-            
-        Returns:
-            bool: True if command succeeded, False otherwise
-        """
-        if not 0 <= arc_level <= 255:
-            raise ValueError("Arc level must be between 0 and 254, or 255 for no change")
-        if not 1000 <= kelvin <= 20000:
-            raise ValueError("Kelvin must be between 1000 and 20000")
-        kelvin_hi = (kelvin >> 8) & 0xFF
-        kelvin_lo = kelvin & 0xFF
-        return self.send_colour(address.controller, self.CMD["DALI_COLOUR"], address.ecg_or_group_or_broadcast(), arc_level, 0x20, [kelvin_hi, kelvin_lo])
-
     def dali_illuminate(self, address: ZenAddress, level: Optional[int] = None, kelvin: Optional[int] = None) -> bool:
-        """Set a DALI target to a colour and/or level.
-        
-        Args:
-            address: ZenAddress
-            level: DALI arc level (0-254, or None for no change)
-            kelvin: colour temperature (1000-20000, or None for no change)
-            
-        Returns:
-            bool: True if command succeeded, False otherwise
-        """
+        """Set a DALI address (ECG, group, broadcast) to a kelvin (None, or 1000-20000) and/or level (None, 0-254). Returns True if command succeeded, False otherwise."""
         if kelvin is not None:
-            return self.dali_colour_tc(address, kelvin, level if level is not None else 255)
+            return self.send_colour(controller=address.controller,
+                                    command=self.CMD["DALI_COLOUR"],
+                                    address=address.ecg_or_group_or_broadcast(),
+                                    colour=ZenColourTC(level=level if level is not None else 255, kelvin=kelvin)
+                                    )
         elif level is not None:
             return self.dali_arc_level(address, level)
         else:
