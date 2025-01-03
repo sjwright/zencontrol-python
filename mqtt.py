@@ -227,10 +227,19 @@ class ZenMQTTBridge:
             elif state == "ON":
                 self.logger.info(f"Turning on gear {gear}")
                 self.tpi.dali_go_to_last_active_level(ZenAddress(self.ctrl, type=AddressType.ECG, number=gear))
-                
+
     # ================================
-    # SEND TO HOME ASSISTANT
+    # RECEIVED FROM ZEN
+    # ---> SEND TO HOME ASSISTANT
     # ================================
+
+    def _level_change_event(self, address: ZenAddress, arc_level: int, event_data: Dict = {}) -> None:
+        print(f"Zen to HA: gear {address.number} arc_level {arc_level}")
+        self.send_light_level_to_homeassistant(address, arc_level)
+
+    def _color_temp_change_event(self, address: ZenAddress, kelvin: int, event_data: Dict = {}) -> None:
+        print(f"Zen to HA: gear {address.number} temperature {kelvin}K")
+        self.send_light_temp_to_homeassistant(address, kelvin)
 
     def send_light_level_to_homeassistant(self, address: ZenAddress, arc_level: Optional[int] = None) -> None:
         if arc_level is None:
@@ -268,18 +277,6 @@ class ZenMQTTBridge:
             payload=state_json, 
             retain=False)
         print(Fore.LIGHTRED_EX + f"MQTT sent - {mqtt_topic}: " + Style.DIM + f"{state_json}" + Style.RESET_ALL)
-
-    # ================================
-    # RECEIVED FROM ZEN
-    # ================================
-
-    def _level_change_event(self, address: ZenAddress, arc_level: int, event_data: Dict = {}) -> None:
-        print(f"Zen to HA: gear {address.number} arc_level {arc_level}")
-        self.send_light_level_to_homeassistant(address, arc_level)
-
-    def _color_temp_change_event(self, address: ZenAddress, kelvin: int, event_data: Dict = {}) -> None:
-        print(f"Zen to HA: gear {address.number} temperature {kelvin}K")
-        self.send_light_temp_to_homeassistant(address, kelvin)
 
     # ================================
     # SETUP AUTODISCOVERY
