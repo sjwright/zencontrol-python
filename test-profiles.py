@@ -1,4 +1,4 @@
-from zen import ZenProtocol, ZenController
+from zen import ZenProtocol, ZenController, ZenAddress, ZenInstance
 import yaml
 
 config = yaml.safe_load(open("config.yaml"))
