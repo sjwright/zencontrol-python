@@ -2,7 +2,7 @@ import socket
 import struct
 import time
 import logging
-from typing import Optional, Tuple, List, Union, Dict
+from typing import Optional, Tuple, List, Union, Dict, Self
 from enum import Enum
 from threading import Thread, Event
 from colorama import Fore, Back, Style
@@ -42,6 +42,9 @@ class ZenAddress:
     controller: ZenController
     type: AddressType
     number: int
+    @classmethod
+    def broadcast(cls, controller: ZenController) -> Self:
+        return cls(controller=controller, type=AddressType.BROADCAST, number=255)
     def ecg(self) -> int:
         if self.type == AddressType.ECG: return self.number
         raise ValueError("Address is not a Control Gear")
@@ -58,6 +61,11 @@ class ZenAddress:
         if self.type == AddressType.ECG: return self.number
         if self.type == AddressType.ECD: return self.number+64
         raise ValueError("Address is not a Control Gear or Control Device")
+    def ecg_or_ecd_or_broadcast(self) -> int:
+        if self.type == AddressType.ECG: return self.number
+        if self.type == AddressType.ECD: return self.number+64
+        if self.type == AddressType.BROADCAST: return 255
+        raise ValueError("Address is not a Control Gear or Control Device")
     def ecd(self) -> int:
         if self.type == AddressType.ECD: return self.number+64
         raise ValueError("Address is not a Control Device")
@@ -70,7 +78,7 @@ class ZenAddress:
     def __post_init__(self):
         match self.type:
             case AddressType.BROADCAST:
-                if self.number != 255: raise ValueError("Broadcast address must be 255")
+                self.number = 255
             case AddressType.ECG:
                 if not 0 <= self.number < Const.MAX_ECG: raise ValueError("Control Gear address must be between 0 and 63")
             case AddressType.ECD:
@@ -151,6 +159,67 @@ class ZenColourTC(ZenColour):
     def data(self) -> bytes:
         return struct.pack('>BBH', self.level, 0x20, self.kelvin)
         
+@dataclass()
+class ZenEventMask:
+    button_press_event: bool = False
+    button_hold_event: bool = False
+    absolute_input_event: bool = False
+    level_change_event: bool = False
+    group_level_change_event: bool = False
+    scene_change_event: bool = False
+    is_occupied: bool = False
+    is_unoccupied: bool = False
+    colour_changed: bool = False
+    profile_changed: bool = False
+    @classmethod
+    def all_events(cls):
+        return cls(
+            button_press_event = True,
+            button_hold_event = True,
+            absolute_input_event = True,
+            level_change_event = True,
+            group_level_change_event = True,
+            scene_change_event = True,
+            is_occupied = True,
+            is_unoccupied = True,
+            colour_changed = True,
+            profile_changed = True
+        )
+    @classmethod
+    def from_upper_lower(cls, upper: int, lower: int) -> Self:
+        return cls.from_double_byte((upper << 8) | lower)
+    @classmethod
+    def from_double_byte(cls, event_mask: int) -> Self:
+        return cls(
+            button_press_event = (event_mask & (1 << 0)) != 0,
+            button_hold_event = (event_mask & (1 << 1)) != 0,
+            absolute_input_event = (event_mask & (1 << 2)) != 0,
+            level_change_event = (event_mask & (1 << 3)) != 0,
+            group_level_change_event = (event_mask & (1 << 4)) != 0,
+            scene_change_event = (event_mask & (1 << 5)) != 0,
+            is_occupied = (event_mask & (1 << 6)) != 0,
+            is_unoccupied = (event_mask & (1 << 7)) != 0,
+            colour_changed = (event_mask & (1 << 8)) != 0,
+            profile_changed = (event_mask & (1 << 9)) != 0
+        )
+    def bitmask(self) -> int:
+        event_mask = 0x00
+        if self.button_press_event: event_mask |= (1 << 0)
+        if self.button_hold_event: event_mask |= (1 << 1)
+        if self.absolute_input_event: event_mask |= (1 << 2)
+        if self.level_change_event: event_mask |= (1 << 3)
+        if self.group_level_change_event: event_mask |= (1 << 4)
+        if self.scene_change_event: event_mask |= (1 << 5)
+        if self.is_occupied: event_mask |= (1 << 6)
+        if self.is_unoccupied: event_mask |= (1 << 7)
+        if self.colour_changed: event_mask |= (1 << 8)
+        if self.profile_changed: event_mask |= (1 << 9)
+        return event_mask
+    def upper(self) -> int:
+        return (self.bitmask() >> 8) & 0xFF  
+    def lower(self) -> int:
+        return self.bitmask() & 0xFF
+
 class ZenProtocol:
 
     # Define commands as a class dictionary
@@ -225,18 +294,17 @@ class ZenProtocol:
         "DALI_GO_TO_LAST_ACTIVE_LEVEL": 0xB5,       # Command DALI addresses to go to last active level
         "DALI_STOP_FADE": 0xC1,                     # Request a running DALI fade be stopped
 
-        # Implemented but not tested
-        "OVERRIDE_DALI_BUTTON_LED_STATE": 0x29,     # Override a button LED state
-        "QUERY_LAST_KNOWN_DALI_BUTTON_LED_STATE": 0x30, # Query button last known button LED state
-        
         "QUERY_TPI_EVENT_EMIT_STATE": 0x07,         # Query whether TPI Events are enabled or disabled
-        "SET_TPI_EVENT_UNICAST_ADDRESS": 0x40,      # Set a TPI Events unicast address and port
-        "QUERY_TPI_EVENT_UNICAST_ADDRESS": 0x41,    # Query TPI Events State, unicast address and port
-
-        # Not yet implemented (will wait for a use case)
         "DALI_ADD_TPI_EVENT_FILTER": 0x31,          # Request that filters be added for DALI TPI Events
         "QUERY_DALI_TPI_EVENT_FILTERS": 0x32,       # Query DALI TPI Event filters on a address
         "DALI_CLEAR_TPI_EVENT_FILTERS": 0x33,       # Request that DALI TPI Event filters be cleared
+
+        # Implemented but not tested
+        "OVERRIDE_DALI_BUTTON_LED_STATE": 0x29,     # Override a button LED state
+        "QUERY_LAST_KNOWN_DALI_BUTTON_LED_STATE": 0x30, # Query button last known button LED state
+
+        "SET_TPI_EVENT_UNICAST_ADDRESS": 0x40,      # Set a TPI Events unicast address and port
+        "QUERY_TPI_EVENT_UNICAST_ADDRESS": 0x41,    # Query TPI Events State, unicast address and port
 
         # Won't implement (because I can't test)
         "TRIGGER_SDDP_IDENTIFY": 0x06,              # Trigger a Control4 SDDP Identify
@@ -752,6 +820,78 @@ class ZenProtocol:
             return response[0] > 0
         return None
     
+    def dali_add_tpi_event_filter(self, address: ZenAddress, filter: ZenEventMask = ZenEventMask.all_events(), instance_number: int = 0xFF) -> bool:
+        """Add a DALI TPI event filter to stop specific events from being broadcast.
+        
+        Args:
+            address: ZenAddress to add filter for (broadcast = set for all)
+            filter: Event mask indicating which events to filter (all events by default)
+            instance_number: Instance number for ECD filters
+            
+        Returns:
+            True if filter was added successfully, False otherwise
+        """
+        return self.send_basic(address.controller,
+                             self.CMD["DALI_ADD_TPI_EVENT_FILTER"],
+                             address.ecg_or_ecd_or_broadcast(),
+                             [instance_number, filter.upper(), filter.lower()],
+                             return_type='bool')
+    
+    def dali_clear_tpi_event_filter(self, address: ZenAddress, filter: ZenEventMask = ZenEventMask.all_events(), instance_number: int = 0xFF) -> bool:
+        """Clear DALI TPI event filters to allow specific events to be broadcast again.
+        
+        Args:
+            address: ZenAddress to clear filter for (broadcast = set for all)
+            filter: ZenEventMask indicating which events to stop filtering (all events by default)
+            instance_number: Instance number for ECD filters (0xFF for ECG)
+            
+        Returns:
+            True if filter was cleared successfully, False otherwise
+        """
+        return self.send_basic(address.controller,
+                             self.CMD["DALI_CLEAR_TPI_EVENT_FILTERS"],
+                             address.ecg_or_ecd_or_broadcast(),
+                             [instance_number, filter.upper(), filter.lower()],
+                             return_type='bool')
+
+    
+    def query_dali_tpi_event_filters(self, address: ZenAddress, instance_number: int = 0xFF, start_at: int = 0) -> List[Dict]:
+        """Query active DALI TPI event filters for an address.
+        
+        Args:
+            address: ZenAddress to query filters for (broadcast = set for all)
+            instance_number: Instance number to query (0xFF for ECG, or specific instance for ECD)
+            start_at: Result index to start at (for paging results)
+            
+        Returns:
+            List of dictionaries containing filter info, or None if query fails:
+            [{
+                'address': int,           # Address number
+                'instance': int,          # Instance number 
+                'event_mask': int         # 16-bit event mask
+            }]
+        """
+        response = self.send_basic(address.controller, 
+                                 self.CMD["QUERY_DALI_TPI_EVENT_FILTERS"],
+                                 address.ecg_or_ecd_or_broadcast(),
+                                 [start_at, 0x00, instance_number])
+                                 
+        if response and len(response) >= 5:  # Need at least modes + one result
+            results = []
+            modes_active = response[0] # same as query_tpi_event_emit_state()
+            
+            # Process results in groups of 4 bytes
+            for i in range(1, len(response)-3, 4):
+                result = {
+                    'address': response[i],
+                    'instance': response[i+1],
+                    'event_mask': ZenEventMask.from_upper_lower(response[i+2], response[i+3])
+                }
+                results.append(result)
+                
+            return results
+        return []
+
     def enable_tpi_event_emit(self, controller: ZenController, enable: bool = True) -> bool:
         """Enable or disable TPI Event emission. Returns True if successful, else False."""
         return self.send_basic(controller, self.CMD["ENABLE_TPI_EVENT_EMIT"], 0x01 if enable else 0x00, return_type='bool')
