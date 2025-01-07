@@ -159,6 +159,7 @@ class ZenMQTTBridge:
 
     # ================================
     # RECEIVED FROM HOME ASSISTANT
+    #  ---> SEND TO ZEN
     # ================================
 
     def _on_mqtt_message(self, client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage) -> None:
@@ -214,6 +215,7 @@ class ZenMQTTBridge:
         if "color_temp" in payload:
             mireds = int(payload["color_temp"])
             kelvin = self.mireds_to_kelvin(mireds)
+            print(f"Received {mireds}mireds ({kelvin}K) for gear {gear}")
             self.logger.info(f"Setting gear {gear} temperature to {kelvin}K (mireds {mireds})")
             self.tpi.dali_illuminate(ZenAddress(self.ctrl, type=AddressType.ECG, number=gear), kelvin=kelvin)
             self.send_light_temp_to_homeassistant(target=gear, kelvin=kelvin)
@@ -230,7 +232,7 @@ class ZenMQTTBridge:
 
     # ================================
     # RECEIVED FROM ZEN
-    # ---> SEND TO HOME ASSISTANT
+    #  ---> SEND TO HOME ASSISTANT
     # ================================
 
     def _level_change_event(self, address: ZenAddress, arc_level: int, event_data: Dict = {}) -> None:
@@ -263,6 +265,7 @@ class ZenMQTTBridge:
             mireds = self.kelvin_to_mireds(kelvin)
         if kelvin is None:
             kelvin = self.mireds_to_kelvin(mireds)
+        print(f"Sending {kelvin}K ({mireds}mireds) to HA for gear {address.number}")
         self._send_state_mqtt("light", f"ecg{address.number}", {
             "color_mode": "color_temp",
             "color": mireds,
@@ -288,7 +291,7 @@ class ZenMQTTBridge:
         for address in addresses:
 
             """Configure a single light for Home Assistant auto-discovery."""
-            label = self.tpi.query_dali_device_label(address)
+            label = self.tpi.query_dali_device_label(address, generic_if_none=True)
             cgtype = self.tpi.query_dali_colour_features(address)
             colour_temp_limits = self.tpi.query_dali_colour_temp_limits(address)
             serial = self.tpi.query_dali_serial(address)
@@ -346,6 +349,32 @@ class ZenMQTTBridge:
                 payload=config_json, 
                 retain=True)
             print(Fore.LIGHTRED_EX + f"MQTT sent - {mqtt_topic}: " + Style.DIM + f"{config_json}" + Style.RESET_ALL)
+
+    def setup_group_scenes(self) -> None:
+        """Initialize all group scenes found on the DALI bus for Home Assistant auto-discovery."""
+        # Get all groups
+        groups = self.tpi.query_groups(controller=self.ctrl)
+        # For each group
+        for group in groups:
+            # Get all scenes for the group
+            scenes = self.tpi.query_group_scenes(controller=self.ctrl, group=group)
+            # For each scene
+            for scene in scenes:
+                # Get the scene label
+                scene_label = self.tpi.query_group_scene_label(controller=self.ctrl, group=group, scene=scene)
+                # Create the MQTT topic
+                mqtt_topic = f"{self.discovery_prefix}/scene/{self.ctrl.name}/group{group.number}/scene{scene.number}"
+                # Create the config dictionary
+                config_dict = {
+                    "component": "scene",
+                    "name": scene_label,
+                    "object_id": f"{self.ctrl.name}_group{group.number}_scene{scene.number}",
+                    "unique_id": f"{self.ctrl.name}_group{group.number}_scene{scene.number}",
+                }
+        # Get all scenes
+        scenes = self.tpi.query_group_scenes(controller=self.ctrl)
+        for scene in scenes:
+            print(f"Setting up group scene {scene}")
 
     def setup_instances(self) -> None:
         """Initialize all instances found on the DALI bus for Home Assistant auto-discovery."""

@@ -203,7 +203,6 @@ class ZenProtocol:
         
         "DALI_QUERY_CONTROL_GEAR_STATUS": 0xAB,     # Query status data on a address, group or broadcast
         
-        # Implemented but not tested
         "QUERY_DALI_COLOUR": 0x34,                  # Query the Colour information on a DALI target
         "DALI_COLOUR": 0x0E,                        # Set a DALI target to a colour
         
@@ -226,9 +225,11 @@ class ZenProtocol:
         "DALI_GO_TO_LAST_ACTIVE_LEVEL": 0xB5,       # Command DALI addresses to go to last active level
         "DALI_STOP_FADE": 0xC1,                     # Request a running DALI fade be stopped
 
-        "QUERY_TPI_EVENT_EMIT_STATE": 0x07,         # Query whether TPI Events are enabled or disabled
+        # Implemented but not tested
         "OVERRIDE_DALI_BUTTON_LED_STATE": 0x29,     # Override a button LED state
         "QUERY_LAST_KNOWN_DALI_BUTTON_LED_STATE": 0x30, # Query button last known button LED state
+        
+        "QUERY_TPI_EVENT_EMIT_STATE": 0x07,         # Query whether TPI Events are enabled or disabled
         "SET_TPI_EVENT_UNICAST_ADDRESS": 0x40,      # Set a TPI Events unicast address and port
         "QUERY_TPI_EVENT_UNICAST_ADDRESS": 0x41,    # Query TPI Events State, unicast address and port
 
@@ -1419,7 +1420,7 @@ class ZenProtocol:
         self.enable_tpi_event_emit(controller, False)
 
     def dali_illuminate(self, address: ZenAddress, level: Optional[int] = None, kelvin: Optional[int] = None) -> bool:
-        """Set a DALI address (ECG, group, broadcast) to a kelvin (None or 1000-20000) and/or level (None or 0-254). Returns True if succeeded, else False."""
+        """Set a DALI address (ECG, group, broadcast) to a kelvin (None, or 1000-20000) and/or level (None or 0-254). Returns True if succeeded, else False."""
         if kelvin is not None:
             return self.send_colour(controller=address.controller,
                                     command=self.CMD["DALI_COLOUR"],
