@@ -113,7 +113,7 @@ class ZenColourType(Enum):
     RGBWAF = 0x80
 
 @dataclass
-class ZenColour:
+class ZenColourGeneric:
     type: ZenColourType = field(init=False)
     level: int
     def __post_init__(self):
@@ -121,7 +121,7 @@ class ZenColour:
         if not 0 <= self.level < Const.MAX_LEVEL: raise ValueError("Level must be between 0 and 254, or 255 for no level")
 
 @dataclass
-class ZenColourRGBWAF(ZenColour):
+class ZenColourRGBWAF(ZenColourGeneric):
     r: int
     g: int
     b: int
@@ -140,7 +140,7 @@ class ZenColourRGBWAF(ZenColour):
         return struct.pack('BBBBBBBBB', self.level, 0x80, self.r, self.g, self.b, self.w, self.a, self.f)
 
 @dataclass
-class ZenColourXY(ZenColour):
+class ZenColourXY(ZenColourGeneric):
     x: int
     y: int
     def __post_init__(self):
@@ -151,7 +151,7 @@ class ZenColourXY(ZenColour):
         return struct.pack('>BBHH', self.level, 0x10, self.x, self.y)
 
 @dataclass
-class ZenColourTC(ZenColour):
+class ZenColourTC(ZenColourGeneric):
     kelvin: int
     def __post_init__(self):
         if not Const.MIN_KELVIN <= self.kelvin <= Const.MAX_KELVIN: raise ValueError("Kelvin must be between 1000 and 20000")
@@ -441,7 +441,7 @@ class ZenProtocol:
                         return response_data
                     case 'str':
                         try:
-                            return response_data.decode('ascii') # bytes(response).decode().rstrip('\x00')
+                            return response_data.decode('ascii')
                         except UnicodeDecodeError:
                             return None
                     case 'list':
@@ -450,8 +450,6 @@ class ZenProtocol:
                         if response_data and len(response_data) == 1: return int(response_data[0])
                     case 'bool':
                         if response_data and len(response_data) == 1: return bool(response_data[0])
-                    case 'ok':
-                        raise ValueError(f"Type 'ok' should not return a value")
                     case _:
                         raise ValueError(f"Invalid return_type: {return_type}")
             case 0xA2: # NO_ANSWER
@@ -469,7 +467,7 @@ class ZenProtocol:
                 if self.narration: print(f"Unknown response code: {response_code}")
         return None
         
-    def send_colour(self, controller: ZenController, command: int, address: int, colour: ZenColour) -> Optional[bool]:
+    def send_colour(self, controller: ZenController, command: int, address: int, colour: ZenColourGeneric) -> Optional[bool]:
         """Send a DALI colour command."""
         response_data, response_code = self.send_packet(controller, command, [address] + list(colour.data()))
         match response_code:
@@ -966,7 +964,7 @@ class ZenProtocol:
         return zen_groups
         
 
-    def query_dali_colour(self, address: ZenAddress) -> Optional[Tuple[int, List[int]]]: # TODO: Make a bespoke return type
+    def query_dali_colour(self, address: ZenAddress) -> Optional[ZenColourGeneric]:
         """Query colour information from a DALI address.
         
         Args:
@@ -981,9 +979,13 @@ class ZenProtocol:
         """
         response = self.send_basic(address.controller, self.CMD["QUERY_DALI_COLOUR"], address.ecg())
         if response and len(response) >= 1:
-            colour_mode = response[0]
-            colour_values = list(response[1:])
-            return (colour_mode, colour_values)
+            match response[0]:
+                case 0x00: # RGBWAF
+                    return ZenColourRGBWAF(level=255, r=response[1], g=response[2], b=response[3], w=response[4], a=response[5], f=response[6])
+                case 0x01: # CIE 1931 XY
+                    return ZenColourXY(level=255, x=response[1], y=response[2])
+                case 0x02: # Colour Temperature
+                    return ZenColourTC(level=255, kelvin=(response[1] << 8) | response[2])
         return None
     
     def query_profile_numbers(self, controller: ZenController) -> Optional[List[int]]:
@@ -1048,11 +1050,11 @@ class ZenProtocol:
             return response[0]  # Operating mode is in first byte
         return None
 
-    def dali_colour(self, address: ZenAddress, colour: ZenColour) -> bool:
+    def dali_colour(self, address: ZenAddress, colour: ZenColourGeneric) -> bool:
         """Set a DALI address (ECG, group, broadcast) to a colour. Returns True if command succeeded, False otherwise."""
         return self.send_colour(address.controller, self.CMD["DALI_COLOUR"], address.ecg_or_group_or_broadcast(), colour=colour)
 
-    def query_group_by_number(self, address: ZenAddress) -> Optional[Tuple[int, bool, int]]: # TODO: Work out what to do here
+    def query_group_by_number(self, address: ZenAddress) -> Optional[Tuple[int, bool, int]]: # TODO: change to a dict or special class?
         """Query a DALI group for its occupancy status and level. Returns a tuple containing group number, occupancy status, and actual level."""
         response = self.send_basic(address.controller, self.CMD["QUERY_GROUP_BY_NUMBER"], address.group())
         if response and len(response) == 3:
@@ -1098,7 +1100,7 @@ class ZenProtocol:
             return zen_groups
         return []
 
-    def query_dali_addresses_with_instances(self, controller: ZenController, start_address: int=0) -> List[ZenAddress]: # TODO: automate the second request at start_address=60 within this function
+    def query_dali_addresses_with_instances(self, controller: ZenController, start_address: int=0) -> List[ZenAddress]: # TODO: automate iteration over start_address=0, start_address=60, etc.
         """Query for DALI addresses that have instances associated with them.
         
         Due to payload restrictions, this needs to be called multiple times with different
