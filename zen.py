@@ -566,8 +566,8 @@ class ZenProtocol:
                     return response[3:3+data_length], response_type
                 return None, response_type
             except socket.timeout:
-                self.logger.debug(f"UDP packet response not received in time")
-                if self.narration: print("UDP packet response not received in time")
+                self.logger.debug(f"UDP packet response from {controller.host}:{controller.port} not received in time, probably offline")
+                if self.narration: print(f"UDP packet response from {controller.host}:{controller.port} not received in time, probably offline")
                 return None, None
             except Exception as e:
                 self.logger.debug(f"UDP packet error sending command: {e}")

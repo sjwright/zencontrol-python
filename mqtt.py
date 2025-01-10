@@ -1,3 +1,4 @@
+import ipaddress
 import time
 import json
 import yaml
@@ -54,7 +55,7 @@ class ZenMQTTBridge:
         self.logger: logging.Logger
         self.config: Dict[str, Any]
         self.discovery_prefix: str
-        self.ctrl: ZenController
+        self.control: ZenController
         self.tpi: ZenProtocol
         self.mqttc: mqtt.Client
         
@@ -79,20 +80,65 @@ class ZenMQTTBridge:
             missing = [f for f in mqtt_required if f not in self.config['mqtt']]
             if missing:
                 raise ValueError(f"Missing MQTT config fields: {', '.join(missing)}")
+            
+            # Validate Zencontrol config
+            if not isinstance(self.config['zencontrol'], list):
+                raise ValueError("zencontrol config must be a list")
+            
+            zencontrol_required = ['name', 'label', 'mac', 'host', 'port']
+            for i, config in enumerate(self.config['zencontrol']):
+
+                # Check for required fields
+                missing = [f for f in zencontrol_required if f not in config]
+                if missing:
+                    raise ValueError(f"Missing Zencontrol config fields in entry {i}: {', '.join(missing)}")
                 
-            self.discovery_prefix = self.config['homeassistant']['discovery_prefix']
+                # Validate name format (alphanumeric only)
+                name = config['name']
+                if not re.match(r'^[A-Za-z0-9]+$', name):
+                    raise ValueError(f"Invalid name format in Zencontrol config {i}: {name}. Use only letters and numbers.")
+                
+                # Validate MAC address format (xx:xx:xx:xx:xx:xx)
+                mac = config['mac']
+                if not re.match(r'^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$', mac):
+                    raise ValueError(f"Invalid MAC address format in Zencontrol config {i}: {mac}")
+                
+                # Validate IP address
+                host = config['host']
+                try:
+                    ipaddress.ip_address(host)
+                except ValueError:
+                    raise ValueError(f"Invalid IP address in Zencontrol config {i}: {host}")
+                
+                # Validate port number (1-65535)
+                port = config['port']
+                if not isinstance(port, int) or port < 1 or port > 65535:
+                    raise ValueError(f"Invalid port number in Zencontrol config {i}: {port}")
+            
         except Exception as e:
             self.logger.error(f"Failed to load config file: {e}")
             raise
         
-        # Initialize controller
+        # Initialize Zen
         try:
-            self.ctrl = ZenController(**self.config['zencontrol'][0])
-            self.tpi = ZenProtocol(controllers=[self.ctrl], logger=self.logger, narration=True)
+            self.control = []
+            for config in self.config['zencontrol']:
+                self.control.append(ZenController(
+                    name=config['name'],
+                    label=config['label'],
+                    mac=config['mac'],
+                    host=config['host'],
+                    port=config['port']
+                ))
+            self.tpi = ZenProtocol(controllers=self.control, logger=self.logger, narration=True)
         except Exception as e:
-            self.logger.error(f"Failed to initialize ZenProtocol: {e}")
+            self.logger.error(f"Failed to initialize Zen: {e}")
             raise
         
+        
+        self.discovery_prefix = self.config['homeassistant']['discovery_prefix']
+        
+
         # Initialize MQTT
         try:
             self.mqttc = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
@@ -101,13 +147,15 @@ class ZenMQTTBridge:
             self.mqttc.on_disconnect = self._on_mqtt_disconnect
             
             mqtt_config = self.config["mqtt"]
-            self.mqttc.will_set(topic=f"{self.ctrl.name}/availability", payload="offline", retain=True)
+            for ctrl in self.control:
+                self.mqttc.will_set(topic=f"{ctrl.name}/availability", payload="offline", retain=True)
             self.mqttc.username_pw_set(mqtt_config["user"], mqtt_config["password"])
             self.mqttc.reconnect_delay_set(1, 30)
             self.mqttc.connect(mqtt_config["host"], mqtt_config["port"], mqtt_config["keepalive"])
         except Exception as e:
             self.logger.error(f"Failed to connect to MQTT broker: {e}")
             raise
+
 
     def _on_mqtt_disconnect(self, client: mqtt.Client, userdata: Any, 
                           rc: int, properties: Any = None) -> None:
@@ -152,8 +200,9 @@ class ZenMQTTBridge:
             self.logger.info("Successfully connected to MQTT broker")
             # Resubscribe to topics in case of reconnection
             client.subscribe(f"test/#")
-            client.subscribe(f"{self.discovery_prefix}/light/{self.ctrl.name}/#")
-            client.publish(topic=f"{self.ctrl.name}/availability", payload="online", retain=True)
+            for ctrl in self.control:
+                client.subscribe(f"{self.discovery_prefix}/light/{ctrl.name}/#")
+                client.publish(topic=f"{ctrl.name}/availability", payload="online", retain=True)
         else:
             self.logger.error(f"Failed to connect to MQTT broker with result code {reason_code}")
 
@@ -183,7 +232,10 @@ class ZenMQTTBridge:
                 
                 # Ignore messages not for us        
                 if prefix != self.discovery_prefix: return
-                if controller != self.ctrl.name: return # this bridge only supports a single controller
+
+                # Match to a controller, or ignore
+                ctrl = next((c for c in self.control if c.name == controller), None)
+                if not ctrl: return
 
                 # Process commands
                 match command:
@@ -197,38 +249,38 @@ class ZenMQTTBridge:
                                 if not match_ecg: return
                                 address = int(match_ecg.group(1))
                                 print(f"Parsed MQTT: {command} {component} ECG {address} = {payload}")
-                                self._process_mqtt_light_set(address, payload)
+                                self._process_mqtt_light_set(ZenAddress(ctrl, type=AddressType.ECG, number=address), payload)
             
         except json.JSONDecodeError as e:
             self.logger.error(f"Invalid JSON payload: {e}")
         except Exception as e:
             self.logger.error(f"Error processing MQTT message: {e}")
 
-    def _process_mqtt_light_set(self, gear: int, payload: Dict[str, Any]) -> None:
+    def _process_mqtt_light_set(self, address: ZenAddress, payload: Dict[str, Any]) -> None:
         """Process parsed MQTT payload."""
         if "brightness" in payload:
             brightness = int(payload["brightness"])
             arc_level = self.brightness_to_arc(brightness)
-            self.logger.info(f"Setting gears {gear} brightness to arc {arc_level} (linear {brightness}) ")
-            self.tpi.dali_illuminate(ZenAddress(self.ctrl, type=AddressType.ECG, number=gear), level=arc_level)
+            self.logger.info(f"Setting gear {address.number} brightness to arc {arc_level} (linear {brightness}) ")
+            self.tpi.dali_illuminate(address, level=arc_level)
         
         if "color_temp" in payload:
             mireds = int(payload["color_temp"])
             kelvin = self.mireds_to_kelvin(mireds)
             print(f"Received {mireds}mireds ({kelvin}K) for gear {gear}")
             self.logger.info(f"Setting gear {gear} temperature to {kelvin}K (mireds {mireds})")
-            self.tpi.dali_illuminate(ZenAddress(self.ctrl, type=AddressType.ECG, number=gear), kelvin=kelvin)
-            self.send_light_temp_to_homeassistant(target=gear, kelvin=kelvin)
+            self.tpi.dali_illuminate(address, kelvin=kelvin)
+            self.send_light_temp_to_homeassistant(address, kelvin=kelvin)
         
         # Respond to on/off switching in Home Assistant
         if "state" in payload and "brightness" not in payload and "color_temp" not in payload:
             state = payload["state"]
             if state == "OFF":
-                self.logger.info(f"Turning off gear {gear}")
-                self.tpi.dali_off(ZenAddress(self.ctrl, type=AddressType.ECG, number=gear))
+                self.logger.info(f"Turning off gear {address.number}")
+                self.tpi.dali_off(address)
             elif state == "ON":
-                self.logger.info(f"Turning on gear {gear}")
-                self.tpi.dali_go_to_last_active_level(ZenAddress(self.ctrl, type=AddressType.ECG, number=gear))
+                self.logger.info(f"Turning on gear {address.number}")
+                self.tpi.dali_go_to_last_active_level(address)
 
     # ================================
     # RECEIVED FROM ZEN
@@ -247,12 +299,12 @@ class ZenMQTTBridge:
         if arc_level is None:
             arc_level = self.tpi.dali_query_level(address)
         if arc_level == 0:
-            self._send_state_mqtt("light", f"ecg{address.number}", {
+            self._send_state_mqtt(address, "light", {
                 "state": "OFF"
             })
         else:
             brightness = self.arc_to_brightness(arc_level)
-            self._send_state_mqtt("light", f"ecg{address.number}", {
+            self._send_state_mqtt(address, "light", {
                 "color_mode": "color_temp",
                 "brightness": brightness,
                 "state": "ON"
@@ -272,8 +324,10 @@ class ZenMQTTBridge:
             "state": "ON",
         })
 
-    def _send_state_mqtt(self, component: str, target: str, state_dict: Dict[str, Any]) -> None:
-        mqtt_topic = f"{self.discovery_prefix}/{component}/{self.ctrl.name}/{target}/state"
+    def _send_state_mqtt(self, address: ZenAddress, component: str, state_dict: Dict[str, Any]) -> None:
+        ctrl = address.controller
+        target = f"ecg{address.number}"
+        mqtt_topic = f"{self.discovery_prefix}/{component}/{ctrl.name}/{target}/state"
         state_json = json.dumps(state_dict)
         self.mqttc.publish(
             topic=mqtt_topic, 
@@ -287,125 +341,24 @@ class ZenMQTTBridge:
 
     def setup_lights(self) -> None:
         """Initialize all lights found on the DALI bus for Home Assistant auto-discovery."""
-        addresses = self.tpi.query_control_gear_dali_addresses(controller=self.ctrl)
-        for address in addresses:
-
-            """Configure a single light for Home Assistant auto-discovery."""
-            label = self.tpi.query_dali_device_label(address, generic_if_none=True)
-            cgtype = self.tpi.query_dali_colour_features(address)
-            colour_temp_limits = self.tpi.query_dali_colour_temp_limits(address)
-            serial = self.tpi.query_dali_serial(address)
-            # fitting = self.tpi.query_dali_fitting_number(controller=self.ctrl, gear=gear)
-            object_id = f"{self.ctrl.name}_ecg{address.number}"
-            unique_id = f"{self.ctrl.name}_ecg{address.number}_{serial}"
-            mqtt_topic = f"{self.discovery_prefix}/light/{self.ctrl.name}/ecg{address.number}"
-            
-            config_dict = {
-                "component": "light",
-                "name": label,
-                "object_id": object_id,
-                "unique_id": unique_id,
-                "schema": "json",
-                "payload_off": "OFF",
-                "payload_on": "ON",
-                "command_topic": f"{mqtt_topic}/set",
-                "state_topic": f"{mqtt_topic}/state",
-                "availability_topic": f"{self.ctrl.name}/availability",
-                "json_attributes_topic": f"{mqtt_topic}/attributes",
-                "device": {
-                    "manufacturer": "zencontrol",
-                    "identifiers": f"zencontrol-{self.ctrl.name}",
-                    "name": self.ctrl.label,
-                },
-                "effect": False,
-                "retain": False,
-            }
-            if cgtype.get("supports_tunable", False) is True:
-                config_dict["brightness"] = True
-                config_dict["supported_color_modes"] = ["color_temp"]
-                config_dict["min_mireds"] = self.kelvin_to_mireds(colour_temp_limits.get("soft_coolest", Constants.DEFAULT_COOLEST_TEMP))
-                config_dict["max_mireds"] = self.kelvin_to_mireds(colour_temp_limits.get("soft_warmest", Constants.DEFAULT_WARMEST_TEMP))
-            
-            elif cgtype.get("rgbwaf_channels", 0) == Constants.RGB_CHANNELS:
-                config_dict["brightness"] = True
-                config_dict["supported_color_modes"] = ["rgb"]
-            
-            elif cgtype.get("rgbwaf_channels", 0) == Constants.RGBW_CHANNELS:
-                config_dict["brightness"] = True
-                config_dict["supported_color_modes"] = ["rgbw"]
-            
-            elif cgtype.get("rgbwaf_channels", 0) == Constants.RGBWW_CHANNELS:
-                config_dict["brightness"] = True
-                config_dict["supported_color_modes"] = ["rgbww"]
-            
-            else:
-                config_dict["brightness"] = True
-                config_dict["supported_color_modes"] = ["rgb"]
-            
-            mqtt_topic = f"{mqtt_topic}/config"
-            config_json = json.dumps(config_dict)
-            self.mqttc.publish(
-                topic=mqtt_topic, 
-                payload=config_json, 
-                retain=True)
-            print(Fore.LIGHTRED_EX + f"MQTT sent - {mqtt_topic}: " + Style.DIM + f"{config_json}" + Style.RESET_ALL)
-
-    def setup_group_scenes(self) -> None:
-        """Initialize all group scenes found on the DALI bus for Home Assistant auto-discovery."""
-        # Get all groups
-        groups = self.tpi.query_groups(controller=self.ctrl)
-        # For each group
-        for group in groups:
-            # Get all scenes for the group
-            scenes = self.tpi.query_group_scenes(controller=self.ctrl, group=group)
-            # For each scene
-            for scene in scenes:
-                # Get the scene label
-                scene_label = self.tpi.query_group_scene_label(controller=self.ctrl, group=group, scene=scene)
-                # Create the MQTT topic
-                mqtt_topic = f"{self.discovery_prefix}/scene/{self.ctrl.name}/group{group.number}/scene{scene.number}"
-                # Create the config dictionary
+        # For each controller
+        for ctrl in self.control:
+            # Get all addresses with ECG (control gear)
+            addresses = self.tpi.query_control_gear_dali_addresses(controller=ctrl)
+            # For each address
+            for address in addresses:
+                # Configure a single light for Home Assistant auto-discovery
+                label = self.tpi.query_dali_device_label(address, generic_if_none=True)
+                cgtype = self.tpi.query_dali_colour_features(address)
+                colour_temp_limits = self.tpi.query_dali_colour_temp_limits(address)
+                serial = self.tpi.query_dali_serial(address)
+                # fitting = self.tpi.query_dali_fitting_number(controller=self.ctrl, gear=gear)
+                object_id = f"{ctrl.name}_ecg{address.number}"
+                unique_id = f"{ctrl.name}_ecg{address.number}_{serial}"
+                mqtt_topic = f"{self.discovery_prefix}/light/{ctrl.name}/ecg{address.number}"
+                
                 config_dict = {
-                    "component": "scene",
-                    "name": scene_label,
-                    "object_id": f"{self.ctrl.name}_group{group.number}_scene{scene.number}",
-                    "unique_id": f"{self.ctrl.name}_group{group.number}_scene{scene.number}",
-                }
-        # Get all scenes
-        scenes = self.tpi.query_group_scenes(controller=self.ctrl)
-        for scene in scenes:
-            print(f"Setting up group scene {scene}")
-
-    def setup_instances(self) -> None:
-        """Initialize all instances found on the DALI bus for Home Assistant auto-discovery."""
-        addresses = self.tpi.query_dali_addresses_with_instances(controller=self.ctrl, start_address=0)
-        for address in addresses:
-            device_label = self.tpi.query_dali_device_label(address, generic_if_none=True)
-            device_serial = self.tpi.query_dali_serial(address)
-            instances = self.tpi.query_instances_by_address(address)
-            for instance in instances:
-                # print(f"attempting to setup address {address} device {device_label} instance {instance}")
-                """Configure a single instance for Home Assistant auto-discovery."""
-                label = self.tpi.query_dali_instance_label(instance, generic_if_none=True)
-                # fitting = self.tpi.query_dali_instance_fitting_number(instance)
-                object_id = f"{self.ctrl.name}_ecd{instance.address.number}_inst{instance.number}"
-                unique_id = f"{self.ctrl.name}_ecd{instance.address.number}_{device_serial}_inst{instance.number}"
-                match instance.type:
-                    case 0x01: # Push button - generates short/long press events
-                        component = "event"
-                    case 0x02: # Absolute input (slider/dial) - generates integer values
-                        component = "event"
-                    case 0x03: # Occupancy/motion sensor - generates occupied/unoccupied events
-                        component = "binary_sensor"
-                    case 0x04: # Light sensor - events not currently forwarded
-                        return
-                    case 0x06: # General sensor (water flow, power etc) - events not currently forwarded
-                        return
-                    case _:
-                        return
-                mqtt_topic = f"{self.discovery_prefix}/{component}/{self.ctrl.name}/ecd{instance.address.number}_inst{instance.number}"
-                config_dict = {
-                    "component": component,
+                    "component": "light",
                     "name": label,
                     "object_id": object_id,
                     "unique_id": unique_id,
@@ -414,19 +367,38 @@ class ZenMQTTBridge:
                     "payload_on": "ON",
                     "command_topic": f"{mqtt_topic}/set",
                     "state_topic": f"{mqtt_topic}/state",
-                    "availability_topic": f"{self.ctrl.name}/availability",
+                    "availability_topic": f"{ctrl.name}/availability",
                     "json_attributes_topic": f"{mqtt_topic}/attributes",
                     "device": {
                         "manufacturer": "zencontrol",
-                        "identifiers": f"zencontrol-{self.ctrl.name}",
-                        "name": self.ctrl.label,
+                        "identifiers": f"zencontrol-{ctrl.name}",
+                        "name": ctrl.label,
                     },
+                    "effect": False,
                     "retain": False,
                 }
-                match instance.type:
-                    case 0x03: # Occupancy/motion sensor - generates occupied/unoccupied events
-                        config_dict["device_class"] = "motion"
-                        config_dict["expire_after"] = 120
+                if cgtype.get("supports_tunable", False) is True:
+                    config_dict["brightness"] = True
+                    config_dict["supported_color_modes"] = ["color_temp"]
+                    config_dict["min_mireds"] = self.kelvin_to_mireds(colour_temp_limits.get("soft_coolest", Constants.DEFAULT_COOLEST_TEMP))
+                    config_dict["max_mireds"] = self.kelvin_to_mireds(colour_temp_limits.get("soft_warmest", Constants.DEFAULT_WARMEST_TEMP))
+                
+                elif cgtype.get("rgbwaf_channels", 0) == Constants.RGB_CHANNELS:
+                    config_dict["brightness"] = True
+                    config_dict["supported_color_modes"] = ["rgb"]
+                
+                elif cgtype.get("rgbwaf_channels", 0) == Constants.RGBW_CHANNELS:
+                    config_dict["brightness"] = True
+                    config_dict["supported_color_modes"] = ["rgbw"]
+                
+                elif cgtype.get("rgbwaf_channels", 0) == Constants.RGBWW_CHANNELS:
+                    config_dict["brightness"] = True
+                    config_dict["supported_color_modes"] = ["rgbww"]
+                
+                else:
+                    config_dict["brightness"] = True
+                    config_dict["supported_color_modes"] = ["rgb"]
+                
                 mqtt_topic = f"{mqtt_topic}/config"
                 config_json = json.dumps(config_dict)
                 self.mqttc.publish(
@@ -434,6 +406,100 @@ class ZenMQTTBridge:
                     payload=config_json, 
                     retain=True)
                 print(Fore.LIGHTRED_EX + f"MQTT sent - {mqtt_topic}: " + Style.DIM + f"{config_json}" + Style.RESET_ALL)
+
+    def setup_group_scenes(self) -> None:
+        """Initialize all group scenes found on the DALI bus for Home Assistant auto-discovery."""
+        # For each controller
+        for ctrl in self.control:
+            # Get all groups
+            groups = self.tpi.query_groups(controller=ctrl)
+            # For each group
+            for group in groups:
+                # Get all scenes for the group
+                scenes = self.tpi.query_group_scenes(controller=ctrl, group=group)
+                # For each scene
+                for scene in scenes:
+                    # Get the scene label
+                    scene_label = self.tpi.query_group_scene_label(controller=ctrl, group=group, scene=scene)
+                    # Create the MQTT topic
+                    mqtt_topic = f"{self.discovery_prefix}/scene/{ctrl.name}/group{group.number}/scene{scene.number}"
+                    # Create the config dictionary
+                    config_dict = {
+                        "component": "scene",
+                        "name": scene_label,
+                        "object_id": f"{ctrl.name}_group{group.number}_scene{scene.number}",
+                        "unique_id": f"{ctrl.name}_group{group.number}_scene{scene.number}",
+                    }
+            # Get all scenes
+            scenes = self.tpi.query_group_scenes(controller=ctrl)
+            for scene in scenes:
+                print(f"Setting up group scene {scene}")
+
+    def setup_instances(self) -> None:
+        """Initialize all instances found on the DALI bus for Home Assistant auto-discovery."""
+        # For each controller
+        for ctrl in self.control:
+            # Get all addresses with instances
+            addresses = self.tpi.query_dali_addresses_with_instances(controller=ctrl, start_address=0)
+            # For each address
+            for address in addresses:
+                # Get device information
+                device_label = self.tpi.query_dali_device_label(address, generic_if_none=True)
+                device_serial = self.tpi.query_dali_serial(address)
+                # Get all instances for the device
+                instances = self.tpi.query_instances_by_address(address)
+                # For each instance
+                for instance in instances:
+                    # print(f"attempting to setup address {address} device {device_label} instance {instance}")
+                    """Configure a single instance for Home Assistant auto-discovery."""
+                    label = self.tpi.query_dali_instance_label(instance, generic_if_none=True)
+                    # fitting = self.tpi.query_dali_instance_fitting_number(instance)
+                    object_id = f"{ctrl.name}_ecd{instance.address.number}_inst{instance.number}"
+                    unique_id = f"{ctrl.name}_ecd{instance.address.number}_{device_serial}_inst{instance.number}"
+                    match instance.type:
+                        case 0x01: # Push button - generates short/long press events
+                            component = "event"
+                        case 0x02: # Absolute input (slider/dial) - generates integer values
+                            component = "event"
+                        case 0x03: # Occupancy/motion sensor - generates occupied/unoccupied events
+                            component = "binary_sensor"
+                        case 0x04: # Light sensor - events not currently forwarded
+                            return
+                        case 0x06: # General sensor (water flow, power etc) - events not currently forwarded
+                            return
+                        case _:
+                            return
+                    mqtt_topic = f"{self.discovery_prefix}/{component}/{ctrl.name}/ecd{instance.address.number}_inst{instance.number}"
+                    config_dict = {
+                        "component": component,
+                        "name": label,
+                        "object_id": object_id,
+                        "unique_id": unique_id,
+                        "schema": "json",
+                        "payload_off": "OFF",
+                        "payload_on": "ON",
+                        "command_topic": f"{mqtt_topic}/set",
+                        "state_topic": f"{mqtt_topic}/state",
+                        "availability_topic": f"{ctrl.name}/availability",
+                        "json_attributes_topic": f"{mqtt_topic}/attributes",
+                        "device": {
+                            "manufacturer": "zencontrol",
+                            "identifiers": f"zencontrol-{ctrl.name}",
+                            "name": ctrl.label,
+                        },
+                        "retain": False,
+                    }
+                    match instance.type:
+                        case 0x03: # Occupancy/motion sensor - generates occupied/unoccupied events
+                            config_dict["device_class"] = "motion"
+                            config_dict["expire_after"] = 120
+                    mqtt_topic = f"{mqtt_topic}/config"
+                    config_json = json.dumps(config_dict)
+                    self.mqttc.publish(
+                        topic=mqtt_topic, 
+                        payload=config_json, 
+                        retain=True)
+                    print(Fore.LIGHTRED_EX + f"MQTT sent - {mqtt_topic}: " + Style.DIM + f"{config_json}" + Style.RESET_ALL)
         
     # ================================
     # UTILITY FUNCTIONS
@@ -470,17 +536,21 @@ class ZenMQTTBridge:
     def run(self) -> None:
         """Main method to start the bridge."""
         try:
-            print("Waiting for DALI bus to be ready...")
-            self.logger.info("Waiting for DALI bus to be ready...")
-            while not self.tpi.query_is_dali_ready(controller=self.ctrl):
-                time.sleep(Constants.STARTUP_POLL_DELAY)
+            
+            # Wait for Zen controllers to be ready
+            for ctrl in self.control:
+            
+                print(f"Waiting for DALI bus on controller '{ctrl.label}' to be ready...")
+                self.logger.info(f"Waiting for DALI bus on controller '{ctrl.label}' to be ready...")
+                while not self.tpi.query_is_dali_ready(controller=ctrl):
+                    time.sleep(Constants.STARTUP_POLL_DELAY)
 
-            print("Waiting for controller to finish booting...")
-            self.logger.info("Waiting for controller to finish booting...")
-            while not self.tpi.query_controller_startup_complete(controller=self.ctrl):
-                time.sleep(Constants.STARTUP_POLL_DELAY)
+                print(f"Waiting for controller '{ctrl.label}' to finish booting...")
+                self.logger.info(f"Waiting for controller '{ctrl.label}' to finish booting...")
+                while not self.tpi.query_controller_startup_complete(controller=ctrl):
+                    time.sleep(Constants.STARTUP_POLL_DELAY)
                 
-            """Start event monitoring and MQTT services."""
+            # Start event monitoring and MQTT services
             self.tpi.start_event_monitoring(
                 level_change_callback=self._level_change_event,
                 colour_changed_callback=self._color_temp_change_event
