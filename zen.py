@@ -102,8 +102,8 @@ class ZenInstance:
     address: ZenAddress
     type: InstanceType
     number: int
-    active: bool
-    error: bool
+    active: Optional[bool] = None
+    error: Optional[bool] = None
     def __post_init__(self):
         if not 0 <= self.number < Const.MAX_INSTANCE: raise ValueError("Instance number must be between 0 and 31")
 
@@ -161,29 +161,29 @@ class ZenColourTC(ZenColourGeneric):
         
 @dataclass()
 class ZenEventMask:
-    button_press_event: bool = False
-    button_hold_event: bool = False
-    absolute_input_event: bool = False
-    level_change_event: bool = False
-    group_level_change_event: bool = False
-    scene_change_event: bool = False
+    button_press: bool = False
+    button_hold: bool = False
+    absolute_input: bool = False
+    level_change: bool = False
+    group_level_change: bool = False
+    scene_change: bool = False
     is_occupied: bool = False
     is_unoccupied: bool = False
-    colour_changed: bool = False
-    profile_changed: bool = False
+    colour_change: bool = False
+    profile_change: bool = False
     @classmethod
     def all_events(cls):
         return cls(
-            button_press_event = True,
-            button_hold_event = True,
-            absolute_input_event = True,
-            level_change_event = True,
-            group_level_change_event = True,
-            scene_change_event = True,
+            button_press = True,
+            button_hold = True,
+            absolute_input = True,
+            level_change = True,
+            group_level_change = True,
+            scene_change = True,
             is_occupied = True,
             is_unoccupied = True,
-            colour_changed = True,
-            profile_changed = True
+            colour_change = True,
+            profile_change = True
         )
     @classmethod
     def from_upper_lower(cls, upper: int, lower: int) -> Self:
@@ -191,29 +191,29 @@ class ZenEventMask:
     @classmethod
     def from_double_byte(cls, event_mask: int) -> Self:
         return cls(
-            button_press_event = (event_mask & (1 << 0)) != 0,
-            button_hold_event = (event_mask & (1 << 1)) != 0,
-            absolute_input_event = (event_mask & (1 << 2)) != 0,
-            level_change_event = (event_mask & (1 << 3)) != 0,
-            group_level_change_event = (event_mask & (1 << 4)) != 0,
-            scene_change_event = (event_mask & (1 << 5)) != 0,
+            button_press = (event_mask & (1 << 0)) != 0,
+            button_hold = (event_mask & (1 << 1)) != 0,
+            absolute_input = (event_mask & (1 << 2)) != 0,
+            level_change = (event_mask & (1 << 3)) != 0,
+            group_level_change = (event_mask & (1 << 4)) != 0,
+            scene_change = (event_mask & (1 << 5)) != 0,
             is_occupied = (event_mask & (1 << 6)) != 0,
             is_unoccupied = (event_mask & (1 << 7)) != 0,
-            colour_changed = (event_mask & (1 << 8)) != 0,
-            profile_changed = (event_mask & (1 << 9)) != 0
+            colour_change = (event_mask & (1 << 8)) != 0,
+            profile_change = (event_mask & (1 << 9)) != 0
         )
     def bitmask(self) -> int:
         event_mask = 0x00
-        if self.button_press_event: event_mask |= (1 << 0)
-        if self.button_hold_event: event_mask |= (1 << 1)
-        if self.absolute_input_event: event_mask |= (1 << 2)
-        if self.level_change_event: event_mask |= (1 << 3)
-        if self.group_level_change_event: event_mask |= (1 << 4)
-        if self.scene_change_event: event_mask |= (1 << 5)
+        if self.button_press: event_mask |= (1 << 0)
+        if self.button_hold: event_mask |= (1 << 1)
+        if self.absolute_input: event_mask |= (1 << 2)
+        if self.level_change: event_mask |= (1 << 3)
+        if self.group_level_change: event_mask |= (1 << 4)
+        if self.scene_change: event_mask |= (1 << 5)
         if self.is_occupied: event_mask |= (1 << 6)
         if self.is_unoccupied: event_mask |= (1 << 7)
-        if self.colour_changed: event_mask |= (1 << 8)
-        if self.profile_changed: event_mask |= (1 << 9)
+        if self.colour_change: event_mask |= (1 << 8)
+        if self.profile_change: event_mask |= (1 << 9)
         return event_mask
     def upper(self) -> int:
         return (self.bitmask() >> 8) & 0xFF  
@@ -346,8 +346,8 @@ class ZenProtocol:
         0x05: "SCENE_CHANGE_EVENT",
         0x06: "IS_OCCUPIED",
         0x07: "IS_UNOCCUPIED",
-        0x08: "COLOUR_CHANGED",
-        0x09: "PROFILE_CHANGED"
+        0x08: "COLOUR_CHANGE",
+        0x09: "PROFILE_CHANGE"
     }
     
     DALI_STATUS_MASKS: Dict[int, str] = {
@@ -399,8 +399,8 @@ class ZenProtocol:
         self.scene_change_callback = None
         self.is_occupied_callback = None
         self.is_unoccupied_callback = None
-        self.colour_changed_callback = None
-        self.profile_changed_callback = None
+        self.colour_change_callback = None
+        self.profile_change_callback = None
 
     def __del__(self):
         """Cleanup when object is destroyed"""
@@ -591,8 +591,8 @@ class ZenProtocol:
                             scene_change_callback=None,
                             is_occupied_callback=None,
                             is_unoccupied_callback=None,
-                            colour_changed_callback=None,
-                            profile_changed_callback=None
+                            colour_change_callback=None,
+                            profile_change_callback=None
                             ):
 
         # Check if event monitoring is already running
@@ -609,8 +609,8 @@ class ZenProtocol:
         self.scene_change_callback = scene_change_callback
         self.is_occupied_callback = is_occupied_callback
         self.is_unoccupied_callback = is_unoccupied_callback
-        self.colour_changed_callback = colour_changed_callback
-        self.profile_changed_callback = profile_changed_callback
+        self.colour_change_callback = colour_change_callback
+        self.profile_change_callback = profile_change_callback
         
         self.stop_event.clear()
         self.event_thread = Thread(target=self._event_listener)
@@ -697,42 +697,49 @@ class ZenProtocol:
                 }
                 
                 match event_id:
-                    case 0x00: # BUTTON_PRESS_EVENT
+                    case 0x00: # BUTTON_PRESS
                         # Target - Control Device DALI Address 59 (+64 for Control devices)
                         # ======= Data bytes =======
                         # 12 0x05 (Data) 1st byte - Instance number. Useful for identifying the exact button on a keypad.
                         if self.button_press_callback:
-                            address = ZenAddress(controller=controller, type=AddressType.ECD, number=target)
+                            address = ZenAddress(controller=controller, type=AddressType.ECD, number=target-64)
                             instance = ZenInstance(address=address, type=InstanceType.PUSH_BUTTON, number=payload[0])
                             self.button_press_callback(instance=instance, event_data=event_data)
-                    case 0x01: # BUTTON_HOLD_EVENT
+                    case 0x01: # BUTTON_HOLD
                         if self.button_hold_callback:
-                            address = ZenAddress(controller=controller, type=AddressType.ECD, number=target)
+                            address = ZenAddress(controller=controller, type=AddressType.ECD, number=target-64)
                             instance = ZenInstance(address=address, type=InstanceType.PUSH_BUTTON, number=payload[0])
                             self.button_hold_callback(instance=instance, event_data=event_data)
-                    case 0x02: # ABSOLUTE_INPUT_EVENT
+                    case 0x02: # ABSOLUTE_INPUT
                         if self.absolute_input_callback:
-                            address = ZenAddress(controller=controller, type=AddressType.ECD, number=target)
+                            address = ZenAddress(controller=controller, type=AddressType.ECD, number=target-64)
                             instance = ZenInstance(address=address, type=InstanceType.PUSH_BUTTON, number=payload[0])
                             self.absolute_input_callback(instance=instance, event_data=event_data)
-                    case 0x03: # LEVEL_CHANGE_EVENT
+                    case 0x03: # LEVEL_CHANGE
                         if self.level_change_callback:
                             address = ZenAddress(controller=controller, type=AddressType.ECG, number=target)
                             self.level_change_callback(address=address, arc_level=payload[0], event_data=event_data)
-                    case 0x04: # GROUP_LEVEL_CHANGE_EVENT
+                    case 0x04: # GROUP_LEVEL_CHANGE
                         if self.group_level_change_callback:
                             address = ZenAddress(controller=controller, type=AddressType.GROUP, number=target)
                             self.group_level_change_callback(address=address, arc_level=payload[0], event_data=event_data)
-                    case 0x05: # SCENE_CHANGE_EVENT
+                    case 0x05: # SCENE_CHANGE
                         if self.scene_change_callback:
-                            address = ZenAddress(controller=controller, type=AddressType.ECG if target < 64 else AddressType.GROUP, number=target)
+                            if target <= 63:
+                                address = ZenAddress(controller=controller, type=AddressType.ECG, number=target)
+                            elif 64 <= target <= 79:
+                                address = ZenAddress(controller=controller, type=AddressType.GROUP, number=target-64)
+                            else:
+                                self.logger.debug(f"Invalid scene change event target: {target}")
+                                if self.narration: print(f"Invalid scene change event target: {target}")
+                                continue
                             self.scene_change_callback(address=address, scene=payload[0], event_data=event_data)
                     case 0x06: # IS_OCCUPIED
                         # ======= Data bytes =======
                         # 12 0x05 1st byte - Instance number. Useful for identifying the exact sensor
                         # 13 0x01 2nd byte - Unneeded data
                         if self.is_occupied_callback:
-                            address = ZenAddress(controller=controller, type=AddressType.ECD, number=target)
+                            address = ZenAddress(controller=controller, type=AddressType.ECD, number=target-64)
                             instance = ZenInstance(address=address, type=InstanceType.OCCUPANCY_SENSOR, number=payload[0])
                             self.is_occupied_callback(instance=instance, event_data=event_data)
                     case 0x07: # IS_UNOCCUPIED
@@ -740,10 +747,10 @@ class ZenProtocol:
                         # 12 0x05 1st byte - Instance number. Useful for identifying the exact sensor
                         # 13 0x01 2nd byte - Unneeded data
                         if self.is_unoccupied_callback:
-                            address = ZenAddress(controller=controller, type=AddressType.ECD, number=target)
+                            address = ZenAddress(controller=controller, type=AddressType.ECD, number=target-64)
                             instance = ZenInstance(address=address, type=InstanceType.OCCUPANCY_SENSOR, number=payload[0])
                             self.is_unoccupied_callback(instance=instance, event_data=event_data)
-                    case 0x08: # COLOUR_CHANGED
+                    case 0x08: # COLOUR_CHANGE
                         # ======= RGBWAF colour mode data bytes =======
                         # 12 0x80 RGBWAF Colour Mode
                         # 13 0xFF R - Red Byte
@@ -762,16 +769,44 @@ class ZenProtocol:
                         # 14 0x00 X - Lo Byte
                         # 15 0xFF Y - Hi Byte
                         # 16 0x00 Y - Lo Byte
-                        if self.colour_changed_callback:
+                        if self.colour_change_callback:
                             address = ZenAddress(controller=controller, type=AddressType.ECG if target < 64 else AddressType.GROUP, number=target)
-                            self.colour_changed_callback(address=address, colour=payload, event_data=event_data)
-                    case 0x09: # PROFILE_CHANGED
+                            match payload[0]:
+                                case ZenColourType.RGBWAF:
+                                    if len(payload) != 7:
+                                        self.logger.debug(f"Invalid colour change event payload length: expected 7, got {len(payload)}")
+                                        if self.narration: print(f"Invalid colour change event payload length: expected 7, got {len(payload)}")
+                                        continue
+                                    colour = ZenColourRGBWAF(r=payload[1], g=payload[2], b=payload[3], w=payload[4], a=payload[5], f=payload[6])
+                                    self.colour_change_callback(address=address, colour=colour, event_data=event_data)
+                                case ZenColourType.TC:
+                                    if len(payload) != 3:
+                                        self.logger.debug(f"Invalid colour change event payload length: expected 3, got {len(payload)}")
+                                        if self.narration: print(f"Invalid colour change event payload length: expected 3, got {len(payload)}")
+                                        continue
+                                    kelvin = (payload[1] << 8) | payload[2]
+                                    colour = ZenColourTC(kelvin=kelvin)
+                                    self.colour_change_callback(address=address, colour=colour, event_data=event_data)
+                                case ZenColourType.XY:
+                                    if len(payload) != 5:
+                                        self.logger.debug(f"Invalid colour change event payload length: expected 5, got {len(payload)}")
+                                        if self.narration: print(f"Invalid colour change event payload length: expected 5, got {len(payload)}")
+                                        continue
+                                    x = (payload[1] << 8) | payload[2]
+                                    y = (payload[3] << 8) | payload[4]
+                                    colour = ZenColourXY(x=x, y=y)
+                                    self.colour_change_callback(address=address, colour=colour, event_data=event_data)
+                                case _:
+                                    self.logger.debug(f"Unknown colour change event: {payload[0]}")
+                                    if self.narration: print(f"Unknown colour change event: {payload[0]}")
+                                    continue
+                    case 0x09: # PROFILE_CHANGE
                         # ======= Data bytes =======
                         # 12 0x00 Profile Hi Byte
                         # 13 0x0F Profile Lo Byte
-                        if self.profile_changed_callback:
+                        if self.profile_change_callback:
                             payload_int = int.from_bytes(payload, byteorder='big')
-                            self.profile_changed_callback(controller=controller, profile=payload_int, event_data=event_data)
+                            self.profile_change_callback(controller=controller, profile=payload_int, event_data=event_data)
                 
         except Exception as e:
             if self.narration: print(f"Event listener error: {e}")
