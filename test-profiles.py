@@ -3,7 +3,7 @@ import yaml
 
 config = yaml.safe_load(open("config.yaml"))
 ctrl = ZenController(**config.get('zencontrol')[0])
-tpi = ZenProtocol(controllers=[ctrl])
+tpi = ZenProtocol(controllers=[ctrl], narration=True)
 
 
 current_profile = tpi.query_current_profile_number(ctrl)

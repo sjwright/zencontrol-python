@@ -3,7 +3,7 @@ import yaml
 
 config = yaml.safe_load(open("config.yaml"))
 ctrl = ZenController(**config.get('zencontrol')[0])
-tpi = ZenProtocol(controllers=[ctrl])
+tpi = ZenProtocol(controllers=[ctrl], narration=True)
 
 
 tpi.set_system_variable(ctrl, 4, 420)

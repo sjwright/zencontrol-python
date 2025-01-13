@@ -20,6 +20,16 @@ class Const:
     MAX_KELVIN = 20000
     MAX_LEVEL = 254
     
+    # Default color temperature limits
+    DEFAULT_WARMEST_TEMP = 2700
+    DEFAULT_COOLEST_TEMP = 6500
+    
+    # RGBWAF channel counts
+    RGB_CHANNELS = 3
+    RGBW_CHANNELS = 4
+    RGBWW_CHANNELS = 5
+    
+    
 @dataclass
 class ZenController:
     name: str
@@ -369,7 +379,7 @@ class ZenProtocol:
         0x06: "GENERAL_PURPOSE_SENSOR"  # General sensor (water flow, power etc) - events not currently forwarded
     }
 
-    def __init__(self, controllers: List[ZenController], logger: logging.Logger=None, narration: bool = True, multicast_group: str = "239.255.90.67", multicast_port: int = 6969):
+    def __init__(self, controllers: List[ZenController], logger: logging.Logger=None, narration: bool = False, multicast_group: str = "239.255.90.67", multicast_port: int = 6969):
         self.controllers = controllers # List of controllers, used to match events to controllers and to include controller object in callbacks
         self.logger = logger
         self.narration = narration
@@ -535,8 +545,8 @@ class ZenProtocol:
                 self.command_socket.sendto(complete_packet, (controller.host, controller.port))
                 response, addr = self.command_socket.recvfrom(1024)
                 
-                self.logger.debug(f"UDP response: [{', '.join(f'0x{b:02x}' for b in response)}]")
-                if self.narration: print(Fore.MAGENTA + f"    SEND: [{', '.join(f'0x{b:02x}' for b in complete_packet)}]" + Fore.CYAN + f"     RECV: [{', '.join(f'0x{b:02x}' for b in response)}]" + Style.RESET_ALL)
+                self.logger.debug(f"UDP response from {controller.host}:{controller.port}: [{', '.join(f'0x{b:02x}' for b in response)}]")
+                if self.narration: print(Fore.MAGENTA + f"SEND: [{', '.join(f'0x{b:02x}' for b in complete_packet)}]" + Fore.CYAN + f"  RECV: [{', '.join(f'0x{b:02x}' for b in response)}]" + Style.RESET_ALL)
 
                 # Verify response format and sequence counter
                 if len(response) < 4:  # Minimum valid response is 4 bytes
@@ -646,7 +656,7 @@ class ZenProtocol:
                 data, ip_address = self.event_socket.recvfrom(1024)
                 
                 self.logger.debug(f"Received multicast from {ip_address}: [{', '.join(f'0x{b:02x}' for b in data)}]")
-                if self.narration: print(Fore.MAGENTA + f"    MULTICAST FROM: {ip_address}" + Fore.CYAN + f"     RECV: [{', '.join(f'0x{b:02x}' for b in data)}]" + Style.RESET_ALL)
+                if self.narration: print(Fore.MAGENTA + f"MULTICAST FROM: {ip_address}" + Fore.CYAN + f"  RECV: [{', '.join(f'0x{b:02x}' for b in data)}]" + Style.RESET_ALL)
                 
                 # Drop packet if it doesn't match the expected structure
                 if len(data) < 2 or data[0:2] != bytes([0x5a, 0x43]):
@@ -1595,17 +1605,72 @@ class ZenProtocol:
     def disable_tpi_event_emit(self, controller: ZenController):
         """Disable TPI event emit."""
         self.enable_tpi_event_emit(controller, False)
+    
+    def get_all_lights(self, controller: ZenController) -> List[dict]:
+        """Get a list of lights for a controller."""
+        lights = []
+        addresses = self.query_control_gear_dali_addresses(controller=controller)
+        for address in addresses:
+            label = self.query_dali_device_label(address, generic_if_none=True)
+            serial = self.query_dali_serial(address)
+            cgtype = self.query_dali_colour_features(address)
 
-    def dali_illuminate(self, address: ZenAddress, level: Optional[int] = None, kelvin: Optional[int] = None) -> bool:
+            light = {
+                "address": address,
+                "label": label,
+                "serial": serial,
+                "object_id": f"{controller.name}_ecg{address.number}",
+                "unique_id": f"{controller.name}_ecg{address.number}_{serial}",
+                "features": {
+                    "brightness": False,
+                    "temperature": False,
+                    "RGB": False,
+                    "RGBW": False,
+                    "RGBWW": False,
+                },
+                "properties": {
+                    "min_kelvin": None,
+                    "max_kelvin": None,
+                },
+            }
+            if cgtype.get("supports_tunable", False) is True:
+                colour_temp_limits = self.query_dali_colour_temp_limits(address)
+                light["features"]["brightness"] = True
+                light["features"]["temperature"] = True
+                light["properties"]["min_kelvin"] = colour_temp_limits.get("soft_warmest", Const.DEFAULT_WARMEST_TEMP)
+                light["properties"]["max_kelvin"] = colour_temp_limits.get("soft_coolest", Const.DEFAULT_COOLEST_TEMP)
+            
+            elif cgtype.get("rgbwaf_channels", 0) == Const.RGB_CHANNELS:
+                light["features"]["brightness"] = True
+                light["features"]["RGB"] = True
+            
+            elif cgtype.get("rgbwaf_channels", 0) == Const.RGBW_CHANNELS:
+                light["features"]["brightness"] = True
+                light["features"]["RGBW"] = True
+            
+            elif cgtype.get("rgbwaf_channels", 0) == Const.RGBWW_CHANNELS:
+                light["features"]["brightness"] = True
+                light["features"]["RGBWW"] = True
+
+            lights.append(light)
+        return lights
+
+    def set_light_state(self,
+                        address: ZenAddress,
+                        switch_on: bool = False,
+                        switch_off: bool = False,
+                        level: Optional[int] = None,
+                        kelvin: Optional[int] = None
+                        ) -> bool:
         """Set a DALI address (ECG, group, broadcast) to a kelvin (None, or 1000-20000) and/or level (None or 0-254). Returns True if succeeded, else False."""
-        if kelvin is not None:
-            return self.send_colour(controller=address.controller,
-                                    command=self.CMD["DALI_COLOUR"],
-                                    address=address.ecg_or_group_or_broadcast(),
-                                    colour=ZenColourTC(level=level if level is not None else 255, kelvin=kelvin)
-                                    )
+        if switch_off:
+            return self.dali_off(address)
+        elif kelvin is not None:
+            colour = ZenColourTC(level=level if level is not None else 255, kelvin=kelvin)
+            return self.send_colour(controller=address.controller, command=self.CMD["DALI_COLOUR"], address=address.ecg_or_group_or_broadcast(), colour=colour)
         elif level is not None:
             return self.dali_arc_level(address, level)
+        elif switch_on:
+            return self.dali_go_to_last_active_level(address)
         else:
             raise ValueError("Either kelvin or arc_level must be provided")
-    

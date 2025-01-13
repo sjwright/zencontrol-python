@@ -3,7 +3,7 @@ import yaml
 
 config = yaml.safe_load(open("config.yaml"))
 ctrl = ZenController(**config.get('zencontrol')[0])
-tpi = ZenProtocol(controllers=[ctrl])
+tpi = ZenProtocol(controllers=[ctrl], narration=True)
 
 ecg1 = ZenAddress(ctrl, AddressType.ECG, 0x01)
 ecd1 = ZenAddress(ctrl, AddressType.ECD, 0x01)
