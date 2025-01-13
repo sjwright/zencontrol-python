@@ -57,19 +57,19 @@ The following TPI Advanced events are not firing as documented:
 
 ## TPI Advanced wishlist
 
-The following is not yet possible with the current TPI Advanced:
+* Command to fetch colour temperatures as entered in the "colour scene assignment" section of the Zen cloud grid view. (Similar to QUERY_SCENE_LEVELS_BY_ADDRESS but for colour temperatures.)
+* Command to read an ambient light sensor's lux value.
+* Event notification for ambient light sensor lux values.
+* Event notification when a scene is recalled on a group, i.e. GROUP_SCENE_CHANGE_EVENT, or SCENE_CHANGE_EVENT with a target of 64-79.
 
-* Command to fetch colour temperatures for a gear/scene pair (as entered in the "colour scene assignment" section of the cloud grid view).
-* Command to fetch an ambient light sensor's lux value. (There may be some way to forward a lux sensor's value to a system variable, but I haven't worked that out yet.)
-* Event notifications for an ambient light sensor's lux value.
-
-The following would be nice, but low priority:
+The following would also be nice, but low priority:
 
 * Event notifications when a system variables changes. The MQTT integration supports this, but not TPI Advanced. Strictly speaking not necessary as you could instead listen for button press events, but there could be some scenarios where this is impractical.
 * Event notifications for IS_UNOCCUPIED. Documentation says "Not currently used". Strictly speaking unnecessary, as you can query for the instance's timing and infer when a space is deemed unoccupied, but for the tiny increase in packets I see no reason why not receive the truth in real time from the controller.
-* Command to list sequences; command to run a sequence.
+* Command to run a sequence
+* Command to list sequences on a controller
 
 ## Links
 
-[About Zencontrol TPI Advanced](https://support.zencontrol.com/hc/en-us/articles/360000337175-What-is-the-Third-Party-Interface-TPI)
-[TPI Advanced documentation PDF](https://support.zencontrol.com/hc/en-us/article_attachments/10831057855503)
+* [About TPI Advanced](https://support.zencontrol.com/hc/en-us/articles/360000337175-What-is-the-Third-Party-Interface-TPI)
+* [TPI Advanced documentation (PDF)](https://support.zencontrol.com/hc/en-us/article_attachments/10831057855503)
