@@ -6,7 +6,7 @@ ctrl = ZenController(**config.get('zencontrol')[0])
 tpi = ZenProtocol(controllers=[ctrl], narration=True)
 
 
-lights = tpi.get_all_lights(ctrl)
+groups = tpi.get_groups(ctrl)
 
-for light in lights:
-    print(f"  - {light}")
+for group in groups:
+    print(f"  - {group}")

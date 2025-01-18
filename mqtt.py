@@ -266,14 +266,14 @@ class ZenMQTTBridge:
             arc_level = self.brightness_to_arc(brightness)
             print(f"Setting {address.controller.name} gear {address.number} brightness to arc {arc_level} (linear {brightness}) ")
             self.logger.info(f"Setting {address.controller.name} gear {address.number} brightness to arc {arc_level} (linear {brightness}) ")
-            self.zen.set_light_state(address, level=arc_level)
+            self.zen.set_light(address, level=arc_level)
         
         if "color_temp" in payload:
             mireds = int(payload["color_temp"])
             kelvin = self.mireds_to_kelvin(mireds)
             print(f"Setting {address.controller.name} gear {address.number} temperature to {kelvin}K (mireds {mireds})")
             self.logger.info(f"Setting {address.controller.name} gear {address.number} temperature to {kelvin}K (mireds {mireds})")
-            self.zen.set_light_state(address, kelvin=kelvin)
+            self.zen.set_light(address, kelvin=kelvin)
             self.send_light_temp_to_homeassistant(address, kelvin=kelvin)
         
         # Respond to on/off switching in Home Assistant
@@ -282,11 +282,11 @@ class ZenMQTTBridge:
             if state == "OFF":
                 print(f"Turning off {address.controller.name} gear {address.number}")
                 self.logger.info(f"Turning off {address.controller.name} gear {address.number}")
-                self.zen.set_light_state(address, switch_off=True)
+                self.zen.set_light(address, switch_off=True)
             elif state == "ON":
                 print(f"Turning on {address.controller.name} gear {address.number}")
                 self.logger.info(f"Turning on {address.controller.name} gear {address.number}")
-                self.zen.set_light_state(address, switch_on=True)
+                self.zen.set_light(address, switch_on=True)
 
     # ================================
     # RECEIVED FROM ZEN
@@ -351,7 +351,7 @@ class ZenMQTTBridge:
         # For each controller
         for ctrl in self.control:
             # Get all lights
-            lights = self.zen.get_all_lights(ctrl)
+            lights = self.zen.get_lights(ctrl)
             print(f"Found {len(lights)} lights on {ctrl.name} --- {lights}")
             # For each light
             for light in lights:

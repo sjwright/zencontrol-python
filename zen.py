@@ -28,8 +28,7 @@ class Const:
     RGB_CHANNELS = 3
     RGBW_CHANNELS = 4
     RGBWW_CHANNELS = 5
-    
-    
+
 @dataclass
 class ZenController:
     name: str
@@ -76,6 +75,11 @@ class ZenAddress:
         if self.type == AddressType.ECD: return self.number+64
         if self.type == AddressType.BROADCAST: return 255
         raise ValueError("Address is not a Control Gear or Control Device")
+    def ecg_or_group_or_broadcast80(self) -> int:
+        if self.type == AddressType.ECG: return self.number
+        if self.type == AddressType.GROUP: return self.number+64
+        if self.type == AddressType.BROADCAST: return 80
+        raise ValueError("Address is not a Control Gear, Group or Broadcast")
     def ecd(self) -> int:
         if self.type == AddressType.ECD: return self.number+64
         raise ValueError("Address is not a Control Device")
@@ -100,17 +104,18 @@ class ZenAddress:
             case _:
                 raise ValueError("Invalid address type")
 
-class InstanceType(Enum):
-    PUSH_BUTTON = 0
-    ABSOLUTE_INPUT = 1
-    OCCUPANCY_SENSOR = 2
-    LIGHT_SENSOR = 3
-    GENERAL_SENSOR = 4
+class ZenInstanceType(Enum):
+    UNKNOWN = 0x00
+    PUSH_BUTTON = 0x01         # Push button - generates short/long press events
+    ABSOLUTE_INPUT = 0x02      # Absolute input (slider/dial) - generates integer values
+    OCCUPANCY_SENSOR = 0x03    # Occupancy/motion sensor - generates occupied/unoccupied events
+    LIGHT_SENSOR = 0x04        # Light sensor - events not currently forwarded
+    GENERAL_SENSOR = 0x06      # General sensor (water flow, power etc) - events not currently forwarded
 
 @dataclass
 class ZenInstance:
     address: ZenAddress
-    type: InstanceType
+    type: ZenInstanceType
     number: int
     active: Optional[bool] = None
     error: Optional[bool] = None
@@ -168,7 +173,7 @@ class ZenColourTC(ZenColourGeneric):
         self.type = ZenColourType.TC
     def data(self) -> bytes:
         return struct.pack('>BBH', self.level, 0x20, self.kelvin)
-        
+
 @dataclass()
 class ZenEventMask:
     button_press: bool = False
@@ -358,25 +363,6 @@ class ZenProtocol:
         0x07: "IS_UNOCCUPIED",
         0x08: "COLOUR_CHANGE",
         0x09: "PROFILE_CHANGE"
-    }
-    
-    DALI_STATUS_MASKS: Dict[int, str] = {
-        0x01: "DALI_STATUS_CG_FAILURE",             # Control Gear Failure
-        0x02: "DALI_STATUS_LAMP_FAILURE",           # Lamp Failure
-        0x04: "DALI_STATUS_LAMP_POWER_ON",          # Power On
-        0x08: "DALI_STATUS_LIMIT_ERROR",            # Limit error (an Arc-level > Max or < Min requested)
-        0x10: "DALI_STATUS_FADE_RUNNING",           # A fade is running on the light
-        0x20: "DALI_STATUS_RESET",                  # Device has been reset
-        0x40: "DALI_STATUS_MISSING_SHORT_ADDRESS",  # Device hasn't been assigned a short-address
-        0x80: "DALI_STATUS_POWER_FAILURE"           # Power failure has occurred
-    }
-
-    INSTANCE_TYPE = {
-        0x01: "PUSH_BUTTON",            # Push button - generates short/long press events
-        0x02: "ABSOLUTE_INPUT",         # Absolute input (slider/dial) - generates integer values
-        0x03: "OCCUPANCY_SENSOR",       # Occupancy/motion sensor - generates occupied/unoccupied events
-        0x04: "LIGHT_SENSOR",           # Light sensor - events not currently forwarded
-        0x06: "GENERAL_PURPOSE_SENSOR"  # General sensor (water flow, power etc) - events not currently forwarded
     }
 
     def __init__(self, controllers: List[ZenController], logger: logging.Logger=None, narration: bool = False, multicast_group: str = "239.255.90.67", multicast_port: int = 6969):
@@ -629,7 +615,7 @@ class ZenProtocol:
         
         # Enable multicast packets on the controllers
         for controller in self.controllers:
-            self.enable_tpi_event_emit(controller)
+            self.tpi_event_emit(controller)
 
     def stop_event_monitoring(self):
         """Stop listening for multicast events"""
@@ -713,17 +699,17 @@ class ZenProtocol:
                         # 12 0x05 (Data) 1st byte - Instance number. Useful for identifying the exact button on a keypad.
                         if self.button_press_callback:
                             address = ZenAddress(controller=controller, type=AddressType.ECD, number=target-64)
-                            instance = ZenInstance(address=address, type=InstanceType.PUSH_BUTTON, number=payload[0])
+                            instance = ZenInstance(address=address, type=ZenInstanceType.PUSH_BUTTON, number=payload[0])
                             self.button_press_callback(instance=instance, event_data=event_data)
                     case 0x01: # BUTTON_HOLD
                         if self.button_hold_callback:
                             address = ZenAddress(controller=controller, type=AddressType.ECD, number=target-64)
-                            instance = ZenInstance(address=address, type=InstanceType.PUSH_BUTTON, number=payload[0])
+                            instance = ZenInstance(address=address, type=ZenInstanceType.PUSH_BUTTON, number=payload[0])
                             self.button_hold_callback(instance=instance, event_data=event_data)
                     case 0x02: # ABSOLUTE_INPUT
                         if self.absolute_input_callback:
                             address = ZenAddress(controller=controller, type=AddressType.ECD, number=target-64)
-                            instance = ZenInstance(address=address, type=InstanceType.PUSH_BUTTON, number=payload[0])
+                            instance = ZenInstance(address=address, type=ZenInstanceType.PUSH_BUTTON, number=payload[0])
                             self.absolute_input_callback(instance=instance, event_data=event_data)
                     case 0x03: # LEVEL_CHANGE
                         if self.level_change_callback:
@@ -750,7 +736,7 @@ class ZenProtocol:
                         # 13 0x01 2nd byte - Unneeded data
                         if self.is_occupied_callback:
                             address = ZenAddress(controller=controller, type=AddressType.ECD, number=target-64)
-                            instance = ZenInstance(address=address, type=InstanceType.OCCUPANCY_SENSOR, number=payload[0])
+                            instance = ZenInstance(address=address, type=ZenInstanceType.OCCUPANCY_SENSOR, number=payload[0])
                             self.is_occupied_callback(instance=instance, event_data=event_data)
                     case 0x07: # IS_UNOCCUPIED
                         # ======= Data bytes =======
@@ -758,7 +744,7 @@ class ZenProtocol:
                         # 13 0x01 2nd byte - Unneeded data
                         if self.is_unoccupied_callback:
                             address = ZenAddress(controller=controller, type=AddressType.ECD, number=target-64)
-                            instance = ZenInstance(address=address, type=InstanceType.OCCUPANCY_SENSOR, number=payload[0])
+                            instance = ZenInstance(address=address, type=ZenInstanceType.OCCUPANCY_SENSOR, number=payload[0])
                             self.is_unoccupied_callback(instance=instance, event_data=event_data)
                     case 0x08: # COLOUR_CHANGE
                         # ======= RGBWAF colour mode data bytes =======
@@ -828,9 +814,11 @@ class ZenProtocol:
     # API COMMANDS
     # ============================
 
-    def query_group_label(self, address: ZenAddress) -> Optional[str]:
+    def query_group_label(self, address: ZenAddress, generic_if_none: bool=False) -> Optional[str]:
         """Get the label for a DALI Group. Returns a string, or None if no label is set."""
-        return self.send_basic(address.controller, self.CMD["QUERY_GROUP_LABEL"], address.group(), return_type='str')
+        label = self.send_basic(address.controller, self.CMD["QUERY_GROUP_LABEL"], address.group(), return_type='str')
+        if label is None and generic_if_none: return f"Group {address.number}"
+        return label;
     
     def query_dali_device_label(self, address: ZenAddress, generic_if_none: bool=False) -> Optional[str]:
         """Query the label for a DALI device (control gear or control device). Returns a string, or None if no label is set."""
@@ -935,7 +923,7 @@ class ZenProtocol:
             return results
         return []
 
-    def enable_tpi_event_emit(self, controller: ZenController, enable: bool = True) -> bool:
+    def tpi_event_emit(self, controller: ZenController, enable: bool = True) -> bool:
         """Enable or disable TPI Event emission. Returns True if successful, else False."""
         return self.send_basic(controller, self.CMD["ENABLE_TPI_EVENT_EMIT"], 0x01 if enable else 0x00, return_type='bool')
 
@@ -1046,28 +1034,24 @@ class ZenProtocol:
             return profile_numbers
         return None
 
-    def query_occupancy_instance_timers(self, instance: ZenInstance) -> Optional[Tuple[int, int, int, int]]:
-        """Query timer values for a DALI occupancy sensor instance.
-        
-        Args:
-            instance: ZenInstance instance
-            
+    def query_occupancy_instance_timers(self, instance: ZenInstance) -> Optional[dict]:
+        """Query timer values for a DALI occupancy sensor instance. Returns dict, or None if query fails.
+
         Returns:
-            Optional tuple containing:
-            - int: Deadtime in seconds
-            - int: Hold time in seconds  
-            - int: Report time in seconds
-            - int: Seconds since last OCCUPIED status (max 255)
-            
-            Returns None if query fails
+            dict:
+                - int: Deadtime in seconds (0-255)
+                - int: Hold time in seconds (0-255)
+                - int: Report time in seconds (0-255)
+                - int: Seconds since last occupied status (0-255)
         """
         response = self.send_basic(instance.address.controller, self.CMD["QUERY_OCCUPANCY_INSTANCE_TIMERS"], instance.address.ecd(), [0x00, 0x00, instance.number])
         if response and len(response) >= 5:
-            deadtime = response[0]
-            hold = response[1] 
-            report = response[2]
-            last_detect = response[4]  # Only using low byte since high byte is never populat
-            return (deadtime, hold, report, last_detect)
+            return {
+                'deadtime': response[0],
+                'hold': response[1],
+                'report': response[2],
+                'last_detect': (response[3] << 8) | response[4]
+            }
         return None
 
     def query_instances_by_address(self, address: ZenAddress) -> List[ZenInstance]:
@@ -1078,10 +1062,14 @@ class ZenProtocol:
             # Process groups of 4 bytes for each instance
             for i in range(0, len(response), 4):
                 if i + 3 < len(response):
+                    try:
+                        type = ZenInstanceType(response[i+1]) # second byte
+                    except ValueError:
+                        type = None
                     instances.append(ZenInstance(
                         address=address,
                         number=response[i], # first byte
-                        type=response[i+1], # second byte
+                        type=type, # second byte
                         active=bool(response[i+2] & 0x02), # third byte, second bit
                         error=bool(response[i+2] & 0x01), # third byte, first bit
                     ))
@@ -1187,10 +1175,13 @@ class ZenProtocol:
             return sorted(scenes)
         return []
     
-    def query_scene_label_for_group(self, address: ZenAddress, scene: int) -> Optional[str]:
+    def query_scene_label_for_group(self, address: ZenAddress, scene: int, generic_if_none: bool=False) -> Optional[str]:
         """Query the label for a scene (0-11) and group number combination. Returns string, or None if no label is set."""
         if not 0 <= scene < Const.MAX_SCENE: raise ValueError("Scene must be between 0 and 11")
-        return self.send_basic(address.controller, self.CMD["QUERY_SCENE_LABEL_FOR_GROUP"], address.group(), [scene], return_type='str')
+        label = self.send_basic(address.controller, self.CMD["QUERY_SCENE_LABEL_FOR_GROUP"], address.group(), [scene], return_type='str')
+        if label is None and generic_if_none:
+            return f"Scene {scene}"
+        return label
     
     def query_controller_version_number(self, controller: ZenController) -> Optional[str]:
         """Query the controller's version number. Returns string, or None if query fails."""
@@ -1271,22 +1262,20 @@ class ZenProtocol:
         if response == 255: return None # 255 indicates mixed levels
         return response
     
-    def dali_query_control_gear_status(self, address: ZenAddress) -> Optional[List[str]]:
-        """Query the Status for a DALI address (ECG).
-                    
-        Returns:
-            Optional[List[str]]: List of active status flags based on DALI_STATUS_MASKS,
-                               None if query fails
-        """
-        response = self.send_basic(address.controller, self.CMD["DALI_QUERY_CONTROL_GEAR_STATUS"], address.ecg())
+    def dali_query_control_gear_status(self, address: ZenAddress) -> Optional[dict]:
+        """Query the Status for a DALI address (ECG or group or broadcast). Returns a dictionary of status flags."""
+        response = self.send_basic(address.controller, self.CMD["DALI_QUERY_CONTROL_GEAR_STATUS"], address.ecg_or_group_or_broadcast80())
         if response and len(response) == 1:
-            # Extract status flags from response byte
-            status_byte = response[0]
-            active_flags = []
-            for mask, description in self.DALI_STATUS_MASKS.items():
-                if status_byte & mask:
-                    active_flags.append(description)
-            return active_flags
+            return {
+                "cg_failure": bool(response & 0x01),
+                "lamp_failure": bool(response & 0x02),
+                "lamp_power_on": bool(response & 0x04),
+                "limit_error": bool(response & 0x08), # (an Arc-level > Max or < Min requested)
+                "fade_running": bool(response & 0x10),
+                "reset": bool(response & 0x20),
+                "missing_short_address": bool(response & 0x40),
+                "power_failure": bool(response & 0x80)
+            }
         return None
     
     def dali_query_cg_type(self, address: ZenAddress) -> Optional[List[int]]:
@@ -1403,8 +1392,7 @@ class ZenProtocol:
         """Query the label for a DALI Instance. Returns a string, or None if not set. Optionally, returns a generic label if the instance label is not set."""
         label = self.send_basic(instance.address.controller, self.CMD["QUERY_DALI_INSTANCE_LABEL"], instance.address.ecd(), [0x00, 0x00, instance.number], return_type='str')
         if label is None and generic_if_none:
-            instance_type = instance.type if isinstance(instance, ZenInstance) else 0
-            label = instance.address.controller.label + " " + self.INSTANCE_TYPE.get(instance.type, "UNKNOWN").title().replace("_", " ")  + " " + str(instance.number)
+            label = instance.address.controller.label + " " + instance.type.name.title().replace("_", " ")  + " " + str(instance.number)
         return label
 
     def change_profile_number(self, controller: ZenController, profile: int) -> bool:
@@ -1414,7 +1402,11 @@ class ZenProtocol:
         profile_lo = profile & 0xFF
         return self.send_basic(controller, self.CMD["CHANGE_PROFILE_NUMBER"], 0x00, [0x00, profile_hi, profile_lo], return_type='ok')
     
-    def query_instance_groups(self, instance: ZenInstance) -> Optional[Tuple[int, int, int]]:
+    def return_to_scheduled_profile(self, controller: ZenController) -> bool:
+        """Return to the scheduled profile. Returns True if successful, else False."""
+        return self.change_profile_number(controller, 0xFFFF) # See docs page 91, 0xFFFF returns to scheduled profile
+    
+    def query_instance_groups(self, instance: ZenInstance) -> Optional[Tuple[int, int, int]]: # TODO: replace Tuple with dict
         """Query the group targets associated with a DALI instance.
             
         Returns:
@@ -1596,17 +1588,33 @@ class ZenProtocol:
         return None
 
     # ============================
-    # CONVENIENCE COMMANDS
-    # ============================  
-    
-    def return_to_scheduled_profile(self, controller: ZenController) -> bool: # Use 0xFFFF for scheduled profile, see page 91
-        return self.send_basic(controller, self.CMD["CHANGE_PROFILE_NUMBER"], 0x00, [0x00, 0xFF, 0xFF], return_type='ok')
+    # Compound Commands
+    # ============================ 
 
-    def disable_tpi_event_emit(self, controller: ZenController):
-        """Disable TPI event emit."""
-        self.enable_tpi_event_emit(controller, False)
+    def get_groups(self, controller: ZenController) -> List[dict]:
+        """Get a list of groups for a controller."""
+        groups = []
+        addresses = self.query_group_numbers(controller)
+        for address in addresses:
+            print(f"Group: {address}")
+            name = self.query_group_label(address, generic_if_none=True)
+            scenes = []
+            scene_numbers = self.query_scene_numbers_for_group(address)
+            for scene_number in scene_numbers:
+                scene_label = self.query_scene_label_for_group(address, scene_number, generic_if_none=True)
+                scenes.append({
+                    "number": scene_number,
+                    "label": scene_label,
+                })
+            groups.append({
+                "address": address,
+                "number": address.number,
+                "name": name,
+                "scenes": scenes,
+            })
+        return groups
     
-    def get_all_lights(self, controller: ZenController) -> List[dict]:
+    def get_lights(self, controller: ZenController) -> List[dict]:
         """Get a list of lights for a controller."""
         lights = []
         addresses = self.query_control_gear_dali_addresses(controller=controller)
@@ -1655,7 +1663,7 @@ class ZenProtocol:
             lights.append(light)
         return lights
 
-    def set_light_state(self,
+    def set_light(self,
                         address: ZenAddress,
                         switch_on: bool = False,
                         switch_off: bool = False,
@@ -1674,3 +1682,51 @@ class ZenProtocol:
             return self.dali_go_to_last_active_level(address)
         else:
             raise ValueError("Either kelvin or arc_level must be provided")
+    
+    def get_motion_sensors(self, controller: ZenController) -> List[dict]:
+        """Get a list of all motion sensors (instances) for a controller."""
+        sensors = []
+        addresses = self.query_dali_addresses_with_instances(controller)
+        for address in addresses:
+            instances = self.query_instances_by_address(address)
+            for instance in instances:
+                if instance.type == ZenInstanceType.OCCUPANCY_SENSOR:
+                    occupancy_timers = self.query_occupancy_instance_timers(instance)
+                    if occupancy_timers is not None:
+                        device_label = self.query_dali_device_label(address)
+                        instance_label = self.query_dali_instance_label(instance)
+                        serial = self.query_dali_serial(address)
+                        sensor = {
+                            "address": address,
+                            "label": f"{device_label} {instance_label}",
+                            "serial": serial,
+                            "object_id": f"{controller.name}_ecd{address.number}_i{instance.number}",
+                            "unique_id": f"{controller.name}_ecd{address.number}_i{instance.number}_{serial}",
+                            "properties": {
+                                "deadtime": occupancy_timers["deadtime"],
+                                "hold": occupancy_timers["hold"],
+                                "report": occupancy_timers["report"],
+                                "last_detect": occupancy_timers["last_detect"],
+                            },
+                        }
+                        sensors.append(sensor)
+        return sensors
+    
+    def get_all_buttons(self, controller: ZenController) -> List[dict]:
+        """Get a list of all buttons (instances) for a controller."""
+        buttons = []
+        addresses = self.query_dali_addresses_with_instances(controller)
+        for address in addresses:
+            instances = self.query_instances_by_address(address)
+            for instance in instances:
+                device_label = self.query_dali_device_label(address, generic_if_none=True)
+                instance_label = self.query_dali_instance_label(instance, generic_if_none=True)
+                serial = self.query_dali_serial(address)
+                button = {
+                    "address": address,
+                    "label": instance_label,
+                    "serial": serial,
+                    "object_id": f"{controller.name}_ecd{address.number}_i{instance.number}",
+                    "unique_id": f"{controller.name}_ecd{address.number}_i{instance.number}_{serial}",
+                }
+                buttons.append(button)
