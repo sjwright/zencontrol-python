@@ -4,7 +4,7 @@ import json
 import yaml
 import re
 from typing import Optional, Dict, List, Any, Callable
-from zen import ZenProtocol, ZenController, ZenAddress, ZenInstance, AddressType, ZenColourGeneric, ZenColourTC
+from zen import ZenProtocol, ZenController, ZenAddress, ZenInstance, ZenAddressType, ZenColourGeneric, ZenColourTC
 import paho.mqtt.client as mqtt
 from colorama import Fore, Back, Style
 import logging
@@ -252,7 +252,7 @@ class ZenMQTTBridge:
                                 if not match_ecg: return
                                 address = int(match_ecg.group(1))
                                 print(f"Parsed MQTT: {command} {component} ECG {address} = {payload}")
-                                self._process_mqtt_light_set(ZenAddress(ctrl, type=AddressType.ECG, number=address), payload)
+                                self._process_mqtt_light_set(ZenAddress(ctrl, type=ZenAddressType.ECG, number=address), payload)
             
         except json.JSONDecodeError as e:
             self.logger.error(f"Invalid JSON payload: {e}")
