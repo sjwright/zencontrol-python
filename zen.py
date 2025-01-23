@@ -33,6 +33,13 @@ class Const:
     RGBW_CHANNELS = 4
     RGBWW_CHANNELS = 5
 
+    # Multicast
+    MULTICAST_GROUP = "239.255.90.67"
+    MULTICAST_PORT = 6969
+
+    # Unicast
+    UNICAST_PORT = 6969
+
 @dataclass
 class ZenController:
     name: str
@@ -40,13 +47,11 @@ class ZenController:
     mac: str
     host: str
     port: int = 5108
-    unicast_ip: Optional[str] = None
-    unicast_port: Optional[int] = None
     filtering: bool = False
     mac_bytes: bytes = field(init=False)
     def __post_init__(self):
         self.mac_bytes = bytes.fromhex(self.mac.replace(':', ''))
-        
+
 class ZenAddressType(Enum):
     BROADCAST = 0
     ECG = 1
@@ -281,13 +286,13 @@ class ZenEventMask:
         if self.profile_change: event_mask |= (1 << 9)
         return event_mask
     def upper(self) -> int:
-        return (self.bitmask() >> 8) & 0xFF  
+        return (self.bitmask() >> 8) & 0xFF
     def lower(self) -> int:
         return self.bitmask() & 0xFF
 
 class ZenProtocol:
 
-    # Define commands as a class dictionary
+    # Define commands as a dictionary
     CMD: Dict[str, int] = {
         # Rudimentarly tested
         "QUERY_CONTROLLER_VERSION_NUMBER": 0x1C,    # Query ZenController Version Number
@@ -390,14 +395,17 @@ class ZenProtocol:
                  controllers: List[ZenController],
                  logger: logging.Logger=None,
                  narration: bool = False,
-                 multicast_group: str = "239.255.90.67",
-                 multicast_port: int = 6969):
-        self.controllers = controllers # List of controllers, used to match events to controllers and to include controller object in callbacks
+                 unicast: bool = False,
+                 listen_ip: Optional[str] = None,
+                 listen_port: Optional[int] = None
+                 ):
+        self.controllers = controllers # Used to match events to controllers, and include controller objects in callbacks
         self.logger = logger
         self.narration = narration
-        self.multicast_group = multicast_group
-        self.multicast_port = multicast_port
-        
+        self.unicast = unicast
+        self.listen_ip = (listen_ip if listen_ip else "0.0.0.0") if unicast else None
+        self.listen_port = (listen_port if listen_port else Const.UNICAST_PORT) if unicast else None
+
         # Setup logging if none provided
         if not self.logger:
             self.logger = logging.getLogger('ZenProtocol')
@@ -553,6 +561,8 @@ class ZenProtocol:
             complete_packet = bytes(packet + [checksum])
             
             try:
+                # Command_socket is safe for multiple controllers because the server host/port is specified each time.
+                # The client port is arbitrarly assigned once and reused for every packet to every controller.
                 self.logger.debug(f"UDP packet sent to {controller.host}:{controller.port}: [{', '.join(f'0x{b:02x}' for b in complete_packet)}]")
                 self.command_socket.sendto(complete_packet, (controller.host, controller.port))
                 _recv_start = time.time()
@@ -606,7 +616,7 @@ class ZenProtocol:
             self._send_lock = False
 
     # ============================
-    # EVENTS
+    # EVENT LISTENING
     # ============================
 
     def start_event_monitoring(self,
@@ -639,17 +649,18 @@ class ZenProtocol:
         self.colour_change_callback = colour_change_callback
         self.profile_change_callback = profile_change_callback
         
+        # If unicast, and we're binding to 0.0.0.0, we still need to know our actual IP address
+        local_ip = (socket.gethostbyname(socket.gethostname()) if self.listen_ip == "0.0.0.0" else self.listen_ip) if self.unicast else None
+        
+        # For the sake of our sanity, all controllers must send event packets in the same way: either multicast or unicast (on one port)
+        for controller in self.controllers:
+            self.set_tpi_event_unicast_address(controller, ipaddr=local_ip if self.unicast else None, port=self.listen_port if self.unicast else None)
+            self.tpi_event_emit(controller, ZenEventMode(enabled=True, filtering=controller.filtering, unicast=self.unicast, multicast=not self.unicast))
+        
         self.stop_event.clear()
         self.event_thread = Thread(target=self._event_listener)
         self.event_thread.daemon = True
         self.event_thread.start()
-        
-        # Configure controllers as required
-        for controller in self.controllers:
-            unicast = (controller.unicast_ip and controller.unicast_port)
-            mode = ZenEventMode(enabled=True, filtering=controller.filtering, unicast=bool(unicast), multicast=not bool(unicast))
-            self.tpi_event_emit(controller, mode)
-            self.set_tpi_event_unicast_address(controller)
 
     def stop_event_monitoring(self):
         """Stop listening for multicast events"""
@@ -663,14 +674,17 @@ class ZenProtocol:
     def _event_listener(self):
         """Internal method to handle multicast event listening"""
         try:
-            # Setup multicast socket
             self.event_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
             self.event_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self.event_socket.bind(('', self.multicast_port))
-            
-            group = socket.inet_aton(self.multicast_group)
-            mreq = struct.pack('4sl', group, socket.INADDR_ANY)
-            self.event_socket.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+            if self.unicast:
+                # Bind to unicast socket
+                self.event_socket.bind((self.listen_ip, self.listen_port))
+            else:
+                # Bind to multicast socket
+                self.event_socket.bind(('', Const.MULTICAST_PORT))
+                group = socket.inet_aton(Const.MULTICAST_GROUP)
+                mreq = struct.pack('4sl', group, socket.INADDR_ANY)
+                self.event_socket.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
 
             while not self.stop_event.is_set():
                 data, ip_address = self.event_socket.recvfrom(1024)
@@ -984,28 +998,27 @@ class ZenProtocol:
                 return True
         return False
 
-    def set_tpi_event_unicast_address(self, controller: ZenController):
+    def set_tpi_event_unicast_address(self, controller: ZenController, ipaddr: Optional[str] = None, port: Optional[int] = None):
         """Configure TPI Events for Unicast mode with IP and port as defined in the ZenController instance."""
-        ip_address = controller.unicast_ip if (controller.unicast_ip and controller.unicast_port) else "0.0.0.0"
-        port = controller.unicast_port if (controller.unicast_ip and controller.unicast_port) else 0
+        data = [0,0,0,0,0,0]
+        if port is not None:
+            # Valid port number
+            if not 0 <= port <= 65535: raise ValueError("Port must be between 0 and 65535")
 
-        if not 0 <= port <= 65535: raise ValueError("Port must be between 0 and 65535")
-        # TODO: unicast event port cannot conflict with any command port
-
-        # Split port into upper and lower bytes
-        port_upper = (port >> 8) & 0xFF 
-        port_lower = port & 0xFF
-        
-        # Convert IP string to bytes
-        try:
-            ip_bytes = [int(x) for x in ip_address.split('.')]
-            if len(ip_bytes) != 4 or not all(0 <= x <= 255 for x in ip_bytes):
-                raise ValueError
-        except ValueError:
-            raise ValueError("Invalid IP address format")
+            # Split port into upper and lower bytes
+            port_upper = (port >> 8) & 0xFF 
+            port_lower = port & 0xFF
             
-        # Construct data payload: [port_upper, port_lower, ip1, ip2, ip3, ip4]
-        data = [port_upper, port_lower] + ip_bytes
+            # Convert IP string to bytes
+            try:
+                ip_bytes = [int(x) for x in ipaddr.split('.')]
+                if len(ip_bytes) != 4 or not all(0 <= x <= 255 for x in ip_bytes):
+                    raise ValueError
+            except ValueError:
+                raise ValueError("Invalid IP address format")
+                
+            # Construct data payload: [port_upper, port_lower, ip1, ip2, ip3, ip4]
+            data = [port_upper, port_lower] + ip_bytes
         
         return self._send_dynamic(controller, self.CMD["SET_TPI_EVENT_UNICAST_ADDRESS"], data)
 
