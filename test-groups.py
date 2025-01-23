@@ -23,3 +23,11 @@ for address in addresses:
     for scene in scenes:
         label = tpi.query_scene_label_for_group(address, scene)
         print(f"    Group {address.number} scene {scene} label: {label}")
+
+gear = tpi.query_control_gear_dali_addresses(ctrl)
+print(f"Gear")
+for gear in gear:
+    print(f"  {gear.number}")
+    groups = tpi.query_group_membership_by_address(gear)
+    for group in groups:
+        print(f"    group: {group.number}")

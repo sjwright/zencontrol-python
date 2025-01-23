@@ -9,7 +9,11 @@ from colorama import Fore, Back, Style
 from dataclasses import dataclass, field
 
 class Const:
+    # UDP protocol
     MAGIC_BYTE = 0x04
+    RESPONSE_TIMEOUT = 0.5
+
+    # DALI limits
     MAX_ECG = 64
     MAX_ECD = 64
     MAX_INSTANCE = 32
@@ -36,6 +40,9 @@ class ZenController:
     mac: str
     host: str
     port: int = 5108
+    unicast_ip: Optional[str] = None
+    unicast_port: Optional[int] = None
+    filtering: bool = False
     mac_bytes: bytes = field(init=False)
     def __post_init__(self):
         self.mac_bytes = bytes.fromhex(self.mac.replace(':', ''))
@@ -114,22 +121,44 @@ class ZenErrorCode(Enum):
     UNEXPECTED_RESULT = 0xB7  # An unexpected result occurred
     UNKNOWN_TARGET = 0xB8     # Device doesn't exist
 
+@dataclass
+class ZenEventMode:
+    enabled: bool = False
+    filtering: bool = False
+    unicast: bool = False
+    multicast: bool = False
+    def bitmask(self) -> int:
+        mode_flag = 0x00
+        if self.enabled: mode_flag |= 0x01
+        if self.filtering: mode_flag |= 0x02
+        if self.unicast: mode_flag |= 0x40
+        if not self.multicast: mode_flag |= 0x80
+        return mode_flag
+    @classmethod
+    def from_byte(cls, mode_flag: int) -> Self:
+        return cls(
+            enabled = (mode_flag & 0x01) != 0,
+            filtering = (mode_flag & 0x02) != 0,
+            unicast = (mode_flag & 0x40) != 0,
+            multicast = (mode_flag & 0x80) == 0
+        )
+
 class ZenEventType(Enum):
     BUTTON_PRESS = 0x00        # Button has been pressed
     BUTTON_HOLD = 0x01         # Button has been pressed and is being held down
-    ABSOLUTE_INPUT = 0x02      # Absolute input has changed.
+    ABSOLUTE_INPUT = 0x02      # Absolute input has changed
     LEVEL_CHANGE = 0x03        # Arc Level on an Address target has changed
     GROUP_LEVEL_CHANGE = 0x04  # Arc Level on a Group target has changed
     SCENE_CHANGE = 0x05        # Scene has been recalled
-    IS_OCCUPIED = 0x06         # An occupancy sensor has been triggered, area is occupied.
-    SYSTEM_VARIABLE_CHANGED = 0x07 # A system variable has changed
+    IS_OCCUPIED = 0x06         # An occupancy sensor has been triggered, area is occupied
+    SYSTEM_VARIABLE_CHANGE = 0x07 # A system variable has changed
     COLOUR_CHANGE = 0x08       # A Tc, RGBWAF or XY colour change has occurred
-    PROFILE_CHANGE = 0x09      # The active profile on the controller has changed.
+    PROFILE_CHANGE = 0x09      # The active profile on the controller has changed
     
 class ZenInstanceType(Enum):
     PUSH_BUTTON = 0x01         # Push button - generates short/long press events
     ABSOLUTE_INPUT = 0x02      # Absolute input (slider/dial) - generates integer values
-    OCCUPANCY_SENSOR = 0x03    # Occupancy/motion sensor - generates occupied/unoccupied events
+    OCCUPANCY_SENSOR = 0x03    # Occupancy/motion sensor - generates occupied events
     LIGHT_SENSOR = 0x04        # Light sensor - events not currently forwarded
     GENERAL_SENSOR = 0x06      # General sensor (water flow, power etc) - events not currently forwarded
 
@@ -151,7 +180,7 @@ class ZenColourType(Enum):
 @dataclass
 class ZenColourGeneric:
     type: ZenColourType = field(init=False)
-    level: int
+    level: Optional[int]
     def __post_init__(self):
         if self.level is None: self.level = 255
         if not 0 <= self.level < Const.MAX_LEVEL: raise ValueError("Level must be between 0 and 254, or 255 for no level")
@@ -204,7 +233,7 @@ class ZenEventMask:
     group_level_change: bool = False
     scene_change: bool = False
     is_occupied: bool = False
-    is_unoccupied: bool = False
+    system_variable_change: bool = False
     colour_change: bool = False
     profile_change: bool = False
     @classmethod
@@ -217,7 +246,7 @@ class ZenEventMask:
             group_level_change = True,
             scene_change = True,
             is_occupied = True,
-            is_unoccupied = True,
+            system_variable_change = True,
             colour_change = True,
             profile_change = True
         )
@@ -234,7 +263,7 @@ class ZenEventMask:
             group_level_change = (event_mask & (1 << 4)) != 0,
             scene_change = (event_mask & (1 << 5)) != 0,
             is_occupied = (event_mask & (1 << 6)) != 0,
-            is_unoccupied = (event_mask & (1 << 7)) != 0,
+            system_variable_change = (event_mask & (1 << 7)) != 0,
             colour_change = (event_mask & (1 << 8)) != 0,
             profile_change = (event_mask & (1 << 9)) != 0
         )
@@ -247,7 +276,7 @@ class ZenEventMask:
         if self.group_level_change: event_mask |= (1 << 4)
         if self.scene_change: event_mask |= (1 << 5)
         if self.is_occupied: event_mask |= (1 << 6)
-        if self.is_unoccupied: event_mask |= (1 << 7)
+        if self.system_variable_change: event_mask |= (1 << 7)
         if self.colour_change: event_mask |= (1 << 8)
         if self.profile_change: event_mask |= (1 << 9)
         return event_mask
@@ -357,7 +386,12 @@ class ZenProtocol:
         "QUERY_SCENE_BY_NUMBER": 0x13,
     }
 
-    def __init__(self, controllers: List[ZenController], logger: logging.Logger=None, narration: bool = False, multicast_group: str = "239.255.90.67", multicast_port: int = 6969):
+    def __init__(self,
+                 controllers: List[ZenController],
+                 logger: logging.Logger=None,
+                 narration: bool = False,
+                 multicast_group: str = "239.255.90.67",
+                 multicast_port: int = 6969):
         self.controllers = controllers # List of controllers, used to match events to controllers and to include controller object in callbacks
         self.logger = logger
         self.narration = narration
@@ -371,7 +405,7 @@ class ZenProtocol:
 
         # Command socket for sending/receiving direct commands
         self.command_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.command_socket.settimeout(0.5)
+        self.command_socket.settimeout(Const.RESPONSE_TIMEOUT)
         
         # Event monitoring setup
         self.event_socket = None
@@ -386,7 +420,7 @@ class ZenProtocol:
         self.group_level_change_callback = None
         self.scene_change_callback = None
         self.is_occupied_callback = None
-        self.is_unoccupied_callback = None
+        self.system_variable_change_callback = None
         self.colour_change_callback = None
         self.profile_change_callback = None
 
@@ -521,10 +555,14 @@ class ZenProtocol:
             try:
                 self.logger.debug(f"UDP packet sent to {controller.host}:{controller.port}: [{', '.join(f'0x{b:02x}' for b in complete_packet)}]")
                 self.command_socket.sendto(complete_packet, (controller.host, controller.port))
+                _recv_start = time.time()
                 response, addr = self.command_socket.recvfrom(1024)
-                
+                _recv_msec = (time.time() - _recv_start) * 1000
                 self.logger.debug(f"UDP response from {controller.host}:{controller.port}: [{', '.join(f'0x{b:02x}' for b in response)}]")
-                if self.narration: print(Fore.MAGENTA + f"SEND: [{', '.join(f'0x{b:02x}' for b in complete_packet)}]" + Fore.CYAN + f"  RECV: [{', '.join(f'0x{b:02x}' for b in response)}]" + Style.RESET_ALL)
+                if self.narration: print(Fore.MAGENTA + f"SEND: [{', '.join(f'0x{b:02x}' for b in complete_packet)}]  "
+                                         + Fore.WHITE + Style.DIM + f"RTT: {_recv_msec:.0f}ms".ljust(10)
+                                         + Style.BRIGHT + Fore.CYAN + f"  RECV: [{', '.join(f'0x{b:02x}' for b in response)}]"
+                                         + Style.RESET_ALL)
 
                 # Verify response format and sequence counter
                 if len(response) < 4:  # Minimum valid response is 4 bytes
@@ -560,6 +598,7 @@ class ZenProtocol:
             except Exception as e:
                 self.logger.debug(f"UDP packet error sending command: {e}")
                 if self.narration: print(f"UDP packet error sending command: {e}")
+                raise
                 return None, None
                 
         finally:
@@ -578,7 +617,7 @@ class ZenProtocol:
                             group_level_change_callback=None,
                             scene_change_callback=None,
                             is_occupied_callback=None,
-                            is_unoccupied_callback=None,
+                            system_variable_change_callback=None,
                             colour_change_callback=None,
                             profile_change_callback=None
                             ):
@@ -596,7 +635,7 @@ class ZenProtocol:
         self.group_level_change_callback = group_level_change_callback
         self.scene_change_callback = scene_change_callback
         self.is_occupied_callback = is_occupied_callback
-        self.is_unoccupied_callback = is_unoccupied_callback
+        self.system_variable_change_callback = system_variable_change_callback
         self.colour_change_callback = colour_change_callback
         self.profile_change_callback = profile_change_callback
         
@@ -605,9 +644,12 @@ class ZenProtocol:
         self.event_thread.daemon = True
         self.event_thread.start()
         
-        # Enable multicast packets on the controllers
+        # Configure controllers as required
         for controller in self.controllers:
-            self.tpi_event_emit(controller)
+            unicast = (controller.unicast_ip and controller.unicast_port)
+            mode = ZenEventMode(enabled=True, filtering=controller.filtering, unicast=bool(unicast), multicast=not bool(unicast))
+            self.tpi_event_emit(controller, mode)
+            self.set_tpi_event_unicast_address(controller)
 
     def stop_event_monitoring(self):
         """Stop listening for multicast events"""
@@ -632,15 +674,20 @@ class ZenProtocol:
 
             while not self.stop_event.is_set():
                 data, ip_address = self.event_socket.recvfrom(1024)
-                
-                self.logger.debug(f"Received multicast from {ip_address}: [{', '.join(f'0x{b:02x}' for b in data)}]")
-                if self.narration: print(Fore.MAGENTA + f"MULTICAST FROM: {ip_address}" + Fore.CYAN + f"  RECV: [{', '.join(f'0x{b:02x}' for b in data)}]" + Style.RESET_ALL)
+
+                multicast = True
+                typecast = "multicast" if multicast else "unicast"
+                Typecast = "Multicast" if multicast else "Unicast"
+                TYPECAST = "MULTICAST" if multicast else "UNICAST"
+
+                self.logger.debug(f"Received {typecast} from {ip_address}: [{', '.join(f'0x{b:02x}' for b in data)}]")
+                if self.narration: print(Fore.MAGENTA + f"{TYPECAST} FROM: {ip_address}" + Fore.CYAN + f"  RECV: [{', '.join(f'0x{b:02x}' for b in data)}]" + Style.RESET_ALL)
                 
                 # Drop packet if it doesn't match the expected structure
                 if len(data) < 2 or data[0:2] != bytes([0x5a, 0x43]):
-                    self.logger.debug(f"Received multicast invalid packet: {ip_address} - {', '.join(f'0x{b:02x}' for b in data)}")
-                    if self.narration: print(f"Received multicast invalid packet: {ip_address} - {', '.join(f'0x{b:02x}' for b in data)}")
-                    continue
+                    self.logger.debug(f"Received {typecast} invalid packet: {ip_address} - {', '.join(f'0x{b:02x}' for b in data)}")
+                    if self.narration: print(f"Received {typecast} invalid packet: {ip_address} - {', '.join(f'0x{b:02x}' for b in data)}")
+                    return
 
                 # Extract packet fields
                 macbytes = bytes.fromhex(data[2:8].hex())
@@ -659,21 +706,21 @@ class ZenProtocol:
 
                 # If no controller found, skip event
                 if not controller:
-                    self.logger.debug(f"Multicast packet is from unknown controller")
-                    if self.narration: print(f"Multicast packet is from unknown controller")
+                    self.logger.debug(f"{Typecast} packet is from unknown controller")
+                    if self.narration: print(f"{Typecast} packet is from unknown controller")
                     continue
 
                 # Verify data length
                 if len(payload) != payload_len:
-                    self.logger.debug(f"Multicast packet has invalid payload length: {len(payload)} != {payload_len}")
-                    if self.narration: print(f"Multicast packet has invalid payload length: {len(payload)} != {payload_len}")
+                    self.logger.debug(f"{Typecast} packet has invalid payload length: {len(payload)} != {payload_len}")
+                    if self.narration: print(f"{Typecast} packet has invalid payload length: {len(payload)} != {payload_len}")
                     continue
                 
                 # Verify checksum
                 calculated_checksum = self._checksum(list(data[:-1]))
                 if received_checksum != calculated_checksum:
-                    self.logger.debug(f"Multicast packet has invalid checksum: {calculated_checksum} != {received_checksum}")
-                    if self.narration: print(f"Multicast packet has invalid checksum: {calculated_checksum} != {received_checksum}")
+                    self.logger.debug(f"{Typecast} packet has invalid checksum: {calculated_checksum} != {received_checksum}")
+                    if self.narration: print(f"{Typecast} packet has invalid checksum: {calculated_checksum} != {received_checksum}")
                     continue
                 
                 # Create event data dictionary with core data
@@ -729,14 +776,19 @@ class ZenProtocol:
                             address = ZenAddress(controller=controller, type=ZenAddressType.ECD, number=target-64)
                             instance = ZenInstance(address=address, type=ZenInstanceType.OCCUPANCY_SENSOR, number=payload[0])
                             self.is_occupied_callback(instance=instance, event_data=event_data)
-                    case ZenEventType.IS_UNOCCUPIED:
+                    case ZenEventType.SYSTEM_VARIABLE_CHANGE:
                         # ======= Data bytes =======
-                        # 12 0x05 1st byte - Instance number. Useful for identifying the exact sensor
-                        # 13 0x01 2nd byte - Unneeded data
-                        if self.is_unoccupied_callback:
-                            address = ZenAddress(controller=controller, type=ZenAddressType.ECD, number=target-64)
-                            instance = ZenInstance(address=address, type=ZenInstanceType.OCCUPANCY_SENSOR, number=payload[0])
-                            self.is_unoccupied_callback(instance=instance, event_data=event_data)
+                        # 12 - 15 0xFFFFFF38 (Data) 1st - 4th byte (big endian). Value of -200
+                        # 16 0xFF Magnitude (int8) of –1 (10^–1)
+                        if self.system_variable_change_callback:
+                            # Convert 4 bytes to signed 32-bit integer (big endian)
+                            value = int.from_bytes(payload[0:4], byteorder='big', signed=True)
+                            # # Get magnitude as signed 8-bit integer
+                            # magnitude = int.from_bytes([payload[4]], byteorder='big', signed=True)
+                            # # Calculate actual value using magnitude (value * 10^magnitude)
+                            # actual_value = value * (10 ** magnitude)
+                            actual_value = value
+                            self.system_variable_change_callback(controller=controller, system_variable=target, value=actual_value, event_data=event_data)
                     case ZenEventType.COLOUR_CHANGE:
                         # ======= RGBWAF colour mode data bytes =======
                         # 12 0x80 RGBWAF Colour Mode
@@ -756,36 +808,45 @@ class ZenProtocol:
                         # 14 0x00 X - Lo Byte
                         # 15 0xFF Y - Hi Byte
                         # 16 0x00 Y - Lo Byte
+                        
+                        # [... 0x08, 0x03, 0x20, 0x19, 0x5d, 0xca]
+
+                        # [... 0x08, 0x03, 0x20, 0x19, 0x5d, 0xca]
+                        # [... 0x08, 0x03, 0x20, 0x19, 0x5d, 0xca]
+                        # [... 0x08, 0x03, 0x20, 0x07, 0xd0, 0x59]
+
                         if self.colour_change_callback:
                             address = ZenAddress(controller=controller, type=ZenAddressType.ECG if target < 64 else ZenAddressType.GROUP, number=target)
                             match payload[0]:
-                                case ZenColourType.RGBWAF:
+                                case ZenColourType.RGBWAF.value:
                                     if len(payload) != 7:
                                         self.logger.debug(f"Invalid colour change event payload length: expected 7, got {len(payload)}")
                                         if self.narration: print(f"Invalid colour change event payload length: expected 7, got {len(payload)}")
                                         continue
-                                    colour = ZenColourRGBWAF(r=payload[1], g=payload[2], b=payload[3], w=payload[4], a=payload[5], f=payload[6])
+                                    colour = ZenColourRGBWAF(level=None, r=payload[1], g=payload[2], b=payload[3], w=payload[4], a=payload[5], f=payload[6])
                                     self.colour_change_callback(address=address, colour=colour, event_data=event_data)
-                                case ZenColourType.TC:
+                                case ZenColourType.TC.value:
                                     if len(payload) != 3:
                                         self.logger.debug(f"Invalid colour change event payload length: expected 3, got {len(payload)}")
                                         if self.narration: print(f"Invalid colour change event payload length: expected 3, got {len(payload)}")
                                         continue
                                     kelvin = (payload[1] << 8) | payload[2]
-                                    colour = ZenColourTC(kelvin=kelvin)
+                                    colour = ZenColourTC(level=None, kelvin=kelvin)
                                     self.colour_change_callback(address=address, colour=colour, event_data=event_data)
-                                case ZenColourType.XY:
+                                case ZenColourType.XY.value:
                                     if len(payload) != 5:
                                         self.logger.debug(f"Invalid colour change event payload length: expected 5, got {len(payload)}")
                                         if self.narration: print(f"Invalid colour change event payload length: expected 5, got {len(payload)}")
                                         continue
                                     x = (payload[1] << 8) | payload[2]
                                     y = (payload[3] << 8) | payload[4]
-                                    colour = ZenColourXY(x=x, y=y)
+                                    colour = ZenColourXY(level=None, x=x, y=y)
                                     self.colour_change_callback(address=address, colour=colour, event_data=event_data)
                                 case _:
-                                    self.logger.debug(f"Unknown colour change event: {payload[0]}")
-                                    if self.narration: print(f"Unknown colour change event: {payload[0]}")
+                                    self.logger.debug(f"Unknown colour change event: {[{', '.join(f'0x{b:02x}' for b in payload)}]}")
+                                    if self.narration: print(f"Unknown colour change event: {[{', '.join(f'0x{b:02x}' for b in payload)}]}")
+
+                                    print(f"I thought {payload[0]} would equal {ZenColourType.TC} ?")
                                     continue
                     case ZenEventType.PROFILE_CHANGE:
                         # ======= Data bytes =======
@@ -797,6 +858,7 @@ class ZenProtocol:
                 
         except Exception as e:
             if self.narration: print(f"Event listener error: {e}")
+            raise
         finally:
             if self.event_socket:
                 self.event_socket.close()
@@ -835,12 +897,10 @@ class ZenProtocol:
             return (response[0] << 8) | response[1]
         return None
 
-    def query_tpi_event_emit_state(self, controller: ZenController) -> Optional[bool]: # TODO: Check this command for validity. This call also supposedly returns a value to indicate if event filtering is active
+    def query_tpi_event_emit_state(self, controller: ZenController) -> Optional[bool]:
         """Get the current TPI Event multicast emitter state for a controller. Returns True if enabled, False if disabled, None if query fails."""
         response = self._send_basic(controller, self.CMD["QUERY_TPI_EVENT_EMIT_STATE"])
-        if response and len(response) >= 1:
-            return response[0] > 0
-        return None
+        return ZenEventMode.from_byte(response[0])
     
     def dali_add_tpi_event_filter(self, address: ZenAddress, filter: ZenEventMask = ZenEventMask.all_events(), instance_number: int = 0xFF) -> bool:
         """Add a DALI TPI event filter to stop specific events from being broadcast.
@@ -914,26 +974,24 @@ class ZenProtocol:
             return results
         return []
 
-    def tpi_event_emit(self, controller: ZenController, enable: bool = True) -> bool:
+    def tpi_event_emit(self, controller: ZenController, mode: ZenEventMode = ZenEventMode(enabled=True, filtering=False, unicast=False, multicast=True)) -> bool:
         """Enable or disable TPI Event emission. Returns True if successful, else False."""
-        return self._send_basic(controller, self.CMD["ENABLE_TPI_EVENT_EMIT"], 0x01 if enable else 0x00, return_type='bool')
+        mask = mode.bitmask()
+        response = self._send_basic(controller, self.CMD["ENABLE_TPI_EVENT_EMIT"], 0x00) # disable first to clear any existing state... I think this is a bug?
+        response = self._send_basic(controller, self.CMD["ENABLE_TPI_EVENT_EMIT"], mask)
+        if response:
+            if response[0] == mask:
+                return True
+        return False
 
-    def set_tpi_event_unicast_address(self, controller: ZenController, ip_address: str, port: int):
-        """Configure TPI Events for Unicast mode with specified IP and port.
-        
-        Args:
-            controller: ZenController instance
-            ip_address: Target IP address for Unicast events (e.g. "192.168.1.100")
-            port: Target UDP port for Unicast events (0-65535)
-            
-        Returns:
-            bool: True if successful, False if failed
-            
-        Raises:
-            ValueError: If port is invalid or IP address format is invalid
-        """
+    def set_tpi_event_unicast_address(self, controller: ZenController):
+        """Configure TPI Events for Unicast mode with IP and port as defined in the ZenController instance."""
+        ip_address = controller.unicast_ip if (controller.unicast_ip and controller.unicast_port) else "0.0.0.0"
+        port = controller.unicast_port if (controller.unicast_ip and controller.unicast_port) else 0
+
         if not 0 <= port <= 65535: raise ValueError("Port must be between 0 and 65535")
-        
+        # TODO: unicast event port cannot conflict with any command port
+
         # Split port into upper and lower bytes
         port_upper = (port >> 8) & 0xFF 
         port_lower = port & 0xFF
@@ -951,7 +1009,7 @@ class ZenProtocol:
         
         return self._send_dynamic(controller, self.CMD["SET_TPI_EVENT_UNICAST_ADDRESS"], data)
 
-    def query_tpi_event_unicast_address(self, controller: ZenController) -> Optional[Tuple[bool, bool, int, str]]:
+    def query_tpi_event_unicast_address(self, controller: ZenController) -> Optional[dict]:
         """Query TPI Events state and unicast configuration.
         Sends a Basic frame to query the TPI Event emit state, Unicast Port and Unicast Address.
        
@@ -959,7 +1017,7 @@ class ZenProtocol:
             controller: ZenController instance
             
         Returns:
-            Optional tuple containing:
+            Optional dict containing:
             - bool: Whether TPI Events are enabled
             - bool: Whether Unicast mode is enabled  
             - int: Configured unicast port
@@ -969,12 +1027,11 @@ class ZenProtocol:
         """
         response = self._send_basic(controller, self.CMD["QUERY_TPI_EVENT_UNICAST_ADDRESS"])
         if response and len(response) >= 7:
-            flags = response[0]
-            tpi_events_enabled = (flags & 0x01) > 0
-            unicast_enabled = (flags & 0x40) > 0
-            port = (response[1] << 8) | response[2]
-            ip = f"{response[3]}.{response[4]}.{response[5]}.{response[6]}"
-            return (tpi_events_enabled, unicast_enabled, port, ip)
+            return {
+                'mode': ZenEventMode.from_byte(response[0]),
+                'port': (response[1] << 8) | response[2],
+                'ip': f"{response[3]}.{response[4]}.{response[5]}.{response[6]}"
+            }
         return None
 
     def query_group_numbers(self, controller: ZenController) -> List[ZenAddress]:
@@ -1652,23 +1709,31 @@ class ZenProtocol:
 
     def set_light(self,
                         address: ZenAddress,
-                        switch_on: bool = False,
-                        switch_off: bool = False,
+                        fade: bool = True,
+                        turn_on: bool = False,
+                        turn_off: bool = False,
+                        scene: Optional[int] = None,
                         level: Optional[int] = None,
                         kelvin: Optional[int] = None
                         ) -> bool:
         """Set a DALI address (ECG, group, broadcast) to a kelvin (None, or 1000-20000) and/or level (None or 0-254). Returns True if succeeded, else False."""
-        if switch_off:
+        if turn_off and fade:
+            return self.dali_arc_level(address, 0)
+        elif turn_off and not fade:
             return self.dali_off(address)
+        elif scene is not None:
+            _ = self.dali_scene(address, scene)
         elif kelvin is not None:
-            colour = ZenColourTC(level=level if level is not None else 255, kelvin=kelvin)
-            return self._send_colour(controller=address.controller, command=self.CMD["DALI_COLOUR"], address=address.ecg_or_group_or_broadcast(), colour=colour)
+            _ = self.dali_colour(address, ZenColourTC(level=level if level is not None else 255, kelvin=kelvin))
         elif level is not None:
-            return self.dali_arc_level(address, level)
-        elif switch_on:
-            return self.dali_go_to_last_active_level(address)
+            _ = self.dali_arc_level(address, level)
+        elif turn_on:
+            _ = self.dali_go_to_last_active_level(address)
         else:
-            raise ValueError("Either kelvin or arc_level must be provided")
+            raise ValueError("No action provided")
+        if not fade:
+            self.dali_stop_fade(address)
+        return _
     
     def get_motion_sensors(self, controller: ZenController) -> List[dict]:
         """Get a list of all motion sensors (instances) for a controller."""

@@ -282,11 +282,11 @@ class ZenMQTTBridge:
             if state == "OFF":
                 print(f"Turning off {address.controller.name} gear {address.number}")
                 self.logger.info(f"Turning off {address.controller.name} gear {address.number}")
-                self.zen.set_light(address, switch_off=True)
+                self.zen.set_light(address, turn_off=True)
             elif state == "ON":
                 print(f"Turning on {address.controller.name} gear {address.number}")
                 self.logger.info(f"Turning on {address.controller.name} gear {address.number}")
-                self.zen.set_light(address, switch_on=True)
+                self.zen.set_light(address, turn_on=True)
 
     # ================================
     # RECEIVED FROM ZEN
@@ -298,7 +298,7 @@ class ZenMQTTBridge:
         self.send_light_level_to_homeassistant(address, arc_level)
 
     def _colour_change_event(self, address: ZenAddress, colour: ZenColourGeneric, event_data: Dict = {}) -> None:
-        print(f"Zen to HA: gear {address.number} colour {kelvin}K")
+        print(f"Zen to HA: gear {address.number} colour {colour}")
         if isinstance(colour, ZenColourTC):
             self.send_light_temp_to_homeassistant(address, colour.kelvin)
 
@@ -452,7 +452,7 @@ class ZenMQTTBridge:
                             component = "event"
                         case 0x02: # Absolute input (slider/dial) - generates integer values
                             component = "event"
-                        case 0x03: # Occupancy/motion sensor - generates occupied/unoccupied events
+                        case 0x03: # Occupancy/motion sensor - generates occupied events
                             component = "binary_sensor"
                         case 0x04: # Light sensor - events not currently forwarded
                             return
@@ -481,7 +481,7 @@ class ZenMQTTBridge:
                         "retain": False,
                     }
                     match instance.type:
-                        case 0x03: # Occupancy/motion sensor - generates occupied/unoccupied events
+                        case 0x03: # Occupancy/motion sensor - generates occupied events
                             config_dict["device_class"] = "motion"
                             config_dict["expire_after"] = 120
                     mqtt_topic = f"{mqtt_topic}/config"

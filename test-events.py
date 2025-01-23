@@ -21,8 +21,8 @@ def scene_change_event(address: ZenAddress, scene: int, event_data: dict) -> Non
     print(f"Scene Change Event - address {address.number} scene {scene}")
 def is_occupied_event(instance: ZenInstance, event_data: dict) -> None:
     print(f"Is Occupied Event - address {instance.address.number} instance {instance.number}")
-def is_unoccupied_event(instance: ZenInstance, event_data: dict) -> None:
-    print(f"Is Unoccupied Event - address {instance.address.number} instance {instance.number}")
+def system_variable_change_event(controller: ZenController, system_variable:int, value:int, event_data: dict) -> None:
+    print(f"System Variaable Change Event - controller {controller.name} system_variable {system_variable} value {value}")
 def colour_change_event(address: ZenAddress, colour: bytes, event_data: dict) -> None:
     print(f"Colour Change Event - address {address.number} colour {colour}")
 def profile_change_event(controller: ZenController, profile: int, event_data: dict) -> None:
@@ -37,7 +37,7 @@ tpi.start_event_monitoring(
     group_level_change_callback=group_level_change_event,
     scene_change_callback=scene_change_event,
     is_occupied_callback=is_occupied_event,
-    is_unoccupied_callback=is_unoccupied_event,
+    system_variable_change_callback=system_variable_change_event,
     colour_change_callback=colour_change_event,
     profile_change_callback=profile_change_event
 )

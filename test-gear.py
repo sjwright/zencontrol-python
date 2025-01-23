@@ -17,6 +17,9 @@ for address in addresses:
 
     label = tpi.query_dali_device_label(address)
     print(f"    label: {label}")
+
+    groups = tpi.query_group_membership_by_address(address)
+    print(f"    groups: {[group.number for group in groups]}")
     
     type = tpi.dali_query_cg_type(address)
     print(f"    type: {type}")
