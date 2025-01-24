@@ -405,6 +405,9 @@ class ZenProtocol:
         self.unicast = unicast
         self.listen_ip = (listen_ip if listen_ip else "0.0.0.0") if unicast else None
         self.listen_port = (listen_port if listen_port else Const.UNICAST_PORT) if unicast else None
+        
+        # If unicast, and we're binding to 0.0.0.0, we still need to know our actual IP address
+        self.local_ip = (socket.gethostbyname(socket.gethostname()) if self.listen_ip == "0.0.0.0" else self.listen_ip) if self.unicast else None
 
         # Setup logging if none provided
         if not self.logger:
@@ -619,7 +622,7 @@ class ZenProtocol:
     # EVENT LISTENING
     # ============================
 
-    def start_event_monitoring(self,
+    def set_callbacks(self,
                             button_press_callback=None,
                             button_hold_callback=None,
                             absolute_input_callback=None,
@@ -631,13 +634,6 @@ class ZenProtocol:
                             colour_change_callback=None,
                             profile_change_callback=None
                             ):
-
-        # Check if event monitoring is already running
-        if self.event_thread and self.event_thread.is_alive():
-            if self.narration: print("Event monitoring already running")
-            return
-            
-        # Setup event listeners
         self.button_press_callback = button_press_callback
         self.button_hold_callback = button_hold_callback
         self.absolute_input_callback = absolute_input_callback
@@ -649,12 +645,15 @@ class ZenProtocol:
         self.colour_change_callback = colour_change_callback
         self.profile_change_callback = profile_change_callback
         
-        # If unicast, and we're binding to 0.0.0.0, we still need to know our actual IP address
-        local_ip = (socket.gethostbyname(socket.gethostname()) if self.listen_ip == "0.0.0.0" else self.listen_ip) if self.unicast else None
+
+    def start_event_monitoring(self):
+        if self.event_thread and self.event_thread.is_alive():
+            if self.narration: print("Event monitoring already running")
+            return
         
         # For the sake of our sanity, all controllers must send event packets in the same way: either multicast or unicast (on one port)
         for controller in self.controllers:
-            self.set_tpi_event_unicast_address(controller, ipaddr=local_ip if self.unicast else None, port=self.listen_port if self.unicast else None)
+            self.set_tpi_event_unicast_address(controller, ipaddr=self.local_ip if self.unicast else None, port=self.listen_port if self.unicast else None)
             self.tpi_event_emit(controller, ZenEventMode(enabled=True, filtering=controller.filtering, unicast=self.unicast, multicast=not self.unicast))
         
         self.stop_event.clear()
@@ -688,11 +687,10 @@ class ZenProtocol:
 
             while not self.stop_event.is_set():
                 data, ip_address = self.event_socket.recvfrom(1024)
-
-                multicast = True
-                typecast = "multicast" if multicast else "unicast"
-                Typecast = "Multicast" if multicast else "Unicast"
-                TYPECAST = "MULTICAST" if multicast else "UNICAST"
+                
+                typecast = "unicast" if self.unicast else "multicast"
+                Typecast = "Unicast" if self.unicast else "Multicast"
+                TYPECAST = "UNICAST" if self.unicast else "MULTICAST"
 
                 self.logger.debug(f"Received {typecast} from {ip_address}: [{', '.join(f'0x{b:02x}' for b in data)}]")
                 if self.narration: print(Fore.MAGENTA + f"{TYPECAST} FROM: {ip_address}" + Fore.CYAN + f"  RECV: [{', '.join(f'0x{b:02x}' for b in data)}]" + Style.RESET_ALL)

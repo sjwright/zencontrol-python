@@ -540,10 +540,11 @@ class ZenMQTTBridge:
                     time.sleep(Constants.STARTUP_POLL_DELAY)
                 
             # Start event monitoring and MQTT services
-            self.zen.start_event_monitoring(
+            self.zen.set_callbacks(
                 level_change_callback=self._level_change_event,
                 colour_change_callback=self._colour_change_event
             )
+            self.zen.start_event_monitoring()
             self.mqttc.loop_start()
             time.sleep(0.2)
             self.setup_started = True
