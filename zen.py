@@ -409,16 +409,16 @@ class ZenProtocol:
         # If unicast, and we're binding to 0.0.0.0, we still need to know our actual IP address
         self.local_ip = (socket.gethostbyname(socket.gethostname()) if self.listen_ip == "0.0.0.0" else self.listen_ip) if self.unicast else None
 
-        # Setup logging if none provided
+        # Log to null if no logger provided
         if not self.logger:
-            self.logger = logging.getLogger('ZenProtocol')
-            self.logger.setLevel(logging.INFO)
+            self.logger = logging.getLogger('null')
+            self.logger.addHandler(logging.NullHandler())
 
-        # Command socket for sending/receiving direct commands
+        # Setup socket for sending/receiving commands
         self.command_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.command_socket.settimeout(Const.RESPONSE_TIMEOUT)
         
-        # Event monitoring setup
+        # Setup event monitoring
         self.event_socket = None
         self.event_thread = None
         self.stop_event = Event()
@@ -468,6 +468,8 @@ class ZenProtocol:
                 match return_type:
                     case 'ok':
                         return True
+                    case _:
+                        raise ValueError(f"Invalid return_type '{return_type}' for response code {response_code}")
             case 0xA1: # ANSWER
                 match return_type:
                     case 'bytes':
@@ -484,11 +486,13 @@ class ZenProtocol:
                     case 'bool':
                         if response_data and len(response_data) == 1: return bool(response_data[0])
                     case _:
-                        raise ValueError(f"Invalid return_type: {return_type}")
+                        raise ValueError(f"Invalid return_type '{return_type}' for response code {response_code}")
             case 0xA2: # NO_ANSWER
                 match return_type:
                     case 'ok':
                         return False
+                    case _:
+                        return None
             case 0xA3: # ERROR
                 if response_data:
                     error_code = ZenErrorCode(response_data[0]) if response_data[0] in ZenErrorCode else None
@@ -1616,31 +1620,24 @@ class ZenProtocol:
             }
         return None
     
-    def set_system_variable(self, controller: ZenController, variable_number: int, value: int) -> bool:
+    def set_system_variable(self, controller: ZenController, variable: int, value: int) -> bool:
         """Set a system variable (0-47) value (0-65535) on the controller. Returns True if successful, else False."""
-        if not 0 <= variable_number < Const.MAX_SYSVAR:
-            raise ValueError("Variable number must be between 0 and 47")
+        if not 0 <= variable < Const.MAX_SYSVAR:
+            raise ValueError(f"Variable number must be between 0 and {Const.MAX_SYSVAR}")
         if not 0 <= value <= 65535:
             raise ValueError("Value must be between 0 and 65535")
-            
-        # Split value into high/low bytes
-        value_hi = (value >> 8) & 0xFF
-        value_lo = value & 0xFF
-        
-        return self._send_basic(controller, self.CMD["SET_SYSTEM_VARIABLE"], variable_number, [0x00, value_hi, value_lo], return_type='ok')
+        bytes = value.to_bytes(length=2, byteorder="big", signed=True)
+        return self._send_basic(controller, self.CMD["SET_SYSTEM_VARIABLE"], variable, [0x00, bytes[0], bytes[1]], return_type='ok')
     
-    def query_system_variable(self, controller: ZenController, variable_number: int) -> Optional[int]:
+    def query_system_variable(self, controller: ZenController, variable: int) -> Optional[int]:
         """Query the controller for the value of a system variable (0-47). Returns the variable's value (0-65535) if successful, else None."""
-        if not 0 <= variable_number < Const.MAX_SYSVAR:
-            raise ValueError("Variable number must be between 0 and 47")
-            
-        response = self._send_basic(controller, self.CMD["QUERY_SYSTEM_VARIABLE"], variable_number)
+        if not 0 <= variable < Const.MAX_SYSVAR:
+            raise ValueError(f"Variable number must be between 0 and {Const.MAX_SYSVAR}")
+        response = self._send_basic(controller, self.CMD["QUERY_SYSTEM_VARIABLE"], variable)
         if response and len(response) == 2:
-            value = (response[0] << 8) | response[1]
-            if value == 0xFFFF:
-                return None
-            return value
-        return None
+            return int.from_bytes(response, "big", signed=True)
+        else: # Value is unset
+            return None
 
     # ============================
     # Compound Commands
@@ -1793,3 +1790,42 @@ class ZenProtocol:
                     "unique_id": f"{controller.name}_ecd{address.number}_i{instance.number}_{serial}",
                 }
                 buttons.append(button)
+
+
+# ============================
+# Compound Classes
+# ============================ 
+
+class ZenSystemVariable:
+    _instances = {}
+    def __new__(cls, protocol: ZenProtocol, controller: ZenController, id, value=None):
+        # Class singleton based on controller and id
+        compound_id = f"{controller.name}-{id}"
+        if compound_id not in cls._instances:
+            instance = super().__new__(cls)
+            cls._instances[compound_id] = instance
+            instance.protocol: ZenProtocol = protocol
+            instance.controller: ZenController = controller
+            instance.id = id
+            instance._value = None # If a value was passed, we'll set the value in the next block
+        if value is not None:
+            instance.value = value
+        return cls._instances[compound_id]
+    @property
+    def value(self):
+        # If we don't know the value, request from the controller
+        if self._value is None:
+            self._value = self.protocol.query_system_variable(self.controller, self.id)
+        return self._value
+    @value.setter 
+    def value(self, new_value):
+        # If abs(value) is less than 32760, 
+        #   If value has 2 decimal places, use magitude -2 (signed 0xfe)
+        #   Else if value has 1 decimal place, use magitude -1 (signed 0xff)
+        #   Else use magitude 0 (signed 0x00)
+        # Else if abs(value) is less than 327600, use magitude 1 (signed 0x01)
+        # Else if abs(value) is less than 3276000, use magitude 2 (signed 0x02)
+        self.protocol.set_system_variable(self.controller, self.id, new_value)
+        self._value = new_value
+
+
