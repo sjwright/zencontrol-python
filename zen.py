@@ -98,12 +98,7 @@ class ZenAddress:
         if self.type == ZenAddressType.ECG: return self.number
         if self.type == ZenAddressType.ECD: return self.number+64
         if self.type == ZenAddressType.BROADCAST: return 255
-        raise ValueError("Address is not a Control Gear or Control Device")
-    def ecg_or_group_or_broadcast80(self) -> int:
-        if self.type == ZenAddressType.ECG: return self.number
-        if self.type == ZenAddressType.GROUP: return self.number+64
-        if self.type == ZenAddressType.BROADCAST: return 80
-        raise ValueError("Address is not a Control Gear, Group or Broadcast")
+        raise ValueError("Address is not a Control Gear, Control Device or Broadcast")
     def ecd(self) -> int:
         if self.type == ZenAddressType.ECD: return self.number+64
         raise ValueError("Address is not a Control Device")
@@ -1333,7 +1328,7 @@ class ZenProtocol:
     
     def dali_query_control_gear_status(self, address: ZenAddress) -> Optional[dict]:
         """Query the Status for a DALI address (ECG or group or broadcast). Returns a dictionary of status flags."""
-        response = self._send_basic(address.controller, self.CMD["DALI_QUERY_CONTROL_GEAR_STATUS"], address.ecg_or_group_or_broadcast80())
+        response = self._send_basic(address.controller, self.CMD["DALI_QUERY_CONTROL_GEAR_STATUS"], address.ecg_or_group_or_broadcast())
         if response and len(response) == 1:
             return {
                 "cg_failure": bool(response[0] & 0x01),
