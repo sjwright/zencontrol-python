@@ -40,6 +40,18 @@ class Const:
     # Unicast
     UNICAST_PORT = 6969
 
+class ZenError(Exception):
+    """Base exception for Zen protocol errors"""
+    pass
+
+class ZenTimeoutError(ZenError):
+    """Raised when a command times out"""
+    pass
+
+class ZenResponseError(ZenError):
+    """Raised when receiving an invalid response"""
+    pass
+
 @dataclass
 class ZenController:
     name: str
@@ -542,8 +554,7 @@ class ZenProtocol:
             return response_data
         return None
     
-    def _send_packet(self, controller: ZenController, command: int, data: List[int]) -> Optional[Tuple[bytes, int]]:
-        
+    def _send_packet(self, controller: ZenController, command: int, data: List[int]) -> Tuple[Optional[bytes], int]:
         # Acquire lock to ensure serial execution
         if not hasattr(self, '_send_lock'):
             self._send_lock = False
@@ -553,11 +564,11 @@ class ZenProtocol:
         while self._send_lock:
             if time.time() - start_time > 1.0:
                 if self.narration: print("Timeout waiting for lock")
-                return None, None
+                raise ZenTimeoutError(f"No response from {controller.host}:{controller.port}")
             time.sleep(0.01)
             
         self._send_lock = True
-        
+
         try:
             # Maintain sequence counter
             self._sequence_counter = (self._sequence_counter + 1) % 256 if hasattr(self, '_sequence_counter') else 0
@@ -577,15 +588,15 @@ class ZenProtocol:
                 _recv_msec = (time.time() - _recv_start) * 1000
                 self.logger.debug(f"UDP response from {controller.host}:{controller.port}: [{', '.join(f'0x{b:02x}' for b in response)}]")
                 if self.narration: print(Fore.MAGENTA + f"SEND: [{', '.join(f'0x{b:02x}' for b in complete_packet)}]  "
-                                         + Fore.WHITE + Style.DIM + f"RTT: {_recv_msec:.0f}ms".ljust(10)
-                                         + Style.BRIGHT + Fore.CYAN + f"  RECV: [{', '.join(f'0x{b:02x}' for b in response)}]"
-                                         + Style.RESET_ALL)
+                                            + Fore.WHITE + Style.DIM + f"RTT: {_recv_msec:.0f}ms".ljust(10)
+                                            + Style.BRIGHT + Fore.CYAN + f"  RECV: [{', '.join(f'0x{b:02x}' for b in response)}]"
+                                            + Style.RESET_ALL)
 
                 # Verify response format and sequence counter
                 if len(response) < 4:  # Minimum valid response is 4 bytes
                     self.logger.debug(f"UDP response too short (len={len(response)})")
                     if self.narration: print(f"UDP response too short (len={len(response)})")
-                    return None, None
+                    raise ZenResponseError(f"Invalid response format from {controller.host}:{controller.port}")
                     
                 response_type = response[0]
                 sequence = response[1]
@@ -595,14 +606,14 @@ class ZenProtocol:
                 if sequence != self._sequence_counter:
                     self.logger.debug(f"UDP response sequence counter mismatch (expected {self._sequence_counter}, got {sequence})")
                     if self.narration: print(f"UDP response sequence counter mismatch (expected {self._sequence_counter}, got {sequence})")
-                    return None, None
+                    raise ZenResponseError(f"Sequence mismatch from {controller.host}:{controller.port}")
                     
                 # Verify total packet length matches data_length
                 expected_length = 4 + data_length  # type + seq + len + data + checksum
                 if len(response) != expected_length:
                     self.logger.debug(f"UDP response length mismatch (expected {expected_length}, got {len(response)})")
                     if self.narration: print(f"UDP response length mismatch (expected {expected_length}, got {len(response)})")
-                    return None, None
+                    raise ZenResponseError(f"Length mismatch from {controller.host}:{controller.port}")
                 
                 # Return data bytes if present, otherwise None
                 if data_length > 0:
@@ -611,13 +622,12 @@ class ZenProtocol:
             except socket.timeout:
                 self.logger.debug(f"UDP packet response from {controller.host}:{controller.port} not received in time, probably offline")
                 if self.narration: print(f"UDP packet response from {controller.host}:{controller.port} not received in time, probably offline")
-                return None, None
+                raise ZenTimeoutError(f"No response from {controller.host}:{controller.port}")
             except Exception as e:
                 self.logger.debug(f"UDP packet error sending command: {e}")
                 if self.narration: print(f"UDP packet error sending command: {e}")
-                raise
-                return None, None
-                
+                raise ZenError(f"Error sending command: {e}")
+            
         finally:
             # Always release lock when done
             self._send_lock = False
