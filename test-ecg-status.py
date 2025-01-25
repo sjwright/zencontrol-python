@@ -26,9 +26,6 @@ tpi.dali_query_control_gear_status(group1)
 print("__ querying address 80 __")
 tpi.dali_query_control_gear_status(bcast)
 
-print("__ querying address 255 __")
-tpi._send_basic(ctrl, tpi.CMD["DALI_QUERY_CONTROL_GEAR_STATUS"], 255)
-
 
 
 
@@ -44,6 +41,3 @@ tpi.dali_query_control_gear_status(group1)
 
 print("__ querying address 80 __")
 tpi.dali_query_control_gear_status(bcast)
-
-print("__ querying address 255 __")
-tpi._send_basic(ctrl, tpi.CMD["DALI_QUERY_CONTROL_GEAR_STATUS"], 255)

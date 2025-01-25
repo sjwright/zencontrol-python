@@ -1,10 +1,10 @@
-from zen import ZenProtocol, ZenController, ZenAddress, ZenInstance, ZenColourTC, ZenAddressType
+from zen import ZenProtocol, ZenController, ZenAddress, ZenInstance, ZenColourTC, ZenAddressType, ZenMotionSensor, ZenLight
 import yaml
 import time
 
 config = yaml.safe_load(open("config.yaml"))
 ctrl = ZenController(**config.get('zencontrol')[0])
-tpi = ZenProtocol(controllers=[ctrl], narration=True, unicast=True)
+tpi = ZenProtocol(controllers=[ctrl], narration=True, unicast=False)
 
 # Handlers
 def button_press_event(instance: ZenInstance, event_data: dict) -> None:
@@ -27,6 +27,8 @@ def colour_change_event(address: ZenAddress, colour: bytes, event_data: dict) ->
     print(f"Colour Change Event - address {address.number} colour {colour}")
 def profile_change_event(controller: ZenController, profile: int, event_data: dict) -> None:
     print(f"Profile Change Event - controller {controller.name} profile {profile}")
+def motion_sensor_event(sensor: ZenMotionSensor, occupied: bool) -> None:
+    print(f"Motion Sensor Event - sensor {sensor} occupied {occupied}")
     
 # Start event monitoring
 tpi.set_callbacks(
@@ -39,10 +41,36 @@ tpi.set_callbacks(
     is_occupied_callback=is_occupied_event,
     system_variable_change_callback=system_variable_change_event,
     colour_change_callback=colour_change_event,
-    profile_change_callback=profile_change_event
+    profile_change_callback=profile_change_event,
+    motion_sensor_callback=motion_sensor_event
 )
 tpi.start_event_monitoring()
 
+
+time.sleep(1)
+
+
+q = tpi.query_tpi_event_emit_state(ctrl)
+print(f"    query state: {q}")
+
+
+q = tpi.query_tpi_event_unicast_address(ctrl)
+print(f"    query unicast address: {q}")
+
+
+time.sleep(1)
+
+
+ecg3 = ZenAddress(controller=ctrl, type=ZenAddressType.ECG, number=3)
+tpi.dali_colour(ecg3, ZenColourTC(level=255, kelvin=2000))
+
+
+
+# Motion sensors
+motion_sensors = tpi.get_motion_sensors()
+for motion_sensor in motion_sensors:
+    print(f"  - {motion_sensor}")
+    motion_sensor.hold_time = 5
 
 
 # Loop forever

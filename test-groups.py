@@ -30,4 +30,4 @@ for gear in gear:
     print(f"  {gear.number}")
     groups = tpi.query_group_membership_by_address(gear)
     for group in groups:
-        print(f"    group: {group.number}")
+        print(f"    group: {group}")
