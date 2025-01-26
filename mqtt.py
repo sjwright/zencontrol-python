@@ -310,7 +310,7 @@ class ZenMQTTBridge:
         if isinstance(colour, ZenColourTC):
             self.send_light_temp_to_homeassistant(address, colour.kelvin)
     
-    def _motion_sensor_event(sensor: ZenMotionSensor, occupied: bool) -> None:
+    def _motion_sensor_event(self, sensor: ZenMotionSensor, occupied: bool) -> None:
         print(f"Zen to HA: sensor {sensor} occupied: {occupied}")
         inst = sensor.instance
         addr = inst.address

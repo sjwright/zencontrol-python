@@ -816,12 +816,12 @@ class ZenProtocol:
                         # ======= Data bytes =======
                         # 12 0x05 1st byte - Instance number. Useful for identifying the exact sensor
                         # 13 0x01 2nd byte - Unneeded data
+                        address = ZenAddress(controller=controller, type=ZenAddressType.ECD, number=target-64)
+                        instance = ZenInstance(address=address, type=ZenInstanceType.OCCUPANCY_SENSOR, number=payload[0])
                         if self.is_occupied_callback:
-                            address = ZenAddress(controller=controller, type=ZenAddressType.ECD, number=target-64)
-                            instance = ZenInstance(address=address, type=ZenInstanceType.OCCUPANCY_SENSOR, number=payload[0])
                             self.is_occupied_callback(instance=instance, event_data=event_data)
-                            ZenMotionSensor(protocol=self, instance=instance).occupied = True
-
+                        ZenMotionSensor(protocol=self, instance=instance).occupied = True
+                        
                     case ZenEventType.SYSTEM_VARIABLE_CHANGE:
                         # ======= Data bytes =======
                         # 12 - 15 0xFFFFFF38 (Data) 1st - 4th byte (big endian).
@@ -1091,18 +1091,7 @@ class ZenProtocol:
         
 
     def query_dali_colour(self, address: ZenAddress) -> Optional[ZenColourGeneric]:
-        """Query colour information from a DALI address.
-        
-        Args:
-            address: ZenAddress instance
-            
-        Returns:
-            Optional tuple containing:
-            - int: Colour mode (see DALI Colour Frame spec for modes)
-            - List[int]: Colour values based on mode (e.g. RGBWAF values)
-            
-            Returns None if query fails
-        """
+        """Query colour information from a DALI address."""
         response = self._send_basic(address.controller, self.CMD["QUERY_DALI_COLOUR"], address.ecg())
         if response and len(response) >= 1:
             match response[0]:
@@ -1309,12 +1298,12 @@ class ZenProtocol:
     
     def dali_scene(self, address: ZenAddress, scene: int) -> bool:
         """Send RECALL SCENE (0-11) to an address (ECG or group or broadcast). Returns True if acknowledged, else False."""
-        if not 0 <= scene < Const.MAX_SCENE: raise ValueError("Scene number must be between 0 and 11")
+        if not 0 <= scene < Const.MAX_SCENE: raise ValueError(f"Scene number must be between 0 and {Const.MAX_SCENE}, got {scene}")
         return self._send_basic(address.controller, self.CMD["DALI_SCENE"], address.ecg_or_group_or_broadcast(), [0x00, 0x00, scene], return_type='ok')
     
     def dali_arc_level(self, address: ZenAddress, level: int) -> bool:
         """Send DIRECT ARC level (0-254) to an address (ECG or group or broadcast). Will fade to the new level. Returns True if acknowledged, else False."""
-        if not 0 <= level < Const.MAX_LEVEL: raise ValueError("Level must be between 0 and 254")
+        if not 0 <= level <= Const.MAX_LEVEL: raise ValueError(f"Level must be between 0 and {Const.MAX_LEVEL}, got {level}")
         return self._send_basic(address.controller, self.CMD["DALI_ARC_LEVEL"], address.ecg_or_group_or_broadcast(), [0x00, 0x00, level], return_type='ok')
     
     def dali_on_step_up(self, address: ZenAddress) -> bool:
@@ -1885,7 +1874,7 @@ class ZenMotionSensor:
         return (time.time() - self.last_detect) < self.hold_time
     @occupied.setter 
     def occupied(self, new_value: bool):
-        old_value = self._occupied
+        old_value = self._occupied or False
         # Cancel any hold time timer
         if self.hold_timer is not None:
             self.hold_timer.cancel()
@@ -1898,7 +1887,7 @@ class ZenMotionSensor:
             self.hold_timer.start()
             self._occupied = True
             # If we're going from False to True
-            if not old_value:
+            if old_value is False:
                 if self.protocol.motion_sensor_callback is not None:
                     self.protocol.motion_sensor_callback(sensor=self, occupied=True)
         else:
@@ -1906,7 +1895,6 @@ class ZenMotionSensor:
             self.last_detect = None
             # If we're going from True to False
             if old_value is True:
-                # Trigger an inoccupancy event
                 if self.protocol.motion_sensor_callback is not None:
                     self.protocol.motion_sensor_callback(sensor=self, occupied=False)
 
