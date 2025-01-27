@@ -3,8 +3,8 @@ import time
 import json
 import yaml
 import re
-from typing import Optional, Dict, List, Any, Callable
-from zen import ZenProtocol, ZenController, ZenAddress, ZenInstance, ZenAddressType, ZenColourGeneric, ZenColourTC, ZenLight, ZenMotionSensor
+from typing import Optional, Any, Callable
+from zen import ZenProtocol, ZenController, ZenAddress, ZenInstance, ZenAddressType, ZenColourGeneric, ZenColourTC, ZenLight, ZenMotionSensor, ZenSystemVariable
 import paho.mqtt.client as mqtt
 from colorama import Fore, Back, Style
 import logging
@@ -53,12 +53,14 @@ class ZenMQTTBridge:
     
     def __init__(self, config_path: str = "config.yaml") -> None:
         self.logger: logging.Logger
-        self.config: Dict[str, Any]
+        self.config: dict[str, Any]
         self.discovery_prefix: str
-        self.control: List[ZenController]
+        self.control: list[ZenController]
         self.zen: ZenProtocol
         self.mqttc: mqtt.Client
         self.setup_started: bool = False
+        self.sv_config: list[dict]
+        self.system_variables: list[ZenSystemVariable] = []
         
         # Setup logging
         self.setup_logging()
@@ -123,14 +125,22 @@ class ZenMQTTBridge:
         # Initialize Zen
         try:
             self.control = []
+            self.sv_config = []
             for config in self.config['zencontrol']:
-                self.control.append(ZenController(
+                # Define controller
+                ctrl = ZenController(
                     name=config['name'],
                     label=config['label'],
                     mac=config['mac'],
                     host=config['host'],
                     port=config['port']
-                ))
+                )
+                # Add to list
+                self.control.append(ctrl)
+                # Add system variables to list
+                for sv in config.get('system_variables', []):
+                    sv['controller'] = ctrl
+                    self.sv_config.append(sv)
             self.zen = ZenProtocol(controllers=self.control, logger=self.logger, narration=True)
         except Exception as e:
             self.logger.error(f"Failed to initialize Zen: {e}")
@@ -186,7 +196,7 @@ class ZenMQTTBridge:
         # ))
         # self.logger.addHandler(console_handler)
 
-    def _on_mqtt_connect(self, client: mqtt.Client, userdata: Any, flags: Dict, 
+    def _on_mqtt_connect(self, client: mqtt.Client, userdata: Any, flags: dict, 
                         reason_code: int, properties: Any) -> None:
         """Called when the client connects or reconnects to the MQTT broker.
 
@@ -262,7 +272,7 @@ class ZenMQTTBridge:
         except Exception as e:
             self.logger.error(f"Error processing MQTT message: {e}")
 
-    def _apply_payload_to_zenlight(self, light: ZenLight, payload: Dict[str, Any]) -> None:
+    def _apply_payload_to_zenlight(self, light: ZenLight, payload: dict[str, Any]) -> None:
         addr = light.address
         ctrl = addr.controller
         arc_level = None
@@ -301,11 +311,11 @@ class ZenMQTTBridge:
     #  ---> SEND TO HOME ASSISTANT
     # ================================
 
-    def _level_change_event(self, address: ZenAddress, arc_level: int, event_data: Dict = {}) -> None:
+    def _level_change_event(self, address: ZenAddress, arc_level: int, event_data: dict = {}) -> None:
         print(f"Zen to HA: gear {address.number} arc_level {arc_level}")
         self.send_light_level_to_homeassistant(address, arc_level)
 
-    def _colour_change_event(self, address: ZenAddress, colour: ZenColourGeneric, event_data: Dict = {}) -> None:
+    def _colour_change_event(self, address: ZenAddress, colour: ZenColourGeneric, event_data: dict = {}) -> None:
         print(f"Zen to HA: gear {address.number} colour {colour}")
         if isinstance(colour, ZenColourTC):
             self.send_light_temp_to_homeassistant(address, colour.kelvin)
@@ -317,12 +327,13 @@ class ZenMQTTBridge:
         ctrl = addr.controller
         mqtt_target = f"ecd{addr.number}_inst{inst.number}"
         mqtt_topic = f"{self.discovery_prefix}/binary_sensor/{ctrl.name}/{mqtt_target}"
+        self._publish_state(mqtt_topic, "ON" if occupied else "OFF")
 
-        state = "ON" if occupied else "OFF"
-        self.mqttc.publish(f"{mqtt_topic}/state", state, retain=False)
-        print(Fore.LIGHTRED_EX + f"MQTT sent - {mqtt_topic}: " + Style.DIM + f"{state}" + Style.RESET_ALL)
-
-
+    def _system_variable_change_event(self, system_variable: ZenSystemVariable, value:int, from_controller: bool) -> None:
+        print(f"System Variable Change Event - controller {system_variable.controller.name} system_variable {system_variable.id} value {value} from_controller {from_controller}")
+        if 'mqtt_topic' in system_variable.client_data:
+            self._publish_state(system_variable.client_data['mqtt_topic'], value)
+        return
 
     def send_light_level_to_homeassistant(self, address: ZenAddress, arc_level: Optional[int] = None) -> None:
         if arc_level is None:
@@ -346,23 +357,11 @@ class ZenMQTTBridge:
             mireds = self.kelvin_to_mireds(kelvin)
         if kelvin is None:
             kelvin = self.mireds_to_kelvin(mireds)
-        print(f"Sending {kelvin}K ({mireds}mireds) to HA for gear {address.number}")
         self._send_state_mqtt(address, "light", {
             "color_mode": "color_temp",
             "color": mireds,
             "state": "ON",
         })
-
-    def _send_state_mqtt(self, address: ZenAddress, component: str, state_dict: Dict[str, Any]) -> None:
-        ctrl = address.controller
-        target = f"ecg{address.number}"
-        mqtt_topic = f"{self.discovery_prefix}/{component}/{ctrl.name}/{target}/state"
-        state_json = json.dumps(state_dict)
-        self.mqttc.publish(
-            topic=mqtt_topic, 
-            payload=state_json, 
-            retain=False)
-        print(Fore.LIGHTRED_EX + f"MQTT sent - {mqtt_topic}: " + Style.DIM + f"{state_json}" + Style.RESET_ALL)
 
     # ================================
     # SETUP AUTODISCOVERY
@@ -408,12 +407,7 @@ class ZenMQTTBridge:
             elif light.features["RGB"]:
                 config_dict["supported_color_modes"] = ["rgb"]
             
-            config_json = json.dumps(config_dict)
-            self.mqttc.publish(
-                topic=f"{mqtt_topic}/config", 
-                payload=config_json, 
-                retain=True)
-            print(Fore.LIGHTRED_EX + f"MQTT sent - {mqtt_topic}/config: " + Style.DIM + f"{config_json}" + Style.RESET_ALL)
+            self._publish_config(mqtt_topic, config_dict)
 
     def setup_motion_sensors(self) -> None:
         """Initialize all motion sensors found on the DALI bus for Home Assistant auto-discovery."""
@@ -446,13 +440,68 @@ class ZenMQTTBridge:
                 "retain": False,
                 "expire_after": 120,
             }
-            config_json = json.dumps(config_dict)
-            self.mqttc.publish(
-                topic=f"{mqtt_topic}/config", 
-                payload=config_json, 
-                retain=True)
-            print(Fore.LIGHTRED_EX + f"MQTT sent - {mqtt_topic}: " + Style.DIM + f"{config_json}" + Style.RESET_ALL)
+            self._publish_config(mqtt_topic, config_dict)
+
+    def setup_system_variables(self) -> None:
+        """Initialize system variables in config.yaml for Home Assistant auto-discovery."""
         
+        # On first run, prep system variables with client_data
+        if not self.system_variables:
+            for sv in self.sv_config:
+                ctrl = sv['controller']
+                attr = sv['attributes']
+                zsv = ZenSystemVariable(protocol=self.zen, controller=ctrl, id=sv['id'])
+                mqtt_target = f"sv{sv['id']}"
+                zsv.client_data = {
+                    "platform": sv['platform'],
+                    "attributes": attr,
+                    "mqtt_target": mqtt_target,
+                    "mqtt_topic": f"{self.discovery_prefix}/sensor/{ctrl.name}/{mqtt_target}",
+                    "object_id": sv['object_id'],
+                    "unique_id": f"{ctrl.name}_{sv['object_id']}",
+                }
+                self.system_variables.append(zsv)
+
+        for zsv in self.system_variables:
+            attr: dict = zsv.client_data['attributes']
+            ctrl: ZenController = zsv.controller
+            match zsv.client_data['platform']:
+                case "sensor":
+                    config_platform = {
+                        "component": "sensor",
+                        "object_id": zsv.client_data['object_id'],
+                        "unique_id": zsv.client_data['unique_id'],
+                        "state_topic": f"{zsv.client_data['mqtt_topic']}/state",
+                        "availability_topic": f"{ctrl.name}/availability",
+                        "device": {
+                            "manufacturer": "zencontrol",
+                            "identifiers": f"zencontrol-{ctrl.name}",
+                            "name": ctrl.label,
+                        },
+                        "retain": False
+                    }
+                    self._publish_config(zsv.client_data['mqtt_topic'], attr | config_platform)
+    
+    # ================================
+    # PUBLISH TO MQTT
+    # ================================
+    
+    def _publish_config(self, topic: str, config: dict, retain: bool = True) -> None:
+        json_config = json.dumps(config)
+        self.mqttc.publish(f"{topic}/config", json_config, retain=retain)
+        print(Fore.LIGHTRED_EX + f"MQTT sent - {topic}/config: " + Style.DIM + f"{json_config}" + Style.RESET_ALL)
+    
+    def _publish_state(self, topic: str, state: str|dict, retain: bool = False) -> None:
+        if isinstance(state, dict): state = json.dumps(state)
+        self.mqttc.publish(f"{topic}/state", state, retain=retain)
+        print(Fore.LIGHTRED_EX + f"MQTT sent - {topic}/state: " + Style.DIM + f"{state}" + Style.RESET_ALL)
+
+    def _send_state_mqtt(self, address: ZenAddress, component: str, state_dict: dict[str, Any]) -> None:
+        ctrl = address.controller
+        target = f"ecg{address.number}"
+        mqtt_topic = f"{self.discovery_prefix}/{component}/{ctrl.name}/{target}/state"
+        self._publish_state(mqtt_topic, state_dict)
+    
     # ================================
     # UTILITY FUNCTIONS
     # ================================
@@ -504,6 +553,7 @@ class ZenMQTTBridge:
             self.zen.set_callbacks(
                 level_change_callback=self._level_change_event,
                 colour_change_callback=self._colour_change_event,
+                system_variable_change_callback=self._system_variable_change_event,
                 motion_sensor_callback=self._motion_sensor_event
             )
             self.zen.start_event_monitoring()
@@ -512,6 +562,7 @@ class ZenMQTTBridge:
             self.setup_started = True
             self.setup_lights()
             self.setup_motion_sensors()
+            self.setup_system_variables()
             
             # Use signal handling for graceful shutdown
             import signal

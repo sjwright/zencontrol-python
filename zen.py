@@ -836,10 +836,7 @@ class ZenProtocol:
                         # value = value * (10 ** magnitude)
 
                         # Update value of system variable singleton
-                        ZenSystemVariable(self, controller, target).from_controller(value)
-
-                        if self.system_variable_change_callback:
-                            self.system_variable_change_callback(controller=controller, system_variable=target, value=value, event_data=event_data)
+                        ZenSystemVariable(self, controller, target).set_value(value, from_controller=True)
 
                     case ZenEventType.COLOUR_CHANGE:
                         # ======= RGBWAF colour mode data bytes =======
@@ -1740,6 +1737,7 @@ class ZenGroup:
     def _reset(self):
         self.label = None
         self.scenes = []
+        self.client_data = {}
     def interview(self) -> bool:
         self.label = self.protocol.query_group_label(self.address, generic_if_none=True)
         self.scenes = []
@@ -1751,6 +1749,7 @@ class ZenGroup:
                 "label": scene_label,
             })
         return True
+
 
 class ZenLight:
     _instances = {}
@@ -1782,6 +1781,7 @@ class ZenLight:
             "min_kelvin": None,
             "max_kelvin": None,
         }
+        self.client_data = {}
     def interview(self) -> bool:
         cgstatus = self.protocol.dali_query_control_gear_status(self.address)
         if cgstatus:
@@ -1852,6 +1852,8 @@ class ZenMotionSensor:
         self.deadtime = None
         self.last_detect = None
         self._occupied = None
+        #
+        self.client_data = {}
     def interview(self) -> bool:
         inst = self.instance
         addr = inst.address
@@ -1914,8 +1916,7 @@ class ZenSystemVariable:
         return cls._instances[compound_id]
     def _reset(self):
         self._value = None
-    def from_controller(self, value: int):
-        self._value = value
+        self.client_data = {}
     @property
     def value(self):
         # If we don't know the value, request from the controller
@@ -1924,13 +1925,21 @@ class ZenSystemVariable:
         return self._value
     @value.setter 
     def value(self, new_value):
+        self._value = new_value
+    # Special setter which knows whether to send the value to the controller or not
+    def set_value(self, new_value, from_controller: bool = False):
         # If abs(value) is less than 32760, 
         #   If value has 2 decimal places, use magitude -2 (signed 0xfe)
         #   Else if value has 1 decimal place, use magitude -1 (signed 0xff)
         #   Else use magitude 0 (signed 0x00)
         # Else if abs(value) is less than 327600, use magitude 1 (signed 0x01)
         # Else if abs(value) is less than 3276000, use magitude 2 (signed 0x02)
-        self.protocol.set_system_variable(self.controller, self.id, new_value)
+        old_value = self._value
         self._value = new_value
+        if not from_controller:
+            self.protocol.set_system_variable(self.controller, self.id, new_value)
+        if new_value != old_value:
+            if self.protocol.system_variable_change_callback:
+                self.protocol.system_variable_change_callback(system_variable=self, value=self._value, from_controller=from_controller)
 
 

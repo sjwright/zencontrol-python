@@ -1,4 +1,4 @@
-from zen import ZenProtocol, ZenController, ZenAddress, ZenInstance, ZenColourTC, ZenAddressType, ZenMotionSensor, ZenLight
+from zen import ZenProtocol, ZenController, ZenAddress, ZenInstance, ZenColourTC, ZenAddressType, ZenMotionSensor, ZenLight, ZenSystemVariable
 import yaml
 import time
 
@@ -21,8 +21,8 @@ def scene_change_event(address: ZenAddress, scene: int, event_data: dict) -> Non
     print(f"Scene Change Event - address {address.number} scene {scene}")
 def is_occupied_event(instance: ZenInstance, event_data: dict) -> None:
     print(f"Is Occupied Event - address {instance.address.number} instance {instance.number}")
-def system_variable_change_event(controller: ZenController, system_variable:int, value:int, event_data: dict) -> None:
-    print(f"System Variable Change Event - controller {controller.name} system_variable {system_variable} value {value}")
+def system_variable_change_event(system_variable: ZenSystemVariable, value:int, from_controller: bool) -> None:
+    print(f"System Variable Change Event - controller {system_variable.controller.name} system_variable {system_variable.id} value {value} from_controller {from_controller}")
 def colour_change_event(address: ZenAddress, colour: bytes, event_data: dict) -> None:
     print(f"Colour Change Event - address {address.number} colour {colour}")
 def profile_change_event(controller: ZenController, profile: int, event_data: dict) -> None:
