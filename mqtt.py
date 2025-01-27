@@ -395,11 +395,11 @@ class ZenMQTTBridge:
                 "retain": False,
                 "brightness": light.features["brightness"],
                 "supported_color_modes": ["brightness"],
-                "min_mireds": self.kelvin_to_mireds(light.properties["max_kelvin"]) if light.properties["max_kelvin"] is not None else None,
-                "max_mireds": self.kelvin_to_mireds(light.properties["min_kelvin"]) if light.properties["min_kelvin"] is not None else None,
             }
             if light.features["temperature"]:
                 config_dict["supported_color_modes"] = ["color_temp"]
+                config_dict["min_mireds"] = self.kelvin_to_mireds(light.properties["max_kelvin"]) if light.properties["max_kelvin"] is not None else None
+                config_dict["max_mireds"] = self.kelvin_to_mireds(light.properties["min_kelvin"]) if light.properties["min_kelvin"] is not None else None
             elif light.features["RGBWW"]:
                 config_dict["supported_color_modes"] = ["rgbww"]
             elif light.features["RGBW"]:
@@ -499,7 +499,7 @@ class ZenMQTTBridge:
     def _send_state_mqtt(self, address: ZenAddress, component: str, state_dict: dict[str, Any]) -> None:
         ctrl = address.controller
         target = f"ecg{address.number}"
-        mqtt_topic = f"{self.discovery_prefix}/{component}/{ctrl.name}/{target}/state"
+        mqtt_topic = f"{self.discovery_prefix}/{component}/{ctrl.name}/{target}"
         self._publish_state(mqtt_topic, state_dict)
     
     # ================================
