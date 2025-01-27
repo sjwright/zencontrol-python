@@ -1092,12 +1092,15 @@ class ZenProtocol:
         response = self._send_basic(address.controller, self.CMD["QUERY_DALI_COLOUR"], address.ecg())
         if response and len(response) >= 1:
             match response[0]:
-                case 0x00: # RGBWAF
-                    return ZenColourRGBWAF(level=255, r=response[1], g=response[2], b=response[3], w=response[4], a=response[5], f=response[6])
-                case 0x01: # CIE 1931 XY
-                    return ZenColourXY(level=255, x=response[1], y=response[2])
-                case 0x02: # Colour Temperature
-                    return ZenColourTC(level=255, kelvin=(response[1] << 8) | response[2])
+                case ZenColourType.RGBWAF.value: # RGBWAF
+                    if len(response) == 7:
+                        return ZenColourRGBWAF(level=None, r=response[1], g=response[2], b=response[3], w=response[4], a=response[5], f=response[6])
+                case ZenColourType.XY.value: # CIE 1931 XY
+                    if len(response) == 3:
+                        return ZenColourXY(level=None, x=response[1], y=response[2])
+                case ZenColourType.TC.value: # Colour Temperature 
+                    if len(response) == 3:
+                        return ZenColourTC(level=None, kelvin=(response[1] << 8) | response[2])
         return None
     
     def query_profile_numbers(self, controller: ZenController) -> Optional[List[int]]:
@@ -1637,21 +1640,21 @@ class ZenProtocol:
         return None
     
     def set_system_variable(self, controller: ZenController, variable: int, value: int) -> bool:
-        """Set a system variable (0-47) value (0-65535) on the controller. Returns True if successful, else False."""
+        """Set a system variable (0-47) value (-32768-32767) on the controller. Returns True if successful, else False."""
         if not 0 <= variable < Const.MAX_SYSVAR:
             raise ValueError(f"Variable number must be between 0 and {Const.MAX_SYSVAR}")
-        if not 0 <= value <= 65535:
-            raise ValueError("Value must be between 0 and 65535")
+        if not -32768 <= value <= 32767:
+            raise ValueError("Value must be between -32768 and 32767")
         bytes = value.to_bytes(length=2, byteorder="big", signed=True)
         return self._send_basic(controller, self.CMD["SET_SYSTEM_VARIABLE"], variable, [0x00, bytes[0], bytes[1]], return_type='ok')
     
     def query_system_variable(self, controller: ZenController, variable: int) -> Optional[int]:
-        """Query the controller for the value of a system variable (0-47). Returns the variable's value (0-65535) if successful, else None."""
+        """Query the controller for the value of a system variable (0-47). Returns the variable's value (-32768-32767) if successful, else None."""
         if not 0 <= variable < Const.MAX_SYSVAR:
             raise ValueError(f"Variable number must be between 0 and {Const.MAX_SYSVAR}")
         response = self._send_basic(controller, self.CMD["QUERY_SYSTEM_VARIABLE"], variable)
         if response and len(response) == 2:
-            return int.from_bytes(response, "big", signed=True)
+            return int.from_bytes(response, byteorder="big", signed=True)
         else: # Value is unset
             return None
 

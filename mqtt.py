@@ -210,7 +210,6 @@ class ZenMQTTBridge:
         if reason_code == 0:
             self.logger.info("Successfully connected to MQTT broker")
             # Resubscribe to topics in case of reconnection
-            client.subscribe(f"test/#")
             for ctrl in self.control:
                 client.subscribe(f"{self.discovery_prefix}/light/{ctrl.name}/#")
                 client.subscribe(f"{self.discovery_prefix}/binary_sensor/{ctrl.name}/#")
@@ -558,7 +557,10 @@ class ZenMQTTBridge:
             )
             self.zen.start_event_monitoring()
             self.mqttc.loop_start()
+
+            # Wait for retained config to be deleted
             time.sleep(0.2)
+
             self.setup_started = True
             self.setup_lights()
             self.setup_motion_sensors()
