@@ -2,7 +2,7 @@ from zen import ZenProtocol, ZenController, ZenAddress, ZenInstance, ZenColourTC
 import yaml
 import time
 
-config = yaml.safe_load(open("config.yaml"))
+config = yaml.safe_load(open("test-config.yaml"))
 ctrl = ZenController(**config.get('zencontrol')[0])
 tpi = ZenProtocol(controllers=[ctrl], narration=True, unicast=False)
 

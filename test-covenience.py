@@ -1,7 +1,7 @@
 from zen import ZenProtocol, ZenController, ZenLight, ZenGroup, ZenMotionSensor
 import yaml
 
-config = yaml.safe_load(open("config.yaml"))
+config = yaml.safe_load(open("test-config.yaml"))
 ctrl = ZenController(**config.get('zencontrol')[0])
 tpi = ZenProtocol(controllers=[ctrl], narration=False)
 
