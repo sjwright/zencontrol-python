@@ -61,6 +61,9 @@ class ZenMQTTBridge:
         self.setup_started: bool = False
         self.sv_config: list[dict]
         self.system_variables: list[ZenSystemVariable] = []
+
+        self.config_topics_to_delete: list[str] = [] # List of topics to delete after completing setup
+        self.topic_object: dict[str, Any] = {} # Map of topics to objects
         
         # Setup logging
         self.setup_logging()
@@ -213,6 +216,8 @@ class ZenMQTTBridge:
             for ctrl in self.control:
                 client.subscribe(f"{self.discovery_prefix}/light/{ctrl.name}/#")
                 client.subscribe(f"{self.discovery_prefix}/binary_sensor/{ctrl.name}/#")
+                client.subscribe(f"{self.discovery_prefix}/sensor/{ctrl.name}/#")
+                client.subscribe(f"{self.discovery_prefix}/switch/{ctrl.name}/#")
                 client.publish(topic=f"{ctrl.name}/availability", payload="online", retain=True)
         else:
             self.logger.error(f"Failed to connect to MQTT broker with result code {reason_code}")
@@ -229,49 +234,70 @@ class ZenMQTTBridge:
             # Debug
             print(Fore.YELLOW + f"MQTT received - {msg.topic}: " + Style.DIM + f"{msg.payload.decode('UTF-8')}" + Style.RESET_ALL)
             
-            # Split string by / and check if it starts with discovery_prefix
-            topic_parts = msg.topic.split('/')
+            # Get the last part of the topic
+            command = msg.topic.split('/')[-1]
             
-            # Most of what we deal with has five parts
-            if len(topic_parts) == 5:
-                prefix = topic_parts[0]
-                component = topic_parts[1]
-                controller = topic_parts[2]
-                target = topic_parts[3]
-                command = topic_parts[4]
-                payload = json.loads(msg.payload)
-                
-                # Ignore messages not for us        
-                if prefix != self.discovery_prefix: return
+            # Config commands are ignored
+            if command == "config":
+                # If we haven't started setup yet, it's a retained topic, so add to delete list
+                if not self.setup_started:
+                    self.config_topics_to_delete.append(msg.topic)
+                return
+            
+            # State commands are always ignored
+            if command == "state":
+                return
+            
+            # Only set commands from here onwards
+            if command != "set":
+                return
+            
+            # Get the base topic from the message
+            base_topic = msg.topic.rsplit('/', 1)[0]
+            
+            # Find the matching object in our map
+            target_object = self.topic_object.get(base_topic)
 
-                # Match to a controller, or ignore
-                ctrl = next((c for c in self.control if c.name == controller), None)
-                if not ctrl: return
+            # If we don't have an object, ignore the message
+            if not target_object:
+                self.logger.debug(f"No matching object found for topic {base_topic}")
+                return
+            
+            # Convert payload to str
+            payload = msg.payload.decode('UTF-8')
 
-                # Process commands
-                match command:
-                    case "config":
-                        # If we haven't started yet, delete old retained config entries
-                        if not self.setup_started:
-                            client.publish(msg.topic, None, retain=True)
-                        return
-                    case "set":
-                        match component:
-                            case "light":
-                                match_ecg = re.search(r'ecg(\d+)', target)
-                                if not match_ecg: return
-                                address = int(match_ecg.group(1))
-                                print(f"Parsed MQTT: {command} {component} ECG {address} = {payload}")
-                                addr = ZenAddress(ctrl, type=ZenAddressType.ECG, number=address)
-                                light = ZenLight(protocol=self.zen, address=addr)
-                                self._apply_payload_to_zenlight(light, payload)
+            # Match on object type
+            match target_object:
+                case ZenLight():
+                    light: ZenLight = target_object
+                    self._apply_mqtt_payload_to_zenlight(light, json.loads(payload))
+                case ZenSystemVariable():
+                    zsv: ZenSystemVariable = target_object
+                    match zsv.client_data['component']:
+                        case "switch":
+                            self._apply_mqtt_payload_to_zsv(zsv, payload)
+                        case "sensor":
+                            return # Read only
+                case ZenMotionSensor():
+                    return # Read only
+                case _:
+                    print(f"Unknown object type found in self.topic_object: {type(target_object)}")
+                    raise ValueError(f"Unknown object type found in self.topic_object: {type(target_object)}")
             
         except json.JSONDecodeError as e:
             self.logger.error(f"Invalid JSON payload: {e}")
-        except Exception as e:
-            self.logger.error(f"Error processing MQTT message: {e}")
 
-    def _apply_payload_to_zenlight(self, light: ZenLight, payload: dict[str, Any]) -> None:
+    def _apply_mqtt_payload_to_zsv(self, zsv: ZenSystemVariable, payload: str) -> None:
+        self.logger.info(f"Setting {zsv.controller.name} system variable {zsv.id} to {payload}")
+        match payload:
+            case "ON":
+                zsv.set_value(1)
+            case "OFF":
+                zsv.set_value(0)
+            case _:
+                raise ValueError(f"Invalid payload for system variable: {payload}")
+
+    def _apply_mqtt_payload_to_zenlight(self, light: ZenLight, payload: dict[str, Any]) -> None:
         addr = light.address
         ctrl = addr.controller
         arc_level = None
@@ -321,42 +347,47 @@ class ZenMQTTBridge:
     
     def _motion_sensor_event(self, sensor: ZenMotionSensor, occupied: bool) -> None:
         print(f"Zen to HA: sensor {sensor} occupied: {occupied}")
-        inst = sensor.instance
-        addr = inst.address
-        ctrl = addr.controller
-        mqtt_target = f"ecd{addr.number}_inst{inst.number}"
-        mqtt_topic = f"{self.discovery_prefix}/binary_sensor/{ctrl.name}/{mqtt_target}"
+        mqtt_topic = sensor.client_data['mqtt_topic']
         self._publish_state(mqtt_topic, "ON" if occupied else "OFF")
 
     def _system_variable_change_event(self, system_variable: ZenSystemVariable, value:int, from_controller: bool) -> None:
         print(f"System Variable Change Event - controller {system_variable.controller.name} system_variable {system_variable.id} value {value} from_controller {from_controller}")
         if 'mqtt_topic' in system_variable.client_data:
-            self._publish_state(system_variable.client_data['mqtt_topic'], value)
+            match system_variable.client_data['component']:
+                case "switch":
+                    self._publish_state(system_variable.client_data['mqtt_topic'], "OFF" if value == 0 else "ON")
+                case "sensor":
+                    self._publish_state(system_variable.client_data['mqtt_topic'], value)
+                case _:
+                    raise ValueError(f"Unknown component: {system_variable.client_data['component']}")
+
         return
 
     def send_light_level_to_homeassistant(self, address: ZenAddress, arc_level: Optional[int] = None) -> None:
+        mqtt_topic = self._mqtt_topic_for_address(address, "light")
         if arc_level is None:
             arc_level = self.zen.dali_query_level(address)
         if arc_level == 0:
-            self._send_state_mqtt(address, "light", {
+            self._publish_state(mqtt_topic, {
                 "state": "OFF"
             })
         else:
             brightness = self.arc_to_brightness(arc_level)
-            self._send_state_mqtt(address, "light", {
+            self._publish_state(mqtt_topic, {
                 "color_mode": "color_temp",
                 "brightness": brightness,
                 "state": "ON"
             })
 
     def send_light_temp_to_homeassistant(self, address: ZenAddress, kelvin: Optional[int] = None, mireds: Optional[int] = None) -> None:
+        mqtt_topic = self._mqtt_topic_for_address(address, "light")
         if kelvin is None and mireds is None:
             raise ValueError("Cannot get temperature value dynamically")
         if mireds is None:
             mireds = self.kelvin_to_mireds(kelvin)
         if kelvin is None:
             kelvin = self.mireds_to_kelvin(mireds)
-        self._send_state_mqtt(address, "light", {
+        self._publish_state(mqtt_topic, {
             "color_mode": "color_temp",
             "color": mireds,
             "state": "ON",
@@ -370,26 +401,18 @@ class ZenMQTTBridge:
         """Initialize all lights for Home Assistant auto-discovery."""
         lights = self.zen.get_lights()
         for light in lights:
-            ctrl = light.address.controller
-            mqtt_topic = f"{self.discovery_prefix}/light/{ctrl.name}/ecg{light.address.number}"
-            
-            config_dict = {
-                "component": "light",
+            self._client_data_for_object(light, "light")
+            addr: ZenAddress = light.address
+            ctrl: ZenController = addr.controller
+            mqtt_topic = light.client_data['mqtt_topic']
+            config_dict = light.client_data['attributes'] | {
                 "name": light.label,
-                "object_id": f"{ctrl.name}_ecg{light.address.number}",
-                "unique_id": f"{ctrl.name}_ecg{light.address.number}_{light.serial}",
                 "schema": "json",
                 "payload_off": "OFF",
                 "payload_on": "ON",
                 "command_topic": f"{mqtt_topic}/set",
                 "state_topic": f"{mqtt_topic}/state",
-                "availability_topic": f"{ctrl.name}/availability",
                 "json_attributes_topic": f"{mqtt_topic}/attributes",
-                "device": {
-                    "manufacturer": "zencontrol",
-                    "identifiers": f"zencontrol-{ctrl.name}",
-                    "name": ctrl.label,
-                },
                 "effect": False,
                 "retain": False,
                 "brightness": light.features["brightness"],
@@ -406,40 +429,29 @@ class ZenMQTTBridge:
             elif light.features["RGB"]:
                 config_dict["supported_color_modes"] = ["rgb"]
             
-            self._publish_config(mqtt_topic, config_dict)
+            self._publish_config(mqtt_topic, config_dict, object=light)
 
     def setup_motion_sensors(self) -> None:
         """Initialize all motion sensors found on the DALI bus for Home Assistant auto-discovery."""
         sensors = self.zen.get_motion_sensors()
         for sensor in sensors:
+            self._client_data_for_object(sensor, "binary_sensor")
             sensor.hold_time = 5
-            inst = sensor.instance
-            addr = inst.address
-            ctrl = addr.controller
-            mqtt_target = f"ecd{addr.number}_inst{inst.number}"
-            mqtt_topic = f"{self.discovery_prefix}/binary_sensor/{ctrl.name}/{mqtt_target}"
-            object_id = f"{ctrl.name}_{mqtt_target}"
-            unique_id = f"{ctrl.name}_{mqtt_target}_{sensor.serial}"
-            config_dict = {
-                "component": "binary_sensor",
-                "device_class": "motion",
+            inst: ZenInstance = sensor.instance
+            addr: ZenAddress = inst.address
+            ctrl: ZenController = addr.controller
+            mqtt_topic = sensor.client_data['mqtt_topic']
+            config_dict = sensor.client_data['attributes'] | {
                 "name": sensor.instance_label,
-                "object_id": object_id,
-                "unique_id": unique_id,
+                "device_class": "motion",
                 "payload_off": "OFF",
                 "payload_on": "ON",
                 "state_topic": f"{mqtt_topic}/state",
-                "availability_topic": f"{ctrl.name}/availability",
                 "json_attributes_topic": f"{mqtt_topic}/attributes",
-                "device": {
-                    "manufacturer": "zencontrol",
-                    "identifiers": f"zencontrol-{ctrl.name}",
-                    "name": ctrl.label,
-                },
                 "retain": False,
                 "expire_after": 120,
             }
-            self._publish_config(mqtt_topic, config_dict)
+            self._publish_config(mqtt_topic, config_dict, object=sensor)
 
     def setup_system_variables(self) -> None:
         """Initialize system variables in config.yaml for Home Assistant auto-discovery."""
@@ -447,59 +459,106 @@ class ZenMQTTBridge:
         # On first run, prep system variables with client_data
         if not self.system_variables:
             for sv in self.sv_config:
-                ctrl = sv['controller']
-                attr = sv['attributes']
+                ctrl: ZenController = sv['controller']
                 zsv = ZenSystemVariable(protocol=self.zen, controller=ctrl, id=sv['id'])
-                mqtt_target = f"sv{sv['id']}"
-                zsv.client_data = {
-                    "platform": sv['platform'],
-                    "attributes": attr,
-                    "mqtt_target": mqtt_target,
-                    "mqtt_topic": f"{self.discovery_prefix}/sensor/{ctrl.name}/{mqtt_target}",
+                attr = sv['attributes'] | {
                     "object_id": sv['object_id'],
-                    "unique_id": f"{ctrl.name}_{sv['object_id']}",
+                    "unique_id": f"{ctrl.name}_{sv['object_id']}"
                 }
+                self._client_data_for_object(zsv, sv['component'], attributes=attr)
                 self.system_variables.append(zsv)
 
         for zsv in self.system_variables:
-            attr: dict = zsv.client_data['attributes']
+            self._client_data_for_object(zsv, zsv.client_data['component'])
             ctrl: ZenController = zsv.controller
-            match zsv.client_data['platform']:
+            mqtt_topic = zsv.client_data['mqtt_topic']
+            match zsv.client_data['component']:
                 case "sensor":
-                    config_platform = {
+                    config_dict = {
                         "component": "sensor",
-                        "object_id": zsv.client_data['object_id'],
-                        "unique_id": zsv.client_data['unique_id'],
-                        "state_topic": f"{zsv.client_data['mqtt_topic']}/state",
-                        "availability_topic": f"{ctrl.name}/availability",
-                        "device": {
-                            "manufacturer": "zencontrol",
-                            "identifiers": f"zencontrol-{ctrl.name}",
-                            "name": ctrl.label,
-                        },
-                        "retain": False
+                        "state_topic": f"{mqtt_topic}/state",
+                        "retain": False,
                     }
-                    self._publish_config(zsv.client_data['mqtt_topic'], attr | config_platform)
+                case "switch":
+                    config_dict = {
+                        "component": "switch",
+                        "state_topic": f"{mqtt_topic}/state",
+                        "command_topic": f"{mqtt_topic}/set",
+                        "payload_off": "OFF",
+                        "payload_on": "ON",
+                        "retain": False,
+                    }
+                case _:
+                    raise ValueError(f"Unknown component: {zsv.client_data['component']}")
+            self._publish_config(zsv.client_data['mqtt_topic'], zsv.client_data['attributes'] | config_dict, object=zsv)
     
+    def delete_retained_topics(self) -> None:
+        for topic in self.config_topics_to_delete:
+            self.mqttc.publish(topic, None, retain=True)
+            print(Fore.RED + f"•• MQTT DELETED •• " + Style.DIM + f"{topic}" + Style.RESET_ALL)
+
     # ================================
     # PUBLISH TO MQTT
     # ================================
     
-    def _publish_config(self, topic: str, config: dict, retain: bool = True) -> None:
-        json_config = json.dumps(config)
-        self.mqttc.publish(f"{topic}/config", json_config, retain=retain)
-        print(Fore.LIGHTRED_EX + f"MQTT sent - {topic}/config: " + Style.DIM + f"{json_config}" + Style.RESET_ALL)
+    def _mqtt_topic_for_address(self, address: ZenAddress, component: str) -> str:
+        # Search through existing objects to find matching address
+        for obj in self.topic_object.values():
+            if hasattr(obj, 'address') and obj.address == address:
+                return obj.client_data['mqtt_topic']
+    
+    def _client_data_for_object(self, object: Any, component: str, attributes: dict = {}) -> dict:
+        match object:
+            case ZenLight():
+                light: ZenLight = object
+                addr = light.address
+                ctrl = addr.controller
+                serial = light.serial
+                mqtt_target = f"ecg{addr.number}"
+            case ZenMotionSensor():
+                sensor: ZenMotionSensor = object
+                inst = sensor.instance
+                addr = inst.address
+                ctrl = addr.controller
+                serial = sensor.serial
+                mqtt_target = f"ecd{addr.number}_inst{inst.number}"
+            case ZenSystemVariable():
+                zsv: ZenSystemVariable = object
+                ctrl = zsv.controller
+                serial = component
+                mqtt_target = f"sv{zsv.id}"
+            case _:
+                raise ValueError(f"Unknown object type: {type(object)}")
+        object.client_data = object.client_data | {
+            "component": component,
+            "attributes": attributes | {
+                "component": component,
+                "object_id": f"{ctrl.name}_{mqtt_target}",
+                "unique_id": f"{ctrl.name}_{mqtt_target}_{serial}",
+                "device": {
+                    "manufacturer": "zencontrol",
+                    "identifiers": f"zencontrol-{ctrl.name}",
+                    "name": ctrl.label,
+                },
+                "availability_topic": f"{ctrl.name}/availability",
+            },
+            "mqtt_target": mqtt_target,
+            "mqtt_topic": f"{self.discovery_prefix}/{component}/{ctrl.name}/{mqtt_target}",
+        }
+        return object.client_data
+    
+    def _publish_config(self, topic: str, config: dict, object: Any = None, retain: bool = True) -> None:
+        self.topic_object[topic] = object
+        config_topic = f"{topic}/config"
+        config_json = json.dumps(config)
+        self.mqttc.publish(config_topic, config_json, retain=retain)
+        if config_topic in self.config_topics_to_delete: self.config_topics_to_delete.remove(config_topic)
+        print(Fore.LIGHTRED_EX + f"MQTT sent - {topic}/config: " + Style.DIM + f"{config_json}" + Style.RESET_ALL)
     
     def _publish_state(self, topic: str, state: str|dict, retain: bool = False) -> None:
         if isinstance(state, dict): state = json.dumps(state)
         self.mqttc.publish(f"{topic}/state", state, retain=retain)
         print(Fore.LIGHTRED_EX + f"MQTT sent - {topic}/state: " + Style.DIM + f"{state}" + Style.RESET_ALL)
-
-    def _send_state_mqtt(self, address: ZenAddress, component: str, state_dict: dict[str, Any]) -> None:
-        ctrl = address.controller
-        target = f"ecg{address.number}"
-        mqtt_topic = f"{self.discovery_prefix}/{component}/{ctrl.name}/{target}"
-        self._publish_state(mqtt_topic, state_dict)
     
     # ================================
     # UTILITY FUNCTIONS
@@ -558,14 +617,15 @@ class ZenMQTTBridge:
             self.zen.start_event_monitoring()
             self.mqttc.loop_start()
 
-            # Wait for retained config to be deleted
-            time.sleep(0.2)
+            # Wait for retained topics to be received
+            time.sleep(0.3)
 
             self.setup_started = True
             self.setup_lights()
             self.setup_motion_sensors()
             self.setup_system_variables()
-            
+            self.delete_retained_topics()
+
             # Use signal handling for graceful shutdown
             import signal
             signal.signal(signal.SIGINT, lambda s, f: self.stop())

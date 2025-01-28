@@ -1483,7 +1483,7 @@ class ZenProtocol:
     def return_to_scheduled_profile(self, controller: ZenController) -> bool:
         """Return to the scheduled profile. Returns True if successful, else False."""
         return self.change_profile_number(controller, 0xFFFF) # See docs page 91, 0xFFFF returns to scheduled profile
-    
+
     def query_instance_groups(self, instance: ZenInstance) -> Optional[Tuple[int, int, int]]: # TODO: replace Tuple with dict
         """Query the group targets associated with a DALI instance.
             
@@ -1694,26 +1694,6 @@ class ZenProtocol:
                         motion_sensor = ZenMotionSensor(protocol=self, instance=instance)
                         motion_sensors.append(motion_sensor)
         return motion_sensors
-    
-    # def get_buttons(self) -> List[dict]:
-    #     """Get a list of all buttons (instances) for a controller."""
-    #     buttons = []
-    #     for controller in self.controllers:
-    #         addresses = self.query_dali_addresses_with_instances(controller)
-    #         for address in addresses:
-    #             instances = self.query_instances_by_address(address)
-    #             for instance in instances:
-    #                 device_label = self.query_dali_device_label(address, generic_if_none=True)
-    #                 instance_label = self.query_dali_instance_label(instance, generic_if_none=True)
-    #                 serial = self.query_dali_serial(address)
-    #                 button = {
-    #                     "address": address,
-    #                     "label": instance_label,
-    #                     "serial": serial,
-    #                     "object_id": f"{controller.name}_ecd{address.number}_i{instance.number}",
-    #                     "unique_id": f"{controller.name}_ecd{address.number}_i{instance.number}_{serial}",
-    #                 }
-    #                 buttons.append(button)
 
 
 # ============================
@@ -1815,14 +1795,17 @@ class ZenLight:
         else:
             self._reset()
             return False
-    def on(self):
+    def on(self, fade: bool = True):
+        if not fade: self.protocol.dali_enable_dapc_sequence(self.address)
         return self.protocol.dali_go_to_last_active_level(self.address)
     def off(self, fade: bool = True):
         if fade: return self.protocol.dali_arc_level(self.address, 0)
         else: return self.protocol.dali_off(self.address)
-    def scene(self, scene: int):
+    def scene(self, scene: int, fade: bool = True):
+        if not fade: self.protocol.dali_enable_dapc_sequence(self.address)
         return self.protocol.dali_scene(self.address, scene)
-    def set(self, level: int = 255, kelvin: Optional[int] = None):
+    def set(self, level: int = 255, kelvin: Optional[int] = None, fade: bool = True):
+        if not fade: self.protocol.dali_enable_dapc_sequence(self.address)
         if kelvin is not None and self.features["temperature"]:
             colour = ZenColourTC(level=level, kelvin=kelvin)
             return self.protocol.dali_colour(self.address, colour)
