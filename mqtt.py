@@ -21,9 +21,6 @@ class Constants:
     RGB_CHANNELS = 3
     RGBW_CHANNELS = 4
     RGBWW_CHANNELS = 5
-    
-    # Timing
-    STARTUP_POLL_DELAY = 5
 
     # MQTT settings
     MQTT_RECONNECT_MIN_DELAY = 1
@@ -218,6 +215,7 @@ class ZenMQTTBridge:
                 client.subscribe(f"{self.discovery_prefix}/binary_sensor/{ctrl.name}/#")
                 client.subscribe(f"{self.discovery_prefix}/sensor/{ctrl.name}/#")
                 client.subscribe(f"{self.discovery_prefix}/switch/{ctrl.name}/#")
+                client.subscribe(f"{self.discovery_prefix}/event/{ctrl.name}/#")
                 client.publish(topic=f"{ctrl.name}/availability", payload="online", retain=True)
         else:
             self.logger.error(f"Failed to connect to MQTT broker with result code {reason_code}")

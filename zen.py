@@ -34,7 +34,7 @@ class Const:
     MAX_INSTANCE = 32
     MAX_GROUP = 16
     MAX_SCENE = 12
-    MAX_SYSVAR = 48
+    MAX_SYSVAR = 147
     MIN_KELVIN = 1000
     MAX_KELVIN = 20000
     MAX_LEVEL = 254
@@ -316,7 +316,6 @@ class ZenProtocol:
 
     # Define commands as a dictionary
     CMD: Dict[str, int] = {
-        # Rudimentarly tested
         "QUERY_CONTROLLER_VERSION_NUMBER": 0x1C,    # Query ZenController Version Number
         "QUERY_CONTROLLER_LABEL": 0x24,             # Query the label of the controller
         "QUERY_CONTROLLER_FITTING_NUMBER": 0x25,    # Query the fitting number of the controller itself
@@ -326,6 +325,7 @@ class ZenProtocol:
         "ENABLE_TPI_EVENT_EMIT": 0x08,              # Enable or disable TPI Events
         "SET_SYSTEM_VARIABLE": 0x36,                # Set a system variable value
         "QUERY_SYSTEM_VARIABLE": 0x37,              # Query system variable
+        "QUERY_SYSTEM_VARIABLE_NAME": 0x42,         # Query the name of a system variable
 
         "QUERY_CONTROL_GEAR_DALI_ADDRESSES": 0x1D,  # Query Control Gear present in database
         "QUERY_DALI_DEVICE_LABEL": 0x03,            # Query the label for a DALI ECD or ECG by address
@@ -391,12 +391,12 @@ class ZenProtocol:
         "QUERY_DALI_TPI_EVENT_FILTERS": 0x32,       # Query DALI TPI Event filters on a address
         "DALI_CLEAR_TPI_EVENT_FILTERS": 0x33,       # Request that DALI TPI Event filters be cleared
 
+        "SET_TPI_EVENT_UNICAST_ADDRESS": 0x40,      # Set a TPI Events unicast address and port
+        "QUERY_TPI_EVENT_UNICAST_ADDRESS": 0x41,    # Query TPI Events State, unicast address and port
+
         # Implemented but not tested
         "OVERRIDE_DALI_BUTTON_LED_STATE": 0x29,     # Override a button LED state
         "QUERY_LAST_KNOWN_DALI_BUTTON_LED_STATE": 0x30, # Query button last known button LED state
-
-        "SET_TPI_EVENT_UNICAST_ADDRESS": 0x40,      # Set a TPI Events unicast address and port
-        "QUERY_TPI_EVENT_UNICAST_ADDRESS": 0x41,    # Query TPI Events State, unicast address and port
 
         # Won't implement (because I can't test)
         "TRIGGER_SDDP_IDENTIFY": 0x06,              # Trigger a Control4 SDDP Identify
@@ -1640,7 +1640,7 @@ class ZenProtocol:
         return None
     
     def set_system_variable(self, controller: ZenController, variable: int, value: int) -> bool:
-        """Set a system variable (0-47) value (-32768-32767) on the controller. Returns True if successful, else False."""
+        """Set a system variable (0-147) value (-32768-32767) on the controller. Returns True if successful, else False."""
         if not 0 <= variable < Const.MAX_SYSVAR:
             raise ValueError(f"Variable number must be between 0 and {Const.MAX_SYSVAR}")
         if not -32768 <= value <= 32767:
@@ -1649,7 +1649,7 @@ class ZenProtocol:
         return self._send_basic(controller, self.CMD["SET_SYSTEM_VARIABLE"], variable, [0x00, bytes[0], bytes[1]], return_type='ok')
     
     def query_system_variable(self, controller: ZenController, variable: int) -> Optional[int]:
-        """Query the controller for the value of a system variable (0-47). Returns the variable's value (-32768-32767) if successful, else None."""
+        """Query the controller for the value of a system variable (0-147). Returns the variable's value (-32768-32767) if successful, else None."""
         if not 0 <= variable < Const.MAX_SYSVAR:
             raise ValueError(f"Variable number must be between 0 and {Const.MAX_SYSVAR}")
         response = self._send_basic(controller, self.CMD["QUERY_SYSTEM_VARIABLE"], variable)
@@ -1657,6 +1657,12 @@ class ZenProtocol:
             return int.from_bytes(response, byteorder="big", signed=True)
         else: # Value is unset
             return None
+    
+    def query_system_variable_name(self, controller: ZenController, variable: int) -> Optional[str]:
+        """Query the name of a system variable (0-147). Returns the variable's name, or None if query fails."""
+        if not 0 <= variable < Const.MAX_SYSVAR:
+            raise ValueError(f"Variable number must be between 0 and {Const.MAX_SYSVAR}")
+        return self._send_basic(controller, self.CMD["QUERY_SYSTEM_VARIABLE_NAME"], variable, return_type='str')
 
     # ============================
     # Convenience commands
@@ -1694,6 +1700,24 @@ class ZenProtocol:
                         motion_sensor = ZenMotionSensor(protocol=self, instance=instance)
                         motion_sensors.append(motion_sensor)
         return motion_sensors
+
+    def get_system_variables(self, give_up_after: int = 10) -> List[ZenSystemVariable]:
+        """Return a list of all system variables. Will give up searching after give_up_after sequential failures."""
+        system_variables = []
+        failed_attempts = 0
+        for controller in self.controllers:
+            for variable in range(Const.MAX_SYSVAR):
+                label = self.query_system_variable_name(controller, variable)
+                if label:
+                    failed_attempts = 0
+                    zsv = ZenSystemVariable(self, controller, variable)
+                    zsv.label = label
+                    system_variables.append(zsv)
+                else:
+                    failed_attempts += 1
+                    if failed_attempts >= give_up_after:
+                        break
+        return system_variables
 
 
 # ============================
@@ -1900,7 +1924,10 @@ class ZenSystemVariable:
             inst.id = id
             inst._reset()
         return cls._instances[compound_id]
+    def __repr__(self) -> str:
+        return f"ZenSystemVariable<{self.controller.name} id{self.id} {self.label}>"
     def _reset(self):
+        self.label = None
         self._value = None
         self.client_data = {}
     @property
