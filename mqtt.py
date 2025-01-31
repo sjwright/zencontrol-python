@@ -4,7 +4,7 @@ import json
 import yaml
 import re
 from typing import Optional, Any, Callable
-from zen import ZenProtocol, ZenController, ZenAddress, ZenInstance, ZenAddressType, ZenColourGeneric, ZenColourTC, ZenLight, ZenMotionSensor, ZenSystemVariable
+from zen import ZenProtocol, ZenController, ZenAddress, ZenInstance, ZenAddressType, ZenColourGeneric, ZenColourTC, ZenLight, ZenButton,ZenMotionSensor, ZenSystemVariable
 import paho.mqtt.client as mqtt
 from colorama import Fore, Back, Style
 import logging
@@ -61,6 +61,14 @@ class ZenMQTTBridge:
 
         self.config_topics_to_delete: list[str] = [] # List of topics to delete after completing setup
         self.topic_object: dict[str, Any] = {} # Map of topics to objects
+
+        self.global_config: dict[str, Any] = {
+            "origin": {
+                "name": "zencontrol-python",
+                "sw": "0.0.0",
+                "url": "https://github.com/sjwright/zencontrol-python"
+            }
+        }
         
         # Setup logging
         self.setup_logging()
@@ -216,6 +224,7 @@ class ZenMQTTBridge:
                 client.subscribe(f"{self.discovery_prefix}/sensor/{ctrl.name}/#")
                 client.subscribe(f"{self.discovery_prefix}/switch/{ctrl.name}/#")
                 client.subscribe(f"{self.discovery_prefix}/event/{ctrl.name}/#")
+                client.subscribe(f"{self.discovery_prefix}/device_automation/{ctrl.name}/#")
                 client.publish(topic=f"{ctrl.name}/availability", payload="online", retain=True)
         else:
             self.logger.error(f"Failed to connect to MQTT broker with result code {reason_code}")
@@ -343,12 +352,17 @@ class ZenMQTTBridge:
         if isinstance(colour, ZenColourTC):
             self.send_light_temp_to_homeassistant(address, colour.kelvin)
     
-    def _motion_sensor_event(self, sensor: ZenMotionSensor, occupied: bool) -> None:
+    def _button_event(self, button: ZenButton, held: bool) -> None:
+        print(f"Zen to HA: button {button} held: {held}")
+        mqtt_topic = button.client_data['mqtt_topic']
+        self._publish_event(mqtt_topic, "button_short_press")
+    
+    def _motion_event(self, sensor: ZenMotionSensor, occupied: bool) -> None:
         print(f"Zen to HA: sensor {sensor} occupied: {occupied}")
         mqtt_topic = sensor.client_data['mqtt_topic']
         self._publish_state(mqtt_topic, "ON" if occupied else "OFF")
 
-    def _system_variable_change_event(self, system_variable: ZenSystemVariable, value:int, from_controller: bool) -> None:
+    def _sysvar_event(self, system_variable: ZenSystemVariable, value:int, from_controller: bool) -> None:
         print(f"System Variable Change Event - controller {system_variable.controller.name} system_variable {system_variable.id} value {value} from_controller {from_controller}")
         if 'mqtt_topic' in system_variable.client_data:
             match system_variable.client_data['component']:
@@ -403,7 +417,7 @@ class ZenMQTTBridge:
             addr: ZenAddress = light.address
             ctrl: ZenController = addr.controller
             mqtt_topic = light.client_data['mqtt_topic']
-            config_dict = light.client_data['attributes'] | {
+            config_dict = self.global_config | light.client_data['attributes'] | {
                 "name": light.label,
                 "schema": "json",
                 "payload_off": "OFF",
@@ -429,6 +443,21 @@ class ZenMQTTBridge:
             
             self._publish_config(mqtt_topic, config_dict, object=light)
 
+    def setup_buttons(self) -> None:
+        """Initialize all buttons found on the DALI bus for Home Assistant auto-discovery."""
+        buttons = self.zen.get_buttons()
+        for button in buttons:
+            self._client_data_for_object(button, "device_automation")
+            mqtt_topic = button.client_data['mqtt_topic']
+            config_dict = self.global_config | button.client_data['attributes'] | {
+                "automation_type": "trigger",
+                "type": re.sub(r'[^a-z0-9]', '_', button.label.lower()) + "_" + re.sub(r'[^a-z0-9]', '_', button.instance_label.lower()),
+                "subtype": "button_short_press",
+                "payload": "button_short_press",
+                "topic": f"{mqtt_topic}/event",
+            }
+            self._publish_config(mqtt_topic, config_dict, object=button)
+
     def setup_motion_sensors(self) -> None:
         """Initialize all motion sensors found on the DALI bus for Home Assistant auto-discovery."""
         sensors = self.zen.get_motion_sensors()
@@ -439,7 +468,7 @@ class ZenMQTTBridge:
             addr: ZenAddress = inst.address
             ctrl: ZenController = addr.controller
             mqtt_topic = sensor.client_data['mqtt_topic']
-            config_dict = sensor.client_data['attributes'] | {
+            config_dict = self.global_config | sensor.client_data['attributes'] | {
                 "name": sensor.instance_label,
                 "device_class": "motion",
                 "payload_off": "OFF",
@@ -488,7 +517,8 @@ class ZenMQTTBridge:
                     }
                 case _:
                     raise ValueError(f"Unknown component: {zsv.client_data['component']}")
-            self._publish_config(zsv.client_data['mqtt_topic'], zsv.client_data['attributes'] | config_dict, object=zsv)
+            config_dict = self.global_config | zsv.client_data['attributes'] | config_dict
+            self._publish_config(zsv.client_data['mqtt_topic'], config_dict, object=zsv)
     
     def delete_retained_topics(self) -> None:
         for topic in self.config_topics_to_delete:
@@ -513,6 +543,13 @@ class ZenMQTTBridge:
                 ctrl = addr.controller
                 serial = light.serial
                 mqtt_target = f"ecg{addr.number}"
+            case ZenButton():
+                button: ZenButton = object
+                inst = button.instance
+                addr = inst.address
+                ctrl = addr.controller
+                serial = button.serial
+                mqtt_target = f"ecd{addr.number}_inst{inst.number}"
             case ZenMotionSensor():
                 sensor: ZenMotionSensor = object
                 inst = sensor.instance
@@ -521,10 +558,10 @@ class ZenMQTTBridge:
                 serial = sensor.serial
                 mqtt_target = f"ecd{addr.number}_inst{inst.number}"
             case ZenSystemVariable():
-                zsv: ZenSystemVariable = object
-                ctrl = zsv.controller
+                sysvar: ZenSystemVariable = object
+                ctrl = sysvar.controller
                 serial = component
-                mqtt_target = f"sv{zsv.id}"
+                mqtt_target = f"sv{sysvar.id}"
             case _:
                 raise ValueError(f"Unknown object type: {type(object)}")
         object.client_data = object.client_data | {
@@ -534,8 +571,9 @@ class ZenMQTTBridge:
                 "object_id": f"{ctrl.name}_{mqtt_target}",
                 "unique_id": f"{ctrl.name}_{mqtt_target}_{serial}",
                 "device": {
-                    "manufacturer": "zencontrol",
+                    "manufacturer": "Zencontrol",
                     "identifiers": f"zencontrol-{ctrl.name}",
+                    "sw_version": self.zen.query_controller_version_number(ctrl),
                     "name": ctrl.label,
                 },
                 "availability_topic": f"{ctrl.name}/availability",
@@ -557,6 +595,10 @@ class ZenMQTTBridge:
         if isinstance(state, dict): state = json.dumps(state)
         self.mqttc.publish(f"{topic}/state", state, retain=retain)
         print(Fore.LIGHTRED_EX + f"MQTT sent - {topic}/state: " + Style.DIM + f"{state}" + Style.RESET_ALL)
+    
+    def _publish_event(self, topic: str, event: str, retain: bool = False) -> None:
+        self.mqttc.publish(f"{topic}/event", event, retain=retain)
+        print(Fore.LIGHTRED_EX + f"MQTT sent - {topic}/event: " + Style.DIM + f"{event}" + Style.RESET_ALL)
     
     # ================================
     # UTILITY FUNCTIONS
@@ -608,9 +650,12 @@ class ZenMQTTBridge:
             # Start event monitoring and MQTT services
             self.zen.set_callbacks(
                 level_change_callback=self._level_change_event,
-                colour_change_callback=self._colour_change_event,
-                system_variable_change_callback=self._system_variable_change_event,
-                motion_sensor_callback=self._motion_sensor_event
+                colour_change_callback=self._colour_change_event
+            )
+            self.zen.set_convenience_callbacks(
+                button_callback=self._button_event,
+                motion_callback=self._motion_event,
+                sysvar_callback=self._sysvar_event
             )
             self.zen.start_event_monitoring()
             self.mqttc.loop_start()
@@ -620,6 +665,7 @@ class ZenMQTTBridge:
 
             self.setup_started = True
             self.setup_lights()
+            self.setup_buttons()
             self.setup_motion_sensors()
             self.setup_system_variables()
             self.delete_retained_topics()

@@ -19,6 +19,11 @@ for group in groups:
     for light in group.lights:
         print(f"      • {light}")
 
+print("Buttons")
+buttons = tpi.get_buttons()
+for button in buttons:
+    print(f"  • {button}")
+
 print("Motion sensors")
 motion_sensors = tpi.get_motion_sensors()
 for motion_sensor in motion_sensors:
