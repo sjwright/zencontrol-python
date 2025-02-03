@@ -231,14 +231,13 @@ class ZenColour:
         if self.type == ZenColourType.XY:
             if not 0 <= self.x <= 65535: raise ValueError("X must be between 0 and 65535")
             if not 0 <= self.y <= 65535: raise ValueError("Y must be between 0 and 65535")
-        if not 0 <= self.level < Const.MAX_LEVEL: raise ValueError("Level must be between 0 and 254, or 255 for no level")
-    def bytes(self) ->bytes:
+    def bytes(self, level: int = 255) ->bytes:
         if self.type == ZenColourType.TC:
-            return struct.pack('>BBH', self.level, 0x20, self.kelvin)
+            return struct.pack('>BBH', level, 0x20, self.kelvin)
         if self.type == ZenColourType.RGBWAF:
-            return struct.pack('BBBBBBBBB', self.level, 0x80, self.r, self.g, self.b, self.w if not None else 0, self.a if not None else 0, self.f if not None else 0)
+            return struct.pack('BBBBBBBBB', level, 0x80, self.r, self.g, self.b, self.w if not None else 0, self.a if not None else 0, self.f if not None else 0)
         if self.type == ZenColourType.XY:
-            return struct.pack('>BBHH', self.level, 0x10, self.x, self.y)
+            return struct.pack('>BBHH', level, 0x10, self.x, self.y)
         return b''
 
 @dataclass()
@@ -521,9 +520,9 @@ class ZenProtocol:
                 if self.narration: print(f"Unknown response code: {response_code}")
         return None
         
-    def _send_colour(self, controller: ZenController, command: int, address: int, colour: ZenColour) -> Optional[bool]:
+    def _send_colour(self, controller: ZenController, command: int, address: int, colour: ZenColour, level: int = 255) -> Optional[bool]:
         """Send a DALI colour command."""
-        response_data, response_code = self._send_packet(controller, command, [address] + list(colour.bytes()))
+        response_data, response_code = self._send_packet(controller, command, [address] + list(colour.bytes(level)))
         match response_code:
             case 0xA0: # OK
                 return True
@@ -1164,9 +1163,9 @@ class ZenProtocol:
             return response[0]  # Operating mode is in first byte
         return None
 
-    def dali_colour(self, address: ZenAddress, colour: ZenColour) -> bool:
+    def dali_colour(self, address: ZenAddress, colour: ZenColour, level: int = 255) -> bool:
         """Set a DALI address (ECG, group, broadcast) to a colour. Returns True if command succeeded, False otherwise."""
-        return self._send_colour(address.controller, self.CMD["DALI_COLOUR"], address.ecg_or_group_or_broadcast(), colour=colour)
+        return self._send_colour(address.controller, self.CMD["DALI_COLOUR"], address.ecg_or_group_or_broadcast(), colour, level)
 
     def query_group_by_number(self, address: ZenAddress) -> Optional[Tuple[int, bool, int]]: # TODO: change to a dict or special class?
         """Query a DALI group for its occupancy status and level. Returns a tuple containing group number, occupancy status, and actual level."""
@@ -1854,14 +1853,14 @@ class ZenLight:
         if not fade: self.protocol.dali_enable_dapc_sequence(self.address)
         if colour is not None:
             if self.features["temperature"] and colour.type == ZenColourType.TC:
-                return self.protocol.dali_colour(self.address, colour)
+                return self.protocol.dali_colour(self.address, colour, level)
             elif self.features["RGB"] and colour.type == ZenColourType.RGB:
-                return self.protocol.dali_colour(self.address, colour)
+                return self.protocol.dali_colour(self.address, colour, level)
             elif self.features["RGBW"] and colour.type == ZenColourType.RGBW:
-                return self.protocol.dali_colour(self.address, colour)
+                return self.protocol.dali_colour(self.address, colour, level)
             elif self.features["RGBWW"] and colour.type == ZenColourType.RGBWAF:
-                return self.protocol.dali_colour(self.address, colour)
-        if level is not None:
+                return self.protocol.dali_colour(self.address, colour, level)
+        elif level is not None:
             return self.protocol.dali_arc_level(self.address, level)
 
 

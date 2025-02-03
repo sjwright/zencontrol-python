@@ -1,4 +1,4 @@
-from zen import ZenProtocol, ZenController, ZenAddress, ZenInstance, ZenColour, ZenAddressType, ZenMotionSensor, ZenLight, ZenSystemVariable
+from zen import ZenProtocol, ZenController, ZenAddress, ZenInstance, ZenColour, ZenColourType, ZenAddressType, ZenMotionSensor, ZenLight, ZenSystemVariable
 import yaml
 import time
 
@@ -21,14 +21,21 @@ def scene_change_event(address: ZenAddress, scene: int, event_data: dict) -> Non
     print(f"Scene Change Event - address {address.number} scene {scene}")
 def is_occupied_event(instance: ZenInstance, event_data: dict) -> None:
     print(f"Is Occupied Event - address {instance.address.number} instance {instance.number}")
-def system_variable_change_event(system_variable: ZenSystemVariable, value:int, from_controller: bool) -> None:
-    print(f"System Variable Change Event - controller {system_variable.controller.name} system_variable {system_variable.id} value {value} from_controller {from_controller}")
 def colour_change_event(address: ZenAddress, colour: bytes, event_data: dict) -> None:
     print(f"Colour Change Event - address {address.number} colour {colour}")
 def profile_change_event(controller: ZenController, profile: int, event_data: dict) -> None:
     print(f"Profile Change Event - controller {controller.name} profile {profile}")
-def motion_sensor_event(sensor: ZenMotionSensor, occupied: bool) -> None:
-    print(f"Motion Sensor Event - sensor {sensor} occupied {occupied}")
+
+def motion_event(sensor: ZenMotionSensor, occupied: bool) -> None:
+    print(f"Motion Event - sensor {sensor} occupied {occupied}")
+def light_event(light: ZenLight) -> None:
+    print(f"Light Event - light {light}")
+# def group_event(group: ZenGroup) -> None:
+#     print(f"Group Event - group {group}")
+# def button_event(button: ZenButton) -> None:
+#     print(f"Button Event - button {button}")
+def sysvar_event(system_variable: ZenSystemVariable, value: int, from_controller: bool) -> None:
+    print(f"System Variable Event - system_variable {system_variable} value {value} from_controller {from_controller}")
     
 # Start event monitoring
 tpi.set_callbacks(
@@ -39,31 +46,38 @@ tpi.set_callbacks(
     group_level_change_callback=group_level_change_event,
     scene_change_callback=scene_change_event,
     is_occupied_callback=is_occupied_event,
-    system_variable_change_callback=system_variable_change_event,
     colour_change_callback=colour_change_event,
-    profile_change_callback=profile_change_event,
-    motion_sensor_callback=motion_sensor_event
+    profile_change_callback=profile_change_event
+)
+tpi.set_convenience_callbacks(
+    motion_callback=motion_event,
+    light_callback=light_event,
+    # group_callback=group_event,
+    # button_callback=button_event,
+    sysvar_callback=sysvar_event
 )
 tpi.start_event_monitoring()
 
 
-time.sleep(1)
+# time.sleep(1)
 
 
-q = tpi.query_tpi_event_emit_state(ctrl)
-print(f"    query state: {q}")
+# q = tpi.query_tpi_event_emit_state(ctrl)
+# print(f"    query state: {q}")
 
 
-q = tpi.query_tpi_event_unicast_address(ctrl)
-print(f"    query unicast address: {q}")
+# q = tpi.query_tpi_event_unicast_address(ctrl)
+# print(f"    query unicast address: {q}")
 
 
-time.sleep(1)
+# time.sleep(1)
 
 
 ecg3 = ZenAddress(controller=ctrl, type=ZenAddressType.ECG, number=3)
-tpi.dali_colour(ecg3, ZenColour(type=ZenColourType.TC, level=255, kelvin=2000))
+tpi.dali_colour(ecg3, ZenColour(type=ZenColourType.TC, kelvin=2000))
 
+q = tpi.query_dali_colour(ecg3)
+print(f"    query dali colour: {q}")
 
 
 # Motion sensors
