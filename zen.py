@@ -730,12 +730,11 @@ class ZenProtocol:
             while not self.stop_event.is_set():
                 data, ip_address = self.event_socket.recvfrom(1024)
                 
+                # Logging string
                 typecast = "unicast" if self.unicast else "multicast"
-                Typecast = "Unicast" if self.unicast else "Multicast"
-                TYPECAST = "UNICAST" if self.unicast else "MULTICAST"
 
                 self.logger.debug(f"Received {typecast} from {ip_address}: [{', '.join(f'0x{b:02x}' for b in data)}]")
-                if self.narration: print(Fore.MAGENTA + f"{TYPECAST} FROM: {ip_address}" + Fore.CYAN + f"  RECV: [{', '.join(f'0x{b:02x}' for b in data)}]" + Style.RESET_ALL)
+                if self.narration: print(Fore.MAGENTA + f"{typecast.upper()} FROM: {ip_address}" + Fore.CYAN + f"  RECV: [{', '.join(f'0x{b:02x}' for b in data)}]" + Style.RESET_ALL)
                 
                 # Drop packet if it doesn't match the expected structure
                 if len(data) < 2 or data[0:2] != bytes([0x5a, 0x43]):
@@ -760,21 +759,21 @@ class ZenProtocol:
 
                 # If no controller found, skip event
                 if not controller:
-                    self.logger.debug(f"{Typecast} packet is from unknown controller")
-                    if self.narration: print(f"{Typecast} packet is from unknown controller")
+                    self.logger.debug(f"{typecast.capitalize()} packet is from unknown controller")
+                    if self.narration: print(f"{typecast.capitalize()} packet is from unknown controller")
                     continue
 
                 # Verify data length
                 if len(payload) != payload_len:
-                    self.logger.debug(f"{Typecast} packet has invalid payload length: {len(payload)} != {payload_len}")
-                    if self.narration: print(f"{Typecast} packet has invalid payload length: {len(payload)} != {payload_len}")
+                    self.logger.debug(f"{typecast.capitalize()} packet has invalid payload length: {len(payload)} != {payload_len}")
+                    if self.narration: print(f"{typecast.capitalize()} packet has invalid payload length: {len(payload)} != {payload_len}")
                     continue
                 
                 # Verify checksum
                 calculated_checksum = self._checksum(list(data[:-1]))
                 if received_checksum != calculated_checksum:
-                    self.logger.debug(f"{Typecast} packet has invalid checksum: {calculated_checksum} != {received_checksum}")
-                    if self.narration: print(f"{Typecast} packet has invalid checksum: {calculated_checksum} != {received_checksum}")
+                    self.logger.debug(f"{typecast.capitalize()} packet has invalid checksum: {calculated_checksum} != {received_checksum}")
+                    if self.narration: print(f"{typecast.capitalize()} packet has invalid checksum: {calculated_checksum} != {received_checksum}")
                     continue
                 
                 # Create event data dictionary with core data

@@ -1,4 +1,4 @@
-from zen import ZenProtocol, ZenController, ZenAddress, ZenInstance, ZenColourTC, ZenAddressType, ZenMotionSensor, ZenLight, ZenSystemVariable
+from zen import ZenProtocol, ZenController, ZenAddress, ZenInstance, ZenColour, ZenAddressType, ZenMotionSensor, ZenLight, ZenSystemVariable
 import yaml
 import time
 
@@ -62,7 +62,7 @@ time.sleep(1)
 
 
 ecg3 = ZenAddress(controller=ctrl, type=ZenAddressType.ECG, number=3)
-tpi.dali_colour(ecg3, ZenColourTC(level=255, kelvin=2000))
+tpi.dali_colour(ecg3, ZenColour(type=ZenColourType.TC, level=255, kelvin=2000))
 
 
 

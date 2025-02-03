@@ -4,7 +4,7 @@ import json
 import yaml
 import re
 from typing import Optional, Any, Callable
-from zen import ZenProtocol, ZenController, ZenAddress, ZenInstance, ZenAddressType, ZenColourGeneric, ZenColourTC, ZenLight, ZenButton,ZenMotionSensor, ZenSystemVariable
+from zen import ZenProtocol, ZenController, ZenAddress, ZenInstance, ZenAddressType, ZenColour, ZenColourType, ZenLight, ZenButton,ZenMotionSensor, ZenSystemVariable
 import paho.mqtt.client as mqtt
 from colorama import Fore, Back, Style
 import logging
@@ -317,11 +317,11 @@ class ZenMQTTBridge:
             kelvin = self.mireds_to_kelvin(mireds)
         if kelvin and arc_level:
             self.logger.info(f"Setting {ctrl.name} gear {addr.number} brightness to arc {arc_level} (linear {brightness}) and temperature to {kelvin}K (mireds {mireds})")
-            light.set(level=arc_level, kelvin=kelvin)
+            light.set(level=arc_level, colour=ZenColour(type=ZenColourType.TC, kelvin=kelvin))
             return
         elif kelvin:
             self.logger.info(f"Setting {ctrl.name} gear {addr.number} temperature to {kelvin}K (mireds {mireds})")
-            light.set(kelvin=kelvin)
+            light.set(colour=ZenColour(type=ZenColourType.TC, kelvin=kelvin))
             return
         elif arc_level:
             self.logger.info(f"Setting {ctrl.name} gear {addr.number} brightness to arc {arc_level} (linear {brightness}) ")
@@ -347,9 +347,9 @@ class ZenMQTTBridge:
         print(f"Zen to HA: gear {address.number} arc_level {arc_level}")
         self.send_light_level_to_homeassistant(address, arc_level)
 
-    def _colour_change_event(self, address: ZenAddress, colour: ZenColourGeneric, event_data: dict = {}) -> None:
+    def _colour_change_event(self, address: ZenAddress, colour: ZenColour, event_data: dict = {}) -> None:
         print(f"Zen to HA: gear {address.number} colour {colour}")
-        if isinstance(colour, ZenColourTC):
+        if colour.type == ZenColourType.TC:
             self.send_light_temp_to_homeassistant(address, colour.kelvin)
     
     def _button_event(self, button: ZenButton, held: bool) -> None:
