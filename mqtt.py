@@ -343,15 +343,35 @@ class ZenMQTTBridge:
     #  ---> SEND TO HOME ASSISTANT
     # ================================
 
-    def _level_change_event(self, address: ZenAddress, arc_level: int, event_data: dict = {}) -> None:
-        print(f"Zen to HA: gear {address.number} arc_level {arc_level}")
-        self.send_light_level_to_homeassistant(address, arc_level)
+    def _light_event(self, light: ZenLight, level: Optional[int] = None, colour: Optional[ZenColour] = None, scene: Optional[int] = None) -> None:
+        print(f"Zen to HA: light {light} level {level} colour {colour} scene {scene}")
+        address = light.address
+        mqtt_topic = self._mqtt_topic_for_address(address, "light")
+        new_state = {}
 
-    def _colour_change_event(self, address: ZenAddress, colour: ZenColour, event_data: dict = {}) -> None:
-        print(f"Zen to HA: gear {address.number} colour {colour}")
-        if colour.type == ZenColourType.TC:
-            self.send_light_temp_to_homeassistant(address, colour.kelvin)
-    
+        # Extract kelvin from colour
+        if colour and colour.type == ZenColourType.TC: kelvin = colour.kelvin
+
+        # Convert kelvin to mireds
+        if kelvin is not None: mireds = self.kelvin_to_mireds(kelvin)
+        
+        # Convert arc_level to brightness
+        brightness = None if level is None else self.arc_to_brightness(level)
+
+        # Build new state
+        if brightness:
+            new_state = new_state | {
+                "brightness": brightness,
+                "state": "OFF" if brightness == 0 else "ON"
+            }
+        if mireds:
+            new_state = new_state | {
+                "color_mode": "color_temp",
+                "color": mireds,
+            }
+        if len(new_state) > 0:
+            self._publish_state(mqtt_topic, new_state)
+        
     def _button_event(self, button: ZenButton, held: bool) -> None:
         print(f"Zen to HA: button {button} held: {held}")
         mqtt_topic = button.client_data['mqtt_topic']
@@ -374,36 +394,6 @@ class ZenMQTTBridge:
                     raise ValueError(f"Unknown component: {system_variable.client_data['component']}")
 
         return
-
-    def send_light_level_to_homeassistant(self, address: ZenAddress, arc_level: Optional[int] = None) -> None:
-        mqtt_topic = self._mqtt_topic_for_address(address, "light")
-        if arc_level is None:
-            arc_level = self.zen.dali_query_level(address)
-        if arc_level == 0:
-            self._publish_state(mqtt_topic, {
-                "state": "OFF"
-            })
-        else:
-            brightness = self.arc_to_brightness(arc_level)
-            self._publish_state(mqtt_topic, {
-                "color_mode": "color_temp",
-                "brightness": brightness,
-                "state": "ON"
-            })
-
-    def send_light_temp_to_homeassistant(self, address: ZenAddress, kelvin: Optional[int] = None, mireds: Optional[int] = None) -> None:
-        mqtt_topic = self._mqtt_topic_for_address(address, "light")
-        if kelvin is None and mireds is None:
-            raise ValueError("Cannot get temperature value dynamically")
-        if mireds is None:
-            mireds = self.kelvin_to_mireds(kelvin)
-        if kelvin is None:
-            kelvin = self.mireds_to_kelvin(mireds)
-        self._publish_state(mqtt_topic, {
-            "color_mode": "color_temp",
-            "color": mireds,
-            "state": "ON",
-        })
 
     # ================================
     # SETUP AUTODISCOVERY
@@ -648,11 +638,8 @@ class ZenMQTTBridge:
                     time.sleep(Constants.STARTUP_POLL_DELAY)
                 
             # Start event monitoring and MQTT services
-            self.zen.set_callbacks(
-                level_change_callback=self._level_change_event,
-                colour_change_callback=self._colour_change_event
-            )
             self.zen.set_convenience_callbacks(
+                light_callback=self._light_event,
                 button_callback=self._button_event,
                 motion_callback=self._motion_event,
                 sysvar_callback=self._sysvar_event

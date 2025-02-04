@@ -28,8 +28,8 @@ def profile_change_event(controller: ZenController, profile: int, event_data: di
 
 def motion_event(sensor: ZenMotionSensor, occupied: bool) -> None:
     print(f"Motion Event - sensor {sensor} occupied {occupied}")
-def light_event(light: ZenLight) -> None:
-    print(f"Light Event - light {light}")
+def light_event(light: ZenLight, level: int, colour: Optional[ZenColour]) -> None:
+    print(f"Light Event - light {light} level {level} colour {colour}")
 # def group_event(group: ZenGroup) -> None:
 #     print(f"Group Event - group {group}")
 # def button_event(button: ZenButton) -> None:

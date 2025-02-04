@@ -231,6 +231,11 @@ class ZenColour:
         if self.type == ZenColourType.XY:
             if not 0 <= self.x <= 65535: raise ValueError("X must be between 0 and 65535")
             if not 0 <= self.y <= 65535: raise ValueError("Y must be between 0 and 65535")
+    def __eq__(self, other):
+        if isinstance(other, self.__class__):
+            return self.__dict__ == other.__dict__
+        else:
+            return False
     def bytes(self, level: int = 255) ->bytes:
         if self.type == ZenColourType.TC:
             return struct.pack('>BBH', level, 0x20, self.kelvin)
@@ -444,6 +449,7 @@ class ZenProtocol:
         self.is_occupied_callback = None
         self.colour_change_callback = None
         self.profile_change_callback = None
+        self.system_variable_change_callback = None
 
         self.group_callback = None
         self.light_callback = None
@@ -649,7 +655,8 @@ class ZenProtocol:
                             scene_change_callback=None,
                             is_occupied_callback=None,
                             colour_change_callback=None,
-                            profile_change_callback=None
+                            profile_change_callback=None,
+                            system_variable_change_callback=None
                             ):
         self.button_press_callback = button_press_callback
         self.button_hold_callback = button_hold_callback
@@ -660,6 +667,7 @@ class ZenProtocol:
         self.is_occupied_callback = is_occupied_callback
         self.colour_change_callback = colour_change_callback
         self.profile_change_callback = profile_change_callback
+        self.system_variable_change_callback = system_variable_change_callback
 
     def set_convenience_callbacks(self,
                                   group_callback=None,
@@ -777,27 +785,42 @@ class ZenProtocol:
                         # 12 0x05 (Data) 1st byte - Instance number.
                         address = ZenAddress(controller=controller, type=ZenAddressType.ECD, number=target-64)
                         instance = ZenInstance(address=address, type=ZenInstanceType.PUSH_BUTTON, number=payload[0])
+
+                        # Raw callback
                         if self.button_press_callback:
                             self.button_press_callback(instance=instance, event_data=event_data)
-                        button = ZenButton(protocol=self, instance=instance).pressed()
+
+                        # Convenience callback
+                        ZenButton(protocol=self, instance=instance).pressed()
 
                     case ZenEventType.BUTTON_HOLD:
                         address = ZenAddress(controller=controller, type=ZenAddressType.ECD, number=target-64)
                         instance = ZenInstance(address=address, type=ZenInstanceType.PUSH_BUTTON, number=payload[0])
+
+                        # Raw callback
                         if self.button_hold_callback:
                             self.button_hold_callback(instance=instance, event_data=event_data)
+
+                        # Convenience callback
                         ZenButton(protocol=self, instance=instance).held()
 
                     case ZenEventType.ABSOLUTE_INPUT:
+                        address = ZenAddress(controller=controller, type=ZenAddressType.ECD, number=target-64)
+                        instance = ZenInstance(address=address, type=ZenInstanceType.PUSH_BUTTON, number=payload[0])
+
+                        # Raw callback
                         if self.absolute_input_callback:
-                            address = ZenAddress(controller=controller, type=ZenAddressType.ECD, number=target-64)
-                            instance = ZenInstance(address=address, type=ZenInstanceType.PUSH_BUTTON, number=payload[0])
                             self.absolute_input_callback(instance=instance, event_data=event_data)
 
                     case ZenEventType.LEVEL_CHANGE:
+                        address = ZenAddress(controller=controller, type=ZenAddressType.ECG, number=target)
+
+                        # Raw callback
                         if self.level_change_callback:
-                            address = ZenAddress(controller=controller, type=ZenAddressType.ECG, number=target)
                             self.level_change_callback(address=address, arc_level=payload[0], event_data=event_data)
+
+                        # Convenience callback
+                        ZenLight(protocol=self, address=address)._event_received(level=payload[0])
 
                     case ZenEventType.GROUP_LEVEL_CHANGE:
                         if self.group_level_change_callback:
@@ -805,25 +828,35 @@ class ZenProtocol:
                             self.group_level_change_callback(address=address, arc_level=payload[0], event_data=event_data)
 
                     case ZenEventType.SCENE_CHANGE:
+                        if target <= 63:
+                            address = ZenAddress(controller=controller, type=ZenAddressType.ECG, number=target)
+                        elif 64 <= target <= 79:
+                            address = ZenAddress(controller=controller, type=ZenAddressType.GROUP, number=target-64)
+                        else:
+                            self.logger.debug(f"Invalid scene change event target: {target}")
+                            if self.narration: print(f"Invalid scene change event target: {target}")
+                            continue
+                        
+                        # Raw callback
                         if self.scene_change_callback:
-                            if target <= 63:
-                                address = ZenAddress(controller=controller, type=ZenAddressType.ECG, number=target)
-                            elif 64 <= target <= 79:
-                                address = ZenAddress(controller=controller, type=ZenAddressType.GROUP, number=target-64)
-                            else:
-                                self.logger.debug(f"Invalid scene change event target: {target}")
-                                if self.narration: print(f"Invalid scene change event target: {target}")
-                                continue
                             self.scene_change_callback(address=address, scene=payload[0], event_data=event_data)
 
+                        # Convenience callback
+                        if address.type == ZenAddressType.ECG:
+                            ZenLight(protocol=self, address=address)._event_received(scene=payload[0])
+                        
                     case ZenEventType.IS_OCCUPIED:
                         # ======= Data bytes =======
                         # 12 0x05 1st byte - Instance number. Useful for identifying the exact sensor
                         # 13 0x01 2nd byte - Unneeded data
                         address = ZenAddress(controller=controller, type=ZenAddressType.ECD, number=target-64)
                         instance = ZenInstance(address=address, type=ZenInstanceType.OCCUPANCY_SENSOR, number=payload[0])
+                        
+                        # Raw callback
                         if self.is_occupied_callback:
                             self.is_occupied_callback(instance=instance, event_data=event_data)
+
+                        # Convenience callback
                         ZenMotionSensor(protocol=self, instance=instance).occupied = True
                         
                     case ZenEventType.SYSTEM_VARIABLE_CHANGE:
@@ -839,8 +872,12 @@ class ZenProtocol:
                         # magnitude = int.from_bytes([payload[4]], byteorder='big', signed=True)
                         # value = value * (10 ** magnitude)
 
-                        # Update value of system variable singleton
-                        ZenSystemVariable(self, controller, target).set_value(value, from_controller=True)
+                        # Raw callback
+                        if self.system_variable_change_callback:
+                            self.system_variable_change_callback(address=address, value=value, event_data=event_data)
+
+                        # Convenience callback
+                        ZenSystemVariable(self, controller, target)._event_received(value)
 
                     case ZenEventType.COLOUR_CHANGE:
                         # ======= RGBWAF colour mode data bytes =======
@@ -861,44 +898,47 @@ class ZenProtocol:
                         # 14 0x00 X - Lo Byte
                         # 15 0xFF Y - Hi Byte
                         # 16 0x00 Y - Lo Byte
-                        if self.colour_change_callback:
-                            address = ZenAddress(controller=controller, type=ZenAddressType.ECG if target < 64 else ZenAddressType.GROUP, number=target)
-                            match payload[0]:
-                                case ZenColourType.RGBWAF.value:
-                                    if len(payload) != 7:
-                                        self.logger.debug(f"Invalid colour change event payload length: expected 7, got {len(payload)}")
-                                        if self.narration: print(f"Invalid colour change event payload length: expected 7, got {len(payload)}")
-                                        continue
-                                    colour = ZenColour(type=ZenColourType.RGBWAF, r=payload[1], g=payload[2], b=payload[3], w=payload[4], a=payload[5], f=payload[6])
-                                    self.colour_change_callback(address=address, colour=colour, event_data=event_data)
-                                case ZenColourType.TC.value:
-                                    if len(payload) != 3:
-                                        self.logger.debug(f"Invalid colour change event payload length: expected 3, got {len(payload)}")
-                                        if self.narration: print(f"Invalid colour change event payload length: expected 3, got {len(payload)}")
-                                        continue
-                                    kelvin = (payload[1] << 8) | payload[2]
-                                    colour = ZenColour(type=ZenColourType.TC, kelvin=kelvin)
-                                    self.colour_change_callback(address=address, colour=colour, event_data=event_data)
-                                case ZenColourType.XY.value:
-                                    if len(payload) != 5:
-                                        self.logger.debug(f"Invalid colour change event payload length: expected 5, got {len(payload)}")
-                                        if self.narration: print(f"Invalid colour change event payload length: expected 5, got {len(payload)}")
-                                        continue
-                                    x = (payload[1] << 8) | payload[2]
-                                    y = (payload[3] << 8) | payload[4]
-                                    colour = ZenColour(type=ZenColourType.XY, x=x, y=y)
-                                    self.colour_change_callback(address=address, colour=colour, event_data=event_data)
-                                case _:
-                                    self.logger.debug(f"Unknown colour change event: {[{', '.join(f'0x{b:02x}' for b in payload)}]}")
-                                    if self.narration: print(f"Unknown colour change event: {[{', '.join(f'0x{b:02x}' for b in payload)}]}")
+                        address = ZenAddress(controller=controller, type=ZenAddressType.ECG if target < 64 else ZenAddressType.GROUP, number=target)
+                        match payload[0]:
+                            case ZenColourType.RGBWAF.value:
+                                if len(payload) != 7:
+                                    self.logger.error(f"Invalid colour change event payload length: expected 7, got {len(payload)}")
+                                    if self.narration: print(f"Invalid colour change event payload length: expected 7, got {len(payload)}")
                                     continue
+                                colour = ZenColour(type=ZenColourType.RGBWAF, r=payload[1], g=payload[2], b=payload[3], w=payload[4], a=payload[5], f=payload[6])
+                            case ZenColourType.TC.value:
+                                if len(payload) != 3:
+                                    self.logger.error(f"Invalid colour change event payload length: expected 3, got {len(payload)}")
+                                    if self.narration: print(f"Invalid colour change event payload length: expected 3, got {len(payload)}")
+                                    continue
+                                kelvin = (payload[1] << 8) | payload[2]
+                                colour = ZenColour(type=ZenColourType.TC, kelvin=kelvin)
+                            case ZenColourType.XY.value:
+                                if len(payload) != 5:
+                                    self.logger.error(f"Invalid colour change event payload length: expected 5, got {len(payload)}")
+                                    if self.narration: print(f"Invalid colour change event payload length: expected 5, got {len(payload)}")
+                                    continue
+                                x = (payload[1] << 8) | payload[2]
+                                y = (payload[3] << 8) | payload[4]
+                                colour = ZenColour(type=ZenColourType.XY, x=x, y=y)
+                            case _:
+                                self.logger.error(f"Unknown colour change event: {[{', '.join(f'0x{b:02x}' for b in payload)}]}")
+                                if self.narration: print(f"Unknown colour change event: {[{', '.join(f'0x{b:02x}' for b in payload)}]}")
+                                continue
+                        
+                        # Raw callback
+                        if self.colour_change_callback:
+                            self.colour_change_callback(address=address, colour=colour, event_data=event_data)
+                        
+                        # Convenience callback
+                        ZenLight(protocol=self, address=address)._event_received(colour=colour)
                                 
                     case ZenEventType.PROFILE_CHANGE:
                         # ======= Data bytes =======
                         # 12 0x00 Profile Hi Byte
                         # 13 0x0F Profile Lo Byte
+                        payload_int = int.from_bytes(payload, byteorder='big')
                         if self.profile_change_callback:
-                            payload_int = int.from_bytes(payload, byteorder='big')
                             self.profile_change_callback(controller=controller, profile=payload_int, event_data=event_data)
                 
         except Exception as e:
@@ -1809,49 +1849,90 @@ class ZenLight:
         }
         self.level: Optional[int] = None
         self.colour: Optional[ZenColour] = None
+        self.scene: Optional[int] = None
         self.client_data = {}
     def interview(self) -> bool:
         cgstatus = self.protocol.dali_query_control_gear_status(self.address)
         if cgstatus:
             self.label = self.protocol.query_dali_device_label(self.address, generic_if_none=True)
             self.serial = self.protocol.query_dali_serial(self.address)
+            # Colour features
             cgtype = self.protocol.query_dali_colour_features(self.address)
             if cgtype.get("supports_tunable", False) is True:
                 self.features["brightness"] = True
                 self.features["temperature"] = True
+                self.colour = self.protocol.query_dali_colour(self.address)
                 colour_temp_limits = self.protocol.query_dali_colour_temp_limits(self.address)
                 self.properties["min_kelvin"] = colour_temp_limits.get("soft_warmest", Const.DEFAULT_WARMEST_TEMP)
                 self.properties["max_kelvin"] = colour_temp_limits.get("soft_coolest", Const.DEFAULT_COOLEST_TEMP)
             elif cgtype.get("rgbwaf_channels", 0) == Const.RGB_CHANNELS:
                 self.features["brightness"] = True
                 self.features["RGB"] = True
+                self.colour = self.protocol.query_dali_colour(self.address)
             elif cgtype.get("rgbwaf_channels", 0) == Const.RGBW_CHANNELS:
                 self.features["brightness"] = True
                 self.features["RGBW"] = True
+                self.colour = self.protocol.query_dali_colour(self.address)
             elif cgtype.get("rgbwaf_channels", 0) == Const.RGBWW_CHANNELS:
                 self.features["brightness"] = True
                 self.features["RGBWW"] = True
+                self.colour = self.protocol.query_dali_colour(self.address)
             groups = self.protocol.query_group_membership_by_address(self.address)
             for group in groups:
                 group = ZenGroup(protocol=self.protocol, address=group)
                 group.lights.add(self) # Add to group's set of lights
                 self.groups.add(group) # Add to light's set of groups
+            # Sync light state
+            self.sync_from_controller()
             return True
         else:
             self._reset()
             return False
+    def sync_from_controller(self) -> bool:
+        self.level = self.protocol.dali_query_level(self.address)
+        last_scene = self.protocol.dali_query_last_scene(self.address)
+        last_scene_is_current = self.protocol.dali_query_last_scene_is_current(self.address)
+        self.scene = last_scene if last_scene_is_current else None
+        if self.features["temperature"] or self.features["RGB"] or self.features["RGBW"] or self.features["RGBWW"]:
+            self.colour = self.protocol.query_dali_colour(self.address)
+        # Callback
+        self._event_received(level=self.level, colour=self.colour, scene=self.scene)
+    def _event_received(self, level: int = 255, colour: Optional[ZenColour] = None, scene: Optional[int] = None):
+        # Called by ZenProtocol when a query command is issued or an event is received
+        level_changed = False
+        colour_changed = False
+        scene_changed = False
+        if level != 255 and level != self.level:
+            self.level = level
+            level_changed = True
+        if colour and colour != self.colour:
+            self.colour = colour
+            colour_changed = True
+        if scene and scene != self.scene:
+            self.scene = scene
+            scene_changed = True
+        if level_changed or colour_changed or scene_changed:
+            if self.protocol.light_callback:
+                self.protocol.light_callback(light=self,
+                                             level=self.level if level_changed else None,
+                                             colour=self.colour if colour_changed else None,
+                                             scene=self.scene if scene_changed else None)
     def on(self, fade: bool = True):
+        # Calling this will trigger an event, which updates self.level/self.colour, and sends a callback
         if not fade: self.protocol.dali_enable_dapc_sequence(self.address)
         return self.protocol.dali_go_to_last_active_level(self.address)
     def off(self, fade: bool = True):
+        # Calling this will trigger an event, which updates self.level/self.colour, and sends a callback
         if fade: return self.protocol.dali_arc_level(self.address, 0)
         else: return self.protocol.dali_off(self.address)
     def scene(self, scene: int, fade: bool = True):
+        # Calling this will trigger an event, which updates self.level/self.colour, and sends a callback
         if not fade: self.protocol.dali_enable_dapc_sequence(self.address)
         return self.protocol.dali_scene(self.address, scene)
     def set(self, level: int = 255, colour: Optional[ZenColour] = None, fade: bool = True):
+        # Calling this will trigger an event, which updates self.level/self.colour, and sends a callback
         if not fade: self.protocol.dali_enable_dapc_sequence(self.address)
-        if colour is not None:
+        if colour:
             if self.features["temperature"] and colour.type == ZenColourType.TC:
                 return self.protocol.dali_colour(self.address, colour, level)
             elif self.features["RGB"] and colour.type == ZenColourType.RGB:
@@ -1860,7 +1941,7 @@ class ZenLight:
                 return self.protocol.dali_colour(self.address, colour, level)
             elif self.features["RGBWW"] and colour.type == ZenColourType.RGBWAF:
                 return self.protocol.dali_colour(self.address, colour, level)
-        elif level is not None:
+        elif level:
             return self.protocol.dali_arc_level(self.address, level)
 
 
@@ -1992,6 +2073,8 @@ class ZenSystemVariable:
         self.label = None
         self._value = None
         self.client_data = {}
+    def _event_received(self, new_value):
+        self.set_value(new_value, from_controller=True)
     @property
     def value(self):
         # If we don't know the value, request from the controller
