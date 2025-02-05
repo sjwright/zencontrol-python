@@ -11,6 +11,9 @@ from dataclasses import dataclass, field
 class ZenProtocol:
     pass
 
+class ZenProfile:
+    pass
+
 class ZenGroup:
     pass
 
@@ -1705,7 +1708,17 @@ class ZenProtocol:
 
     # ============================
     # Convenience commands
-    # ============================ 
+    # ============================
+
+    def get_profiles(self) -> List[ZenProfile]:
+        """Return a list of all profiles."""
+        profiles = []
+        for controller in self.controllers:
+            numbers = self.query_profile_numbers(controller=controller)
+            for number in numbers:
+                profile = ZenProfile(protocol=self, controller=controller, number=number)
+                profiles.append(profile)
+        return profiles
 
     def get_groups(self) -> List[ZenGroup]:
         """Return a list of all groups."""
@@ -1777,6 +1790,31 @@ class ZenProtocol:
 # ============================ 
 
 
+class ZenProfile:
+    _instances = {}
+    def __new__(cls, protocol: ZenProtocol, controller: ZenController, number: int):
+        # Singleton based on controller and profile number
+        compound_id = f"{controller.name} {number}"
+        if compound_id not in cls._instances:
+            inst = super().__new__(cls)
+            cls._instances[compound_id] = inst
+            inst.protocol = protocol
+            inst.controller = controller
+            inst.number = number
+            inst._reset()
+            inst.interview()
+        return cls._instances[compound_id]
+    def __repr__(self) -> str:
+        return f"ZenProfile<{self.controller.name} profile {self.number}: {self.label}>"
+    def _reset(self):
+        self.label = None
+        self.current = False
+    def interview(self) -> bool:
+        self.label = self.protocol.query_profile_label(self.controller, self.number)
+        self.current = self.protocol.query_current_profile_number(self.controller) == self.number
+        return True
+
+
 class ZenGroup:
     _instances = {}
     def __new__(cls, protocol: ZenProtocol, address: ZenAddress):
@@ -1792,7 +1830,7 @@ class ZenGroup:
             inst.interview()
         return cls._instances[compound_id]
     def __repr__(self) -> str:
-        return f"ZenGroup<{self.address.controller.name} group{self.address.number} {self.label}>"
+        return f"ZenGroup<{self.address.controller.name} group {self.address.number}: {self.label}>"
     def _reset(self):
         self.label = None
         self.scenes = []
@@ -1824,7 +1862,7 @@ class ZenLight:
             inst.interview()
         return cls._instances[compound_id]
     def __repr__(self) -> str:
-        return f"ZenLight<{self.address.controller.name} ecg{self.address.number} {self.label} {self.serial}>"
+        return f"ZenLight<{self.address.controller.name} ecg {self.address.number}: {self.label}>"
     def _reset(self):
         self.label = None
         self.serial = None
@@ -1952,7 +1990,7 @@ class ZenButton:
             inst.interview()
         return cls._instances[compound_id]
     def __repr__(self) -> str:
-        return f"ZenButton<{self.instance.address.controller.name} ecd{self.instance.address.number} instance{self.instance.number} - {self.label} - {self.instance_label}>"
+        return f"ZenButton<{self.instance.address.controller.name} ecd {self.instance.address.number} inst {self.instance.number}: {self.label} / {self.instance_label}>"
     def _reset(self):
         self.serial = None
         self.label = None
@@ -1987,7 +2025,7 @@ class ZenMotionSensor:
             inst.interview()
         return cls._instances[compound_id]
     def __repr__(self) -> str:
-        return f"ZenMotionSensor<{self.instance.address.controller.name} ecd{self.instance.address.number} instance{self.instance.number} {self.label} {self.instance_label}>"
+        return f"ZenMotionSensor<{self.instance.address.controller.name} ecd {self.instance.address.number} inst {self.instance.number}: {self.label} / {self.instance_label}>"
     def _reset(self):
         self.hold_time = 60
         self.hold_timer = None
@@ -2061,7 +2099,7 @@ class ZenSystemVariable:
             inst._reset()
         return cls._instances[compound_id]
     def __repr__(self) -> str:
-        return f"ZenSystemVariable<{self.controller.name} id{self.id} {self.label}>"
+        return f"ZenSystemVariable<{self.controller.name} sv {self.id}: {self.label}>"
     def _reset(self):
         self.label = None
         self._value = None

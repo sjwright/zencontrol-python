@@ -6,6 +6,11 @@ tpi = ZenProtocol(narration=False)
 ctrl = ZenController(protocol=tpi, **config.get('zencontrol')[0])
 tpi.set_controllers([ctrl])
 
+print("Profiles")
+profiles = tpi.get_profiles()
+for profile in profiles:
+    print(f"  • {profile}")
+
 print("Lights")
 lights = tpi.get_lights()
 for light in lights:
