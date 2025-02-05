@@ -89,16 +89,37 @@ class ZenController:
             inst.filtering = filtering
             inst.version = None
             inst.mac_bytes = bytes.fromhex(inst.mac.replace(':', '')) # Convert MAC address to bytes once
+            inst.reset()
             inst.interview()
         return cls._instances[name]
     def __repr__(self) -> str:
         return f"ZenController<{self.name}>"
+    def reset(self) -> None:
+        self.label: Optional[str] = None
+        self.version: Optional[int] = None
+        self.profile: Optional[ZenProfile] = None
     def interview(self) -> bool:
         if self.label is None: self.label = self.protocol.query_controller_label(self)
         if self.version is None: self.version = self.protocol.query_controller_version_number(self)
+        current_profile = self.protocol.query_current_profile_number(self)
+        self.profile = ZenProfile(protocol=self.protocol, controller=self, number=current_profile)
         return True
+    def _event_received(self, profile: Optional[int] = None):
+        if profile is not None:
+            self.profile = ZenProfile(protocol=self.protocol, controller=self, number=profile)
+            if self.protocol.profile_callback:
+                self.protocol.profile_callback(profile=self.profile)
     def ready(self) -> bool:
         return self.protocol.query_controller_startup_complete(self)
+    def switch_to_profile(self, profile: ZenProfile|int) -> bool:
+        if isinstance(profile, ZenProfile):
+            return self.protocol.change_profile_number(self, profile.number)
+        elif isinstance(profile, int):
+            return self.protocol.change_profile_number(self, profile)
+        else:
+            return False
+    def return_to_scheduled_profile(self) -> bool:
+        return self.protocol.return_to_scheduled_profile(self)
 
 class ZenAddressType(Enum):
     BROADCAST = 0
@@ -690,12 +711,14 @@ class ZenProtocol:
         self.system_variable_change_callback = system_variable_change_callback
 
     def set_convenience_callbacks(self,
+                                  profile_callback=None,
                                   group_callback=None,
                                   light_callback=None,
                                   button_callback=None,
                                   motion_callback=None,
                                   sysvar_callback=None
                                   ):
+        self.profile_callback = profile_callback
         self.group_callback = group_callback
         self.light_callback = light_callback
         self.button_callback = button_callback
@@ -811,7 +834,7 @@ class ZenProtocol:
                             self.button_press_callback(instance=instance, event_data=event_data)
 
                         # Convenience callback
-                        ZenButton(protocol=self, instance=instance).pressed()
+                        ZenButton(protocol=self, instance=instance)._event_received()
 
                     case ZenEventType.BUTTON_HOLD:
                         address = ZenAddress(controller=controller, type=ZenAddressType.ECD, number=target-64)
@@ -822,7 +845,7 @@ class ZenProtocol:
                             self.button_hold_callback(instance=instance, event_data=event_data)
 
                         # Convenience callback
-                        ZenButton(protocol=self, instance=instance).held()
+                        ZenButton(protocol=self, instance=instance)._event_received(held=True)
 
                     case ZenEventType.ABSOLUTE_INPUT:
                         address = ZenAddress(controller=controller, type=ZenAddressType.ECD, number=target-64)
@@ -843,9 +866,14 @@ class ZenProtocol:
                         ZenLight(protocol=self, address=address)._event_received(level=payload[0])
 
                     case ZenEventType.GROUP_LEVEL_CHANGE:
+                        address = ZenAddress(controller=controller, type=ZenAddressType.GROUP, number=target)
+
+                        # Raw callback
                         if self.group_level_change_callback:
-                            address = ZenAddress(controller=controller, type=ZenAddressType.GROUP, number=target)
                             self.group_level_change_callback(address=address, arc_level=payload[0], event_data=event_data)
+
+                        # Convenience callback
+                        ZenGroup(protocol=self, address=address)._event_received(level=payload[0])
 
                     case ZenEventType.SCENE_CHANGE:
                         if target <= 63:
@@ -864,6 +892,8 @@ class ZenProtocol:
                         # Convenience callback
                         if address.type == ZenAddressType.ECG:
                             ZenLight(protocol=self, address=address)._event_received(scene=payload[0])
+                        elif address.type == ZenAddressType.GROUP:
+                            ZenGroup(protocol=self, address=address)._event_received(scene=payload[0])
                         
                     case ZenEventType.IS_OCCUPIED:
                         # ======= Data bytes =======
@@ -877,7 +907,7 @@ class ZenProtocol:
                             self.is_occupied_callback(instance=instance, event_data=event_data)
 
                         # Convenience callback
-                        ZenMotionSensor(protocol=self, instance=instance).occupied = True
+                        ZenMotionSensor(protocol=self, instance=instance)._event_received()
                         
                     case ZenEventType.SYSTEM_VARIABLE_CHANGE:
                         # ======= Data bytes =======
@@ -958,8 +988,13 @@ class ZenProtocol:
                         # 12 0x00 Profile Hi Byte
                         # 13 0x0F Profile Lo Byte
                         payload_int = int.from_bytes(payload, byteorder='big')
+                        
+                        # Raw callback
                         if self.profile_change_callback:
                             self.profile_change_callback(controller=controller, profile=payload_int, event_data=event_data)
+
+                        # Convenience callback
+                        controller._event_received(profile=payload_int)
                 
         except Exception as e:
             if self.narration: print(f"Event listener error: {e}")
@@ -1808,49 +1843,20 @@ class ZenProfile:
         return f"ZenProfile<{self.controller.name} profile {self.number}: {self.label}>"
     def _reset(self):
         self.label = None
-        self.current = False
-    def interview(self) -> bool:
-        self.label = self.protocol.query_profile_label(self.controller, self.number)
-        self.current = self.protocol.query_current_profile_number(self.controller) == self.number
-        return True
-
-
-class ZenGroup:
-    _instances = {}
-    def __new__(cls, protocol: ZenProtocol, address: ZenAddress):
-        # Singleton based on controller and address
-        compound_id = f"{address.controller.name} {address.number}"
-        if compound_id not in cls._instances:
-            inst = super().__new__(cls)
-            cls._instances[compound_id] = inst
-            inst.protocol = protocol
-            inst.address = address
-            inst.lights = set() # self.lights is managed by ZenLight
-            inst._reset()
-            inst.interview()
-        return cls._instances[compound_id]
-    def __repr__(self) -> str:
-        return f"ZenGroup<{self.address.controller.name} group {self.address.number}: {self.label}>"
-    def _reset(self):
-        self.label = None
-        self.scenes = []
         self.client_data = {}
     def interview(self) -> bool:
-        self.label = self.protocol.query_group_label(self.address, generic_if_none=True)
-        self.scenes = []
-        scene_numbers = self.protocol.query_scene_numbers_for_group(self.address)
-        for scene_number in scene_numbers:
-            scene_label = self.protocol.query_scene_label_for_group(self.address, scene_number, generic_if_none=True)
-            self.scenes.append({
-                "number": scene_number,
-                "label": scene_label,
-            })
+        self.label = self.protocol.query_profile_label(self.controller, self.number)
         return True
+    def select(self) -> bool:
+        return self.protocol.change_profile_number(self.controller, self.number)
 
 
 class ZenLight:
     _instances = {}
     def __new__(cls, protocol: ZenProtocol, address: ZenAddress):
+        # Inherited classes should bypass ZenLight __new__
+        if cls is not ZenLight:
+            return super().__new__(cls)
         # Singleton based on controller and address
         compound_id = f"{address.controller.name} {address.number}"
         if compound_id not in cls._instances:
@@ -1942,12 +1948,18 @@ class ZenLight:
         if scene and scene != self.scene:
             self.scene = scene
             scene_changed = True
-        if level_changed or colour_changed or scene_changed:
-            if self.protocol.light_callback:
-                self.protocol.light_callback(light=self,
-                                             level=self.level if level_changed else None,
-                                             colour=self.colour if colour_changed else None,
-                                             scene=self.scene if scene_changed else None)
+        if type(self) is ZenLight:
+            if level_changed or colour_changed or scene_changed:
+                if self.protocol.light_callback:
+                    self.protocol.light_callback(light=self,
+                                                level=self.level if level_changed else None,
+                                                colour=self.colour if colour_changed else None,
+                                                scene=self.scene if scene_changed else None)
+        if type(self) is ZenGroup:
+            if scene_changed:
+                if self.protocol.group_callback:
+                    self.protocol.group_callback(light=self,
+                                                scene=self.scene if scene_changed else None)
     def on(self, fade: bool = True):
         # Calling this will trigger an event, which updates self.level/self.colour, and sends a callback
         if not fade: self.protocol.dali_enable_dapc_sequence(self.address)
@@ -1974,6 +1986,42 @@ class ZenLight:
                 return self.protocol.dali_colour(self.address, colour, level)
         elif level:
             return self.protocol.dali_arc_level(self.address, level)
+
+
+class ZenGroup(ZenLight):
+    _instances = {}
+    def __new__(cls, protocol: ZenProtocol, address: ZenAddress):
+        # Singleton based on controller and address
+        compound_id = f"{address.controller.name} g{address.number}"
+        if compound_id not in cls._instances:
+            inst = super().__new__(cls, protocol=protocol, address=address)
+            cls._instances[compound_id] = inst
+            inst.protocol = protocol
+            inst.address = address
+            inst.lights = set() # self.lights is managed by ZenLight
+            inst._reset()
+            inst.interview()
+        return cls._instances[compound_id]
+    def __repr__(self) -> str:
+        return f"ZenGroup<{self.address.controller.name} group {self.address.number}: {self.label}>"
+    def _reset(self):
+        self.label = None
+        self.scenes = []
+        self.level = None
+        self.colour = None
+        self.scene = None
+        self.client_data = {}
+    def interview(self) -> bool:
+        self.label = self.protocol.query_group_label(self.address, generic_if_none=True)
+        self.scenes = []
+        scene_numbers = self.protocol.query_scene_numbers_for_group(self.address)
+        for scene_number in scene_numbers:
+            scene_label = self.protocol.query_scene_label_for_group(self.address, scene_number, generic_if_none=True)
+            self.scenes.append({
+                "number": scene_number,
+                "label": scene_label,
+            })
+        return True
 
 
 class ZenButton:
@@ -2003,12 +2051,9 @@ class ZenButton:
         self.label = self.protocol.query_dali_device_label(addr, generic_if_none=True)
         self.instance_label = self.protocol.query_dali_instance_label(inst, generic_if_none=True)
         return True
-    def pressed(self):
+    def _event_received(self, held: bool = False):
         if self.protocol.button_callback:
-            self.protocol.button_callback(button=self, held=False)
-    def held(self):
-        if self.protocol.button_callback:
-            self.protocol.button_callback(button=self, held=True)
+            self.protocol.button_callback(button=self, held=held)
 
 
 class ZenMotionSensor:
@@ -2053,6 +2098,8 @@ class ZenMotionSensor:
         else:
             self._reset()
             return False
+    def _event_received(self):
+        self.occupied = True
     def timeout_callback(self):
         self.occupied = False
     @property

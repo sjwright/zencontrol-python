@@ -1,4 +1,4 @@
-from zen import ZenProtocol, ZenController, ZenAddress, ZenInstance, ZenColour, ZenColourType, ZenAddressType, ZenMotionSensor, ZenLight, ZenSystemVariable
+from zen import ZenProtocol, ZenController, ZenAddress, ZenInstance, ZenColour, ZenColourType, ZenAddressType, ZenMotionSensor, ZenLight, ZenSystemVariable, ZenProfile
 from typing import Optional
 import yaml
 import time
@@ -28,6 +28,8 @@ def colour_change_event(address: ZenAddress, colour: bytes, event_data: dict) ->
 def profile_change_event(controller: ZenController, profile: int, event_data: dict) -> None:
     print(f"Profile Change Event - controller {controller.name} profile {profile}")
 
+def profile_event(profile: ZenProfile) -> None:
+    print(f"Profile Event - profile {profile}")
 def motion_event(sensor: ZenMotionSensor, occupied: bool) -> None:
     print(f"Motion Event - sensor {sensor} occupied {occupied}")
 def light_event(light: ZenLight, level: int, colour: Optional[ZenColour], scene: Optional[int]) -> None:
@@ -52,6 +54,7 @@ tpi.set_callbacks(
     profile_change_callback=profile_change_event
 )
 tpi.set_convenience_callbacks(
+    profile_callback=profile_event,
     motion_callback=motion_event,
     light_callback=light_event,
     # group_callback=group_event,
