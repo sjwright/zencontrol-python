@@ -2,9 +2,9 @@ from zen import ZenProtocol, ZenController, ZenSystemVariable
 import yaml
 
 config = yaml.safe_load(open("test-config.yaml"))
-ctrl = ZenController(**config.get('zencontrol')[0])
-tpi = ZenProtocol(controllers=[ctrl], narration=True)
-
+tpi = ZenProtocol(narration=True)
+ctrl = ZenController(protocol=tpi, **config.get('zencontrol')[0])
+tpi.set_controllers([ctrl])
 
 
 # Direct access

@@ -132,16 +132,18 @@ class ZenMQTTBridge:
         
         # Initialize Zen
         try:
+            self.zen = ZenProtocol(logger=self.logger, narration=False)
             self.control = []
             self.sv_config = []
             for config in self.config['zencontrol']:
                 # Define controller
                 ctrl = ZenController(
+                    protocol=self.zen,
                     name=config['name'],
                     label=config['label'],
-                    mac=config['mac'],
                     host=config['host'],
-                    port=config['port']
+                    port=config['port'],
+                    mac=config['mac']
                 )
                 # Add to list
                 self.control.append(ctrl)
@@ -149,7 +151,7 @@ class ZenMQTTBridge:
                 for sv in config.get('system_variables', []):
                     sv['controller'] = ctrl
                     self.sv_config.append(sv)
-            self.zen = ZenProtocol(controllers=self.control, logger=self.logger, narration=True)
+            self.zen.set_controllers(self.control)
         except Exception as e:
             self.logger.error(f"Failed to initialize Zen: {e}")
             raise
@@ -305,6 +307,7 @@ class ZenMQTTBridge:
                 raise ValueError(f"Invalid payload for system variable: {payload}")
 
     def _apply_mqtt_payload_to_zenlight(self, light: ZenLight, payload: dict[str, Any]) -> None:
+        print(payload)
         addr = light.address
         ctrl = addr.controller
         arc_level = None
@@ -333,7 +336,7 @@ class ZenMQTTBridge:
             state = payload["state"]
             if state == "OFF":
                 self.logger.info(f"Turning off {ctrl.name} gear {addr.number}")
-                light.off(fade=False)
+                light.off(fade=True)
             elif state == "ON":
                 self.logger.info(f"Turning on {ctrl.name} gear {addr.number}")
                 light.on()
@@ -345,32 +348,25 @@ class ZenMQTTBridge:
 
     def _light_event(self, light: ZenLight, level: Optional[int] = None, colour: Optional[ZenColour] = None, scene: Optional[int] = None) -> None:
         print(f"Zen to HA: light {light} level {level} colour {colour} scene {scene}")
-        address = light.address
-        mqtt_topic = self._mqtt_topic_for_address(address, "light")
-        new_state = {}
-
-        # Extract kelvin from colour
-        if colour and colour.type == ZenColourType.TC: kelvin = colour.kelvin
-
-        # Convert kelvin to mireds
-        if kelvin is not None: mireds = self.kelvin_to_mireds(kelvin)
         
-        # Convert arc_level to brightness
-        brightness = None if level is None else self.arc_to_brightness(level)
+        #mqtt_topic = self._mqtt_topic_for_address(light.address, "light")
+        mqtt_topic = light.client_data['mqtt_topic']
+        level = light.level
+        colour = light.colour
 
-        # Build new state
-        if brightness:
-            new_state = new_state | {
-                "brightness": brightness,
-                "state": "OFF" if brightness == 0 else "ON"
-            }
-        if mireds:
-            new_state = new_state | {
-                "color_mode": "color_temp",
-                "color": mireds,
-            }
-        if len(new_state) > 0:
-            self._publish_state(mqtt_topic, new_state)
+        new_state = {
+            "state": "OFF" if light.level == 0 else "ON"
+        }
+        if light.level > 0:
+            new_state["brightness"] = self.arc_to_brightness(light.level)
+
+        if light.colour and light.colour.type == ZenColourType.TC:
+            new_state["color_mode"] = "color_temp"
+            if light.colour.kelvin is not None:
+                new_state["color"] = self.kelvin_to_mireds(light.colour.kelvin)
+
+        self._publish_state(mqtt_topic, new_state)
+        
         
     def _button_event(self, button: ZenButton, held: bool) -> None:
         print(f"Zen to HA: button {button} held: {held}")
@@ -563,7 +559,7 @@ class ZenMQTTBridge:
                 "device": {
                     "manufacturer": "Zencontrol",
                     "identifiers": f"zencontrol-{ctrl.name}",
-                    "sw_version": self.zen.query_controller_version_number(ctrl),
+                    "sw_version": ctrl.version,
                     "name": ctrl.label,
                 },
                 "availability_topic": f"{ctrl.name}/availability",
@@ -630,10 +626,7 @@ class ZenMQTTBridge:
             for ctrl in self.control:
                 print(f"Connecting to Zen controller {ctrl.label} on {ctrl.host}:{ctrl.port}...")
                 self.logger.info(f"Connecting to Zen controller {ctrl.label} on {ctrl.host}:{ctrl.port}...")
-                while not self.zen.query_is_dali_ready(controller=ctrl):
-                    print(f"DALI bus not ready...")
-                    time.sleep(Constants.STARTUP_POLL_DELAY)
-                while not self.zen.query_controller_startup_complete(controller=ctrl):
+                while not ctrl.ready():
                     print(f"Controller still starting up...")
                     time.sleep(Constants.STARTUP_POLL_DELAY)
                 

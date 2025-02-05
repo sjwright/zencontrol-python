@@ -2,8 +2,9 @@ from zen import ZenProtocol, ZenController
 import yaml
 
 config = yaml.safe_load(open("test-config.yaml"))
-ctrl = ZenController(**config.get('zencontrol')[0])
-tpi = ZenProtocol(controllers=[ctrl], narration=False)
+tpi = ZenProtocol(narration=False)
+ctrl = ZenController(protocol=tpi, **config.get('zencontrol')[0])
+tpi.set_controllers([ctrl])
 
 
 addresses = tpi.query_dali_addresses_with_instances(ctrl, 0)

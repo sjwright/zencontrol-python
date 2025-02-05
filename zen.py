@@ -8,6 +8,9 @@ from threading import Thread, Event, Timer
 from colorama import Fore, Back, Style
 from dataclasses import dataclass, field
 
+class ZenProtocol:
+    pass
+
 class ZenGroup:
     pass
 
@@ -67,19 +70,32 @@ class ZenResponseError(ZenError):
     """Raised when receiving an invalid response"""
     pass
 
-@dataclass
 class ZenController:
-    name: str
-    label: str
-    mac: str
-    host: str
-    port: int = 5108
-    filtering: bool = False
-    mac_bytes: bytes = field(init=False)
-    _version: Optional[str] = field(init=False)
-    def __post_init__(self):
-        self.mac_bytes = bytes.fromhex(self.mac.replace(':', ''))
-        self._version = None
+    _instances = {}
+    def __new__(cls, protocol: ZenProtocol, name: str, label: str, host: str, port: int = 5108, mac: Optional[str] = None, filtering: bool = False):
+        # Singleton based on controller name
+        if name not in cls._instances:
+            inst = super().__new__(cls)
+            cls._instances[name] = inst
+            inst.protocol = protocol
+            inst.name = name
+            inst.label = label
+            inst.host = host
+            inst.port = port
+            inst.mac = mac
+            inst.filtering = filtering
+            inst.version = None
+            inst.mac_bytes = bytes.fromhex(inst.mac.replace(':', '')) # Convert MAC address to bytes once
+            inst.interview()
+        return cls._instances[name]
+    def __repr__(self) -> str:
+        return f"ZenController<{self.name}>"
+    def interview(self) -> bool:
+        if self.label is None: self.label = self.protocol.query_controller_label(self)
+        if self.version is None: self.version = self.protocol.query_controller_version_number(self)
+        return True
+    def ready(self) -> bool:
+        return self.protocol.query_controller_startup_complete(self)
 
 class ZenAddressType(Enum):
     BROADCAST = 0
@@ -408,14 +424,12 @@ class ZenProtocol:
     }
 
     def __init__(self,
-                 controllers: List[ZenController],
                  logger: logging.Logger=None,
                  narration: bool = False,
                  unicast: bool = False,
                  listen_ip: Optional[str] = None,
                  listen_port: Optional[int] = None
                  ):
-        self.controllers = controllers # Used to match events to controllers, and include controller objects in callbacks
         self.logger = logger
         self.narration = narration
         self.unicast = unicast
@@ -461,6 +475,9 @@ class ZenProtocol:
         """Cleanup when object is destroyed"""
         self.stop_event_monitoring()
         self.command_socket.close()
+
+    def set_controllers(self, controllers: List[ZenController]):
+        self.controllers = controllers # Used to match events to controllers, and include controller objects in callbacks
 
     # ============================
     # PACKET SENDING
@@ -988,42 +1005,23 @@ class ZenProtocol:
         return ZenEventMode.from_byte(response[0])
     
     def dali_add_tpi_event_filter(self, address: ZenAddress, filter: ZenEventMask = ZenEventMask.all_events(), instance_number: int = 0xFF) -> bool:
-        """Add a DALI TPI event filter to stop specific events from being broadcast.
-        
-        Args:
-            address: ZenAddress to add filter for (broadcast = set for all)
-            filter: Event mask indicating which events to filter (all events by default)
-            instance_number: Instance number for ECD filters
-            
-        Returns:
-            True if filter was added successfully, False otherwise
-        """
+        """Stop specific events from an address/instance from being sent. Events in mask will be muted. Returns true if filter was added successfully."""
         return self._send_basic(address.controller,
                              self.CMD["DALI_ADD_TPI_EVENT_FILTER"],
                              address.ecg_or_ecd_or_broadcast(),
                              [instance_number, filter.upper(), filter.lower()],
                              return_type='bool')
     
-    def dali_clear_tpi_event_filter(self, address: ZenAddress, filter: ZenEventMask = ZenEventMask.all_events(), instance_number: int = 0xFF) -> bool:
-        """Clear DALI TPI event filters to allow specific events to be broadcast again.
-        
-        Args:
-            address: ZenAddress to clear filter for (broadcast = set for all)
-            filter: ZenEventMask indicating which events to stop filtering (all events by default)
-            instance_number: Instance number for ECD filters (0xFF for ECG)
-            
-        Returns:
-            True if filter was cleared successfully, False otherwise
-        """
+    def dali_clear_tpi_event_filter(self, address: ZenAddress, unfilter: ZenEventMask = ZenEventMask.all_events(), instance_number: int = 0xFF) -> bool:
+        """Allow specific events from an address/instance to be sent again. Events in mask will be unmuted. Returns true if filter was cleared successfully."""
         return self._send_basic(address.controller,
                              self.CMD["DALI_CLEAR_TPI_EVENT_FILTERS"],
                              address.ecg_or_ecd_or_broadcast(),
-                             [instance_number, filter.upper(), filter.lower()],
+                             [instance_number, unfilter.upper(), unfilter.lower()],
                              return_type='bool')
 
-    
     def query_dali_tpi_event_filters(self, address: ZenAddress, instance_number: int = 0xFF, start_at: int = 0) -> List[Dict]:
-        """Query active DALI TPI event filters for an address.
+        """Query active event filters for an address. Returns a list of dictionaries containing filter info, or None if query fails.
         
         Args:
             address: ZenAddress to query filters for (broadcast = set for all)
@@ -1035,7 +1033,7 @@ class ZenProtocol:
             [{
                 'address': int,           # Address number
                 'instance': int,          # Instance number 
-                'event_mask': int         # 16-bit event mask
+                'event_mask': ZenEventMask # Event mask
             }]
         """
         response = self._send_basic(address.controller, 
@@ -1119,7 +1117,7 @@ class ZenProtocol:
         return None
 
     def query_group_numbers(self, controller: ZenController) -> List[ZenAddress]:
-        """Query a controller for Group Numbers in use. Returns a list of ZenAddress group instances."""
+        """Query a controller for groups."""
         groups = self._send_basic(controller, self.CMD["QUERY_GROUP_NUMBERS"], return_type='list')
         zen_groups = []
         if groups is not None:
@@ -1128,11 +1126,10 @@ class ZenProtocol:
                 zen_groups.append(ZenAddress(controller=controller, type=ZenAddressType.GROUP, number=group))
         return zen_groups
         
-
     def query_dali_colour(self, address: ZenAddress) -> Optional[ZenColour]:
         """Query colour information from a DALI address."""
         response = self._send_basic(address.controller, self.CMD["QUERY_DALI_COLOUR"], address.ecg())
-        if response and len(response) >= 1:
+        if response and len(response) >= 3:
             match response[0]:
                 case ZenColourType.RGBWAF.value: # RGBWAF
                     if len(response) == 7:
@@ -1271,7 +1268,7 @@ class ZenProtocol:
             return []
         zen_addresses = []
         for number in addresses:
-            if number >= 64:  # Only process valid device addresses (64-127)
+            if 64 <= number <= 127:  # Only process valid device addresses (64-127)
                 zen_addresses.append(ZenAddress(
                     controller=controller,
                     type=ZenAddressType.ECD,
@@ -1303,15 +1300,11 @@ class ZenProtocol:
             return f"Scene {scene}"
         return label
     
-    def query_controller_version_number(self, controller: ZenController, cache: bool=True) -> Optional[str]:
-        """Query the controller's version number. Returns string, or None if query fails."""
-        if cache and controller._version:
-            return controller._version
+    def query_controller_version_number(self, controller: ZenController) -> Optional[str]:
+        """Query the controller's version number. Returns string, or None if query fail s."""
         response = self._send_basic(controller, self.CMD["QUERY_CONTROLLER_VERSION_NUMBER"])
         if response and len(response) == 3:
-            version = f"{response[0]}.{response[1]}.{response[2]}"
-            controller._version = version
-            return version
+            return f"{response[0]}.{response[1]}.{response[2]}"
         return None
     
     def query_control_gear_dali_addresses(self, controller: ZenController) -> List[ZenAddress]:

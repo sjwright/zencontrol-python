@@ -2,8 +2,9 @@ from zen import ZenProtocol, ZenController, ZenLight, ZenGroup, ZenMotionSensor
 import yaml
 
 config = yaml.safe_load(open("test-config.yaml"))
-ctrl = ZenController(**config.get('zencontrol')[0])
-tpi = ZenProtocol(controllers=[ctrl], narration=True)
+tpi = ZenProtocol(narration=False)
+ctrl = ZenController(protocol=tpi, **config.get('zencontrol')[0])
+tpi.set_controllers([ctrl])
 
 print("Lights")
 lights = tpi.get_lights()

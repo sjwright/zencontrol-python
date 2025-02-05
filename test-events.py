@@ -1,10 +1,12 @@
 from zen import ZenProtocol, ZenController, ZenAddress, ZenInstance, ZenColour, ZenColourType, ZenAddressType, ZenMotionSensor, ZenLight, ZenSystemVariable
+from typing import Optional
 import yaml
 import time
 
 config = yaml.safe_load(open("test-config.yaml"))
-ctrl = ZenController(**config.get('zencontrol')[0])
-tpi = ZenProtocol(controllers=[ctrl], narration=True, unicast=False)
+tpi = ZenProtocol(narration=True, unicast=False)
+ctrl = ZenController(protocol=tpi, **config.get('zencontrol')[0])
+tpi.set_controllers([ctrl])
 
 # Handlers
 def button_press_event(instance: ZenInstance, event_data: dict) -> None:
@@ -28,8 +30,8 @@ def profile_change_event(controller: ZenController, profile: int, event_data: di
 
 def motion_event(sensor: ZenMotionSensor, occupied: bool) -> None:
     print(f"Motion Event - sensor {sensor} occupied {occupied}")
-def light_event(light: ZenLight, level: int, colour: Optional[ZenColour]) -> None:
-    print(f"Light Event - light {light} level {level} colour {colour}")
+def light_event(light: ZenLight, level: int, colour: Optional[ZenColour], scene: Optional[int]) -> None:
+    print(f"Light Event - light {light} level {level} colour {colour} scene {scene}")
 # def group_event(group: ZenGroup) -> None:
 #     print(f"Group Event - group {group}")
 # def button_event(button: ZenButton) -> None:
