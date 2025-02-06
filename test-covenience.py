@@ -1,5 +1,6 @@
 from zen import ZenProtocol, ZenController, ZenLight, ZenGroup, ZenMotionSensor
 import yaml
+import time
 
 config = yaml.safe_load(open("test-config.yaml"))
 tpi = ZenProtocol(narration=False)
@@ -41,3 +42,6 @@ system_variables = tpi.get_system_variables()
 for zsv in system_variables:
     print(f"  • {zsv}")
     print(f"      = {zsv.value}")
+
+timer_end = time.time()
+print(f"Time taken: {timer_end - timer_start} seconds")

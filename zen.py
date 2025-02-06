@@ -143,6 +143,8 @@ class ZenAddress:
     controller: ZenController
     type: ZenAddressType
     number: int
+    label: Optional[str] = field(default=None, init=False)
+    serial: Optional[str] = field(default=None, init=False)
     @classmethod
     def broadcast(cls, controller: ZenController) -> Self:
         return cls(controller=controller, type=ZenAddressType.BROADCAST, number=255)
@@ -2082,8 +2084,10 @@ class ZenButton:
     def interview(self) -> bool:
         inst = self.instance
         addr = inst.address
-        self.serial = self.protocol.query_dali_serial(addr)
-        self.label = self.protocol.query_dali_device_label(addr, generic_if_none=True)
+        if addr.label is None: addr.label = self.protocol.query_dali_device_label(addr, generic_if_none=True)
+        if addr.serial is None: addr.serial = self.protocol.query_dali_serial(addr)
+        self.label = addr.label
+        self.serial = addr.serial
         self.instance_label = self.protocol.query_dali_instance_label(inst, generic_if_none=True)
         return True
     def _event_received(self, held: bool = False):
