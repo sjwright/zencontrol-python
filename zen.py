@@ -1542,7 +1542,7 @@ class ZenProtocol:
             address.controller,
             self.CMD["DALI_CUSTOM_FADE"],
             address.ecg_or_group(),
-            [target_level, seconds_hi, seconds_lo],
+            [level, seconds_hi, seconds_lo],
             return_type='ok'
         )
     
