@@ -41,9 +41,9 @@ class Const:
     MAX_GROUP = 16
     MAX_SCENE = 12
     MAX_SYSVAR = 147
+    MAX_LEVEL = 254 # 255 is mask value (i.e. no change)
     MIN_KELVIN = 1000
     MAX_KELVIN = 20000
-    MAX_LEVEL = 254
     
     # Default color temperature limits
     DEFAULT_WARMEST_TEMP = 2700
@@ -268,6 +268,18 @@ class ZenColour:
     f: Optional[int] = None
     x: Optional[int] = None
     y: Optional[int] = None
+    @classmethod
+    def from_bytes(cls, bytes: bytes) -> Optional[Self]:
+        if bytes[0] == ZenColourType.RGBWAF.value and len(bytes) == 7:
+            return cls(type=ZenColourType.RGBWAF, r=bytes[1], g=bytes[2], b=bytes[3], w=bytes[4], a=bytes[5], f=bytes[6])
+        if bytes[0] == ZenColourType.TC.value and len(bytes) == 3:
+            kelvin = (bytes[1] << 8) | bytes[2]
+            return cls(type=ZenColourType.TC, kelvin=kelvin)
+        if bytes[0] == ZenColourType.XY.value and len(bytes) == 5:
+            x = (bytes[1] << 8) | bytes[2]
+            y = (bytes[3] << 8) | bytes[4]
+            return ZenColour(type=ZenColourType.XY, x=x, y=y)
+        return None
     def __post_init__(self):
         if self.type == ZenColourType.TC:
             if not Const.MIN_KELVIN <= self.kelvin <= Const.MAX_KELVIN: raise ValueError(f"Kelvin must be between {Const.MIN_KELVIN} and {Const.MAX_KELVIN}")
@@ -281,12 +293,19 @@ class ZenColour:
         if self.type == ZenColourType.XY:
             if not 0 <= self.x <= 65535: raise ValueError("X must be between 0 and 65535")
             if not 0 <= self.y <= 65535: raise ValueError("Y must be between 0 and 65535")
+    def __repr__(self) -> str:
+        if self.type == ZenColourType.TC:
+            return f"ZenColour(kelvin={self.kelvin})"
+        if self.type == ZenColourType.RGBWAF:
+            return f"ZenColour(r={self.r}, g={self.g}, b={self.b}, w={self.w}, a={self.a}, f={self.f})"
+        if self.type == ZenColourType.XY:
+            return f"ZenColour(x={self.x}, y={self.y})"
     def __eq__(self, other):
         if isinstance(other, self.__class__):
             return self.__dict__ == other.__dict__
         else:
             return False
-    def bytes(self, level: int = 255) ->bytes:
+    def to_bytes(self, level: int = 255) ->bytes:
         if self.type == ZenColourType.TC:
             return struct.pack('>BBH', level, 0x20, self.kelvin)
         if self.type == ZenColourType.RGBWAF:
@@ -577,7 +596,7 @@ class ZenProtocol:
         
     def _send_colour(self, controller: ZenController, command: int, address: int, colour: ZenColour, level: int = 255) -> Optional[bool]:
         """Send a DALI colour command."""
-        response_data, response_code = self._send_packet(controller, command, [address] + list(colour.bytes(level)))
+        response_data, response_code = self._send_packet(controller, command, [address] + list(colour.to_bytes(level)))
         match response_code:
             case 0xA0: # OK
                 return True
@@ -957,32 +976,7 @@ class ZenProtocol:
                         # 15 0xFF Y - Hi Byte
                         # 16 0x00 Y - Lo Byte
                         address = ZenAddress(controller=controller, type=ZenAddressType.ECG if target < 64 else ZenAddressType.GROUP, number=target)
-                        match payload[0]:
-                            case ZenColourType.RGBWAF.value:
-                                if len(payload) != 7:
-                                    self.logger.error(f"Invalid colour change event payload length: expected 7, got {len(payload)}")
-                                    if self.narration: print(f"Invalid colour change event payload length: expected 7, got {len(payload)}")
-                                    continue
-                                colour = ZenColour(type=ZenColourType.RGBWAF, r=payload[1], g=payload[2], b=payload[3], w=payload[4], a=payload[5], f=payload[6])
-                            case ZenColourType.TC.value:
-                                if len(payload) != 3:
-                                    self.logger.error(f"Invalid colour change event payload length: expected 3, got {len(payload)}")
-                                    if self.narration: print(f"Invalid colour change event payload length: expected 3, got {len(payload)}")
-                                    continue
-                                kelvin = (payload[1] << 8) | payload[2]
-                                colour = ZenColour(type=ZenColourType.TC, kelvin=kelvin)
-                            case ZenColourType.XY.value:
-                                if len(payload) != 5:
-                                    self.logger.error(f"Invalid colour change event payload length: expected 5, got {len(payload)}")
-                                    if self.narration: print(f"Invalid colour change event payload length: expected 5, got {len(payload)}")
-                                    continue
-                                x = (payload[1] << 8) | payload[2]
-                                y = (payload[3] << 8) | payload[4]
-                                colour = ZenColour(type=ZenColourType.XY, x=x, y=y)
-                            case _:
-                                self.logger.error(f"Unknown colour change event: {[{', '.join(f'0x{b:02x}' for b in payload)}]}")
-                                if self.narration: print(f"Unknown colour change event: {[{', '.join(f'0x{b:02x}' for b in payload)}]}")
-                                continue
+                        colour = ZenColour.from_bytes(payload)
                         
                         # Raw callback
                         if self.colour_change_callback:
@@ -1175,18 +1169,7 @@ class ZenProtocol:
     def query_dali_colour(self, address: ZenAddress) -> Optional[ZenColour]:
         """Query colour information from a DALI address."""
         response = self._send_basic(address.controller, self.CMD["QUERY_DALI_COLOUR"], address.ecg())
-        if response and len(response) >= 3:
-            match response[0]:
-                case ZenColourType.RGBWAF.value: # RGBWAF
-                    if len(response) == 7:
-                        return ZenColour(type=ZenColourType.RGBWAF, r=response[1], g=response[2], b=response[3], w=response[4], a=response[5], f=response[6])
-                case ZenColourType.XY.value: # CIE 1931 XY
-                    if len(response) == 3:
-                        return ZenColour(type=ZenColourType.XY, x=response[1], y=response[2])
-                case ZenColourType.TC.value: # Colour Temperature 
-                    if len(response) == 3:
-                        return ZenColour(type=ZenColourType.TC, kelvin=(response[1] << 8) | response[2])
-        return None
+        return ZenColour.from_bytes(response)
     
     def query_profile_numbers(self, controller: ZenController) -> Optional[List[int]]:
         """Query a controller for a list of available Profile Numbers. Returns a list of profile numbers, or None if query fails."""
@@ -1970,7 +1953,7 @@ class ZenLight:
         if type(self) is ZenGroup:
             if scene_changed:
                 if self.protocol.group_callback:
-                    self.protocol.group_callback(light=self,
+                    self.protocol.group_callback(group=self,
                                                 scene=self.scene if scene_changed else None)
     def supports_colour(self, colour: ZenColourType|ZenColour) -> bool:
         if type(colour) == ZenColour:
@@ -1980,8 +1963,8 @@ class ZenLight:
         else:
             return False;
         if (colour_type == ZenColourType.TC and self.features["temperature"]) or \
-            (colour_type == ZenColourType.RGB and self.features["RGB"]) or \
-            (colour_type == ZenColourType.RGBW and self.features["RGBW"]) or \
+            (colour_type == ZenColourType.RGBWAF and self.features["RGB"]) or \
+            (colour_type == ZenColourType.RGBWAF and self.features["RGBW"]) or \
             (colour_type == ZenColourType.RGBWAF and self.features["RGBWW"]):
             return True
         return False
