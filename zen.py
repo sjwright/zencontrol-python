@@ -2,6 +2,7 @@ import socket
 import struct
 import time
 import logging
+import datetime
 from typing import Optional, Tuple, List, Union, Dict, Self
 from enum import Enum
 from threading import Thread, Event, Timer
@@ -411,7 +412,8 @@ class ZenProtocol:
         "QUERY_SCENE_LABEL_FOR_GROUP": 0x1B,        # Query Scene Labels attributed to a group scene
         "QUERY_GROUP_BY_NUMBER": 0x12,              # Query DALI Group information by Group Number
         # Profiles
-        "QUERY_PROFILE_NUMBERS": 0x0B,              # Query all available Profile numbers
+        "QUERY_PROFILE_INFORMATION": 0x43,          # Query profile numbers, behaviours etc
+        "QUERY_PROFILE_NUMBERS": 0x0B,              # Query all available Profile numbers (superseded by QUERY_PROFILE_INFORMATION)
         "QUERY_PROFILE_LABEL": 0x04,                # Query the label for a controller profile
         "QUERY_CURRENT_PROFILE_NUMBER": 0x05,       # Query the current profile number
         "CHANGE_PROFILE_NUMBER": 0xC0,              # Request a Profile Change on the controller
@@ -1170,6 +1172,34 @@ class ZenProtocol:
         """Query colour information from a DALI address."""
         response = self._send_basic(address.controller, self.CMD["QUERY_DALI_COLOUR"], address.ecg())
         return ZenColour.from_bytes(response)
+    
+    def query_profile_information(self, controller: ZenController) -> Optional[Tuple[dict, dict]]:
+        """Query a controller for profile information. Returns a tuple of two dicts, or None if query fails."""
+        response = self._send_basic(controller, self.CMD["QUERY_PROFILE_INFORMATION"])
+        # Initial 12 bytes:
+        # 0-1 0x00 Current Active Profile Number
+        # 2-3 0x00 Last Scheduled Profile Number
+        # 4-7 0x22334455 Last Overridden Profile UTC
+        # 8-11 0x44556677 Last Scheduled Profile UTC
+        unpacked = struct.unpack('>HHII', response[0:12])
+        state = {
+            'current_active_profile': unpacked[0],
+            'last_scheduled_profile': unpacked[1],
+            'last_overridden_profile_utc': datetime.fromtimestamp(unpacked[2]),
+            'last_scheduled_profile_utc': datetime.fromtimestamp(unpacked[3])
+        }
+        # Process profiles in groups of 3 bytes (2 bytes for profile number, 1 byte for profile behaviour)
+        profiles: dict[int, int] = {}
+        for i in range(12, len(response), 3):
+            profile_number = struct.unpack('>H', response[i:i+2])[0]
+            profile_behaviour = response[i+2]
+            # bit 0: enabled: 0 = disabled, 1 = enabled
+            # bit 1-2: priority: two bit int where 0 = scheduled, 1 = medium, 2 = high, 3 = emergency
+            enabled = bool(profile_behaviour & 0x01)
+            priority = (profile_behaviour >> 1) & 0x03
+            profiles[profile_number] = {"enabled": enabled, "priority": priority}
+        # Return tuple of state and profiles
+        return state, profiles
     
     def query_profile_numbers(self, controller: ZenController) -> Optional[List[int]]:
         """Query a controller for a list of available Profile Numbers. Returns a list of profile numbers, or None if query fails."""
