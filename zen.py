@@ -360,59 +360,58 @@ class ZenProtocol:
 
     # Define commands as a dictionary
     CMD: Dict[str, int] = {
+        # Controller
         "QUERY_CONTROLLER_VERSION_NUMBER": 0x1C,    # Query ZenController Version Number
         "QUERY_CONTROLLER_LABEL": 0x24,             # Query the label of the controller
         "QUERY_CONTROLLER_FITTING_NUMBER": 0x25,    # Query the fitting number of the controller itself
         "QUERY_CONTROLLER_STARTUP_COMPLETE": 0x27,  # Query whether controller startup is complete
         "QUERY_IS_DALI_READY": 0x26,                # Query whether DALI bus is ready (or has a fault)
-
-        "ENABLE_TPI_EVENT_EMIT": 0x08,              # Enable or disable TPI Events
+        # System variables
         "SET_SYSTEM_VARIABLE": 0x36,                # Set a system variable value
         "QUERY_SYSTEM_VARIABLE": 0x37,              # Query system variable
         "QUERY_SYSTEM_VARIABLE_NAME": 0x42,         # Query the name of a system variable
-
-        "QUERY_CONTROL_GEAR_DALI_ADDRESSES": 0x1D,  # Query Control Gear present in database
+        # TPI settings
+        "ENABLE_TPI_EVENT_EMIT": 0x08,              # Enable or disable TPI Events
+        "QUERY_TPI_EVENT_EMIT_STATE": 0x07,         # Query whether TPI Events are enabled or disabled
+        "DALI_ADD_TPI_EVENT_FILTER": 0x31,          # Request that filters be added for DALI TPI Events
+        "QUERY_DALI_TPI_EVENT_FILTERS": 0x32,       # Query DALI TPI Event filters on a address
+        "DALI_CLEAR_TPI_EVENT_FILTERS": 0x33,       # Request that DALI TPI Event filters be cleared
+        "SET_TPI_EVENT_UNICAST_ADDRESS": 0x40,      # Set a TPI Events unicast address and port
+        "QUERY_TPI_EVENT_UNICAST_ADDRESS": 0x41,    # Query TPI Events State, unicast address and port
+        # Any address
+        "QUERY_OPERATING_MODE_BY_ADDRESS": 0x28,    # Query the operating mode for a device
         "QUERY_DALI_DEVICE_LABEL": 0x03,            # Query the label for a DALI ECD or ECG by address
-        "DALI_QUERY_LEVEL": 0xAA,                   # Query the the level on a address
-        "DALI_QUERY_CG_TYPE": 0xAC,                 # Query Control Gear type data on a address
-        "QUERY_GROUP_MEMBERSHIP_BY_ADDRESS": 0x15,  # Query DALI Group membership by address
-        "QUERY_SCENE_NUMBERS_BY_ADDRESS": 0x14,     # Query for DALI Scenes an address has levels for
-        "QUERY_SCENE_LEVELS_BY_ADDRESS": 0x1E,      # Query Scene level values for a given address
-        "QUERY_DALI_COLOUR_FEATURES": 0x35,         # Query the DALI colour features/capabilities
-        "QUERY_DALI_COLOUR_TEMP_LIMITS": 0x38,      # Query Colour Temperature max/min + step in Kelvin
-        "QUERY_DALI_EAN": 0xB8,                     # Query the DALI European Article Number at an address
         "QUERY_DALI_SERIAL": 0xB9,                  # Query the Serial Number at a address
         "QUERY_DALI_FITTING_NUMBER": 0x22,          # Query the fitting number for control gear/devices
-        
+        "QUERY_DALI_EAN": 0xB8,                     # Query the DALI European Article Number at an address
+        # Groups / Group-scenes
+        "QUERY_GROUP_MEMBERSHIP_BY_ADDRESS": 0x15,  # Query DALI Group membership by address
         "QUERY_GROUP_NUMBERS": 0x09,                # Query the DALI Group numbers
         "QUERY_GROUP_LABEL": 0x01,                  # Query the label for a DALI Group by Group Number
         "QUERY_SCENE_NUMBERS_FOR_GROUP": 0x1A,      # Query Scene Numbers attributed to a group
         "QUERY_SCENE_LABEL_FOR_GROUP": 0x1B,        # Query Scene Labels attributed to a group scene
         "QUERY_GROUP_BY_NUMBER": 0x12,              # Query DALI Group information by Group Number
-        
-        "DALI_SCENE": 0xA1,                         # Call a DALI Scene on a address
-        "DALI_QUERY_LAST_SCENE": 0xAD,              # Query Last heard DALI Scene
-        "DALI_QUERY_LAST_SCENE_IS_CURRENT": 0xAE,   # Query if last heard Scene is current scene
-        
+        # Profiles
         "QUERY_PROFILE_NUMBERS": 0x0B,              # Query all available Profile numbers
         "QUERY_PROFILE_LABEL": 0x04,                # Query the label for a controller profile
         "QUERY_CURRENT_PROFILE_NUMBER": 0x05,       # Query the current profile number
         "CHANGE_PROFILE_NUMBER": 0xC0,              # Request a Profile Change on the controller
-        
+        # Instances
         "QUERY_DALI_ADDRESSES_WITH_INSTANCES": 0x16, # Query DALI addresses that have instances
         "QUERY_INSTANCES_BY_ADDRESS": 0x0D,         # Query information of instances
-        "QUERY_OPERATING_MODE_BY_ADDRESS": 0x28,    # Query the operating mode for a device
         "QUERY_DALI_INSTANCE_FITTING_NUMBER": 0x23, # Query the fitting number for an instance
         "QUERY_DALI_INSTANCE_LABEL": 0xB7,          # Query DALI Instance for its label
         "QUERY_INSTANCE_GROUPS": 0x21,              # Query group targets related to an instance
-        
+        "QUERY_OCCUPANCY_INSTANCE_TIMERS": 0x0C,    # Query an occupancy instance for its timer values
+        # ECG (Lights)
+        "QUERY_CONTROL_GEAR_DALI_ADDRESSES": 0x1D,  # Query Control Gear present in database
+        "DALI_QUERY_LEVEL": 0xAA,                   # Query the the level on a address
+        "DALI_QUERY_CG_TYPE": 0xAC,                 # Query Control Gear type data on a address
+        "QUERY_DALI_COLOUR_FEATURES": 0x35,         # Query the DALI colour features/capabilities
+        "QUERY_DALI_COLOUR_TEMP_LIMITS": 0x38,      # Query Colour Temperature max/min + step in Kelvin
         "DALI_QUERY_CONTROL_GEAR_STATUS": 0xAB,     # Query status data on a address, group or broadcast
-        
         "QUERY_DALI_COLOUR": 0x34,                  # Query the Colour information on a DALI target
         "DALI_COLOUR": 0x0E,                        # Set a DALI target to a colour
-        
-        "QUERY_OCCUPANCY_INSTANCE_TIMERS": 0x0C,    # Query an occupancy instance for its timer values
-        
         "DALI_INHIBIT": 0xA0,                       # Inhibit sensors from affecting a target for n seconds
         "DALI_ARC_LEVEL": 0xA2,                     # Set an Arc-Level on a address
         "DALI_ON_STEP_UP": 0xA3,                    # On-if-Off and Step Up on a address
@@ -429,14 +428,12 @@ class ZenProtocol:
         "DALI_CUSTOM_FADE": 0xB4,                   # Call a DALI Arc Level with a custom fade-length
         "DALI_GO_TO_LAST_ACTIVE_LEVEL": 0xB5,       # Command DALI addresses to go to last active level
         "DALI_STOP_FADE": 0xC1,                     # Request a running DALI fade be stopped
-
-        "QUERY_TPI_EVENT_EMIT_STATE": 0x07,         # Query whether TPI Events are enabled or disabled
-        "DALI_ADD_TPI_EVENT_FILTER": 0x31,          # Request that filters be added for DALI TPI Events
-        "QUERY_DALI_TPI_EVENT_FILTERS": 0x32,       # Query DALI TPI Event filters on a address
-        "DALI_CLEAR_TPI_EVENT_FILTERS": 0x33,       # Request that DALI TPI Event filters be cleared
-
-        "SET_TPI_EVENT_UNICAST_ADDRESS": 0x40,      # Set a TPI Events unicast address and port
-        "QUERY_TPI_EVENT_UNICAST_ADDRESS": 0x41,    # Query TPI Events State, unicast address and port
+        # Scenes
+        "QUERY_SCENE_NUMBERS_BY_ADDRESS": 0x14,     # Query for DALI Scenes an address has levels for
+        "QUERY_SCENE_LEVELS_BY_ADDRESS": 0x1E,      # Query Scene level values for a given address
+        "DALI_SCENE": 0xA1,                         # Call a DALI Scene on a address
+        "DALI_QUERY_LAST_SCENE": 0xAD,              # Query Last heard DALI Scene
+        "DALI_QUERY_LAST_SCENE_IS_CURRENT": 0xAE,   # Query if last heard Scene is current scene
 
         # Implemented but not tested
         "OVERRIDE_DALI_BUTTON_LED_STATE": 0x29,     # Override a button LED state
@@ -1853,8 +1850,8 @@ class ZenProfile:
     def __repr__(self) -> str:
         return f"ZenProfile<{self.controller.name} profile {self.number}: {self.label}>"
     def _reset(self):
-        self.label = None
-        self.client_data = {}
+        self.label: Optional[str] = None
+        self.client_data: dict = {}
     def interview(self) -> bool:
         self.label = self.protocol.query_profile_label(self.controller, self.number)
         # Add self to controller's set of profiles
@@ -1883,24 +1880,24 @@ class ZenLight:
     def __repr__(self) -> str:
         return f"ZenLight<{self.address.controller.name} ecg {self.address.number}: {self.label}>"
     def _reset(self):
-        self.label = None
-        self.serial = None
-        self.groups = set()
-        self.features = {
+        self.label: Optional[str] = None
+        self.serial: Optional[str] = None
+        self.groups: set[ZenGroup] = set()
+        self.features: dict[str, bool] = {
             "brightness": False,
             "temperature": False,
             "RGB": False,
             "RGBW": False,
             "RGBWW": False,
         }
-        self.properties = {
+        self.properties: dict[str, Optional[int]] = {
             "min_kelvin": None,
             "max_kelvin": None,
         }
         self.level: Optional[int] = None
         self.colour: Optional[ZenColour] = None
         self.scene: Optional[int] = None
-        self.client_data = {}
+        self.client_data: dict = {}
     def interview(self) -> bool:
         cgstatus = self.protocol.dali_query_control_gear_status(self.address)
         if cgstatus:
@@ -2018,12 +2015,12 @@ class ZenGroup(ZenLight):
     def __repr__(self) -> str:
         return f"ZenGroup<{self.address.controller.name} group {self.address.number}: {self.label}>"
     def _reset(self):
-        self.label = None
-        self.scenes = []
-        self.level = None
-        self.colour = None
-        self.scene = None
-        self.client_data = {}
+        self.label: Optional[str] = None
+        self.scenes: list[dict] = []
+        self.level: Optional[int] = None
+        self.colour: Optional[ZenColour] = None
+        self.scene: Optional[int] = None
+        self.client_data: dict = {}
     def interview(self) -> bool:
         self.label = self.protocol.query_group_label(self.address, generic_if_none=True)
         self.scenes = []
@@ -2053,10 +2050,10 @@ class ZenButton:
     def __repr__(self) -> str:
         return f"ZenButton<{self.instance.address.controller.name} ecd {self.instance.address.number} inst {self.instance.number}: {self.label} / {self.instance_label}>"
     def _reset(self):
-        self.serial = None
-        self.label = None
-        self.instance_label = None
-        self.client_data = {}
+        self.serial: Optional[str] = None
+        self.label: Optional[str] = None
+        self.instance_label: Optional[str] = None
+        self.client_data: dict = {}
     def interview(self) -> bool:
         inst = self.instance
         addr = inst.address
@@ -2085,17 +2082,17 @@ class ZenMotionSensor:
     def __repr__(self) -> str:
         return f"ZenMotionSensor<{self.instance.address.controller.name} ecd {self.instance.address.number} inst {self.instance.number}: {self.label} / {self.instance_label}>"
     def _reset(self):
-        self.hold_time = 60
-        self.hold_timer = None
+        self.hold_time: int = 60
+        self.hold_timer: Optional[Timer] = None
         #
-        self.serial = None
-        self.label = None
-        self.instance_label = None
-        self.deadtime = None
-        self.last_detect = None
-        self._occupied = None
+        self.serial: Optional[str] = None
+        self.label: Optional[str] = None
+        self.instance_label: Optional[str] = None
+        self.deadtime: Optional[int] = None
+        self.last_detect: Optional[float] = None
+        self._occupied: Optional[bool] = None
         #
-        self.client_data = {}
+        self.client_data: dict = {}
     def interview(self) -> bool:
         inst = self.instance
         addr = inst.address
@@ -2161,9 +2158,9 @@ class ZenSystemVariable:
     def __repr__(self) -> str:
         return f"ZenSystemVariable<{self.controller.name} sv {self.id}: {self.label}>"
     def _reset(self):
-        self.label = None
-        self._value = None
-        self.client_data = {}
+        self.label: Optional[str] = None
+        self._value: Optional[int] = None
+        self.client_data: dict = {}
     def _event_received(self, new_value):
         self.set_value(new_value, from_controller=True)
     @property
