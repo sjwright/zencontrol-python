@@ -1,4 +1,4 @@
-from zen import ZenProtocol, ZenController, ZenAddress, ZenInstance, ZenColour, ZenColourType, ZenAddressType, ZenMotionSensor, ZenLight, ZenSystemVariable, ZenProfile
+from zen import ZenProtocol, ZenController, ZenAddress, ZenInstance, ZenColour, ZenColourType, ZenAddressType, ZenMotionSensor, ZenLight, ZenSystemVariable, ZenProfile, ZenGroup, ZenButton
 from typing import Optional
 import yaml
 import time
@@ -34,10 +34,10 @@ def motion_event(sensor: ZenMotionSensor, occupied: bool) -> None:
     print(f"Motion Event - sensor {sensor} occupied {occupied}")
 def light_event(light: ZenLight, level: int, colour: Optional[ZenColour], scene: Optional[int]) -> None:
     print(f"Light Event - light {light} level {level} colour {colour} scene {scene}")
-# def group_event(group: ZenGroup) -> None:
-#     print(f"Group Event - group {group}")
-# def button_event(button: ZenButton) -> None:
-#     print(f"Button Event - button {button}")
+def group_event(group: ZenGroup, scene: Optional[int]) -> None:
+    print(f"Group Event - group {group} scene {scene}")
+def button_event(button: ZenButton, held: bool = False) -> None:
+    print(f"Button Event - button {button} held={held}")
 def sysvar_event(system_variable: ZenSystemVariable, value: int, from_controller: bool) -> None:
     print(f"System Variable Event - system_variable {system_variable} value {value} from_controller {from_controller}")
     
@@ -57,39 +57,19 @@ tpi.set_convenience_callbacks(
     profile_callback=profile_event,
     motion_callback=motion_event,
     light_callback=light_event,
-    # group_callback=group_event,
-    # button_callback=button_event,
+    group_callback=group_event,
+    button_callback=button_event,
     sysvar_callback=sysvar_event
 )
 tpi.start_event_monitoring()
 
 
-# time.sleep(1)
+time.sleep(1)
 
+# Set light 3 to 100/254
+light3 = ZenLight(tpi, ZenAddress(ctrl, ZenAddressType.ECG, 3))
+light3.set(level=100, fade=False)
 
-# q = tpi.query_tpi_event_emit_state(ctrl)
-# print(f"    query state: {q}")
-
-
-# q = tpi.query_tpi_event_unicast_address(ctrl)
-# print(f"    query unicast address: {q}")
-
-
-# time.sleep(1)
-
-
-ecg3 = ZenAddress(controller=ctrl, type=ZenAddressType.ECG, number=3)
-tpi.dali_colour(ecg3, ZenColour(type=ZenColourType.TC, kelvin=2000))
-
-q = tpi.query_dali_colour(ecg3)
-print(f"    query dali colour: {q}")
-
-
-# Motion sensors
-motion_sensors = tpi.get_motion_sensors()
-for motion_sensor in motion_sensors:
-    print(f"  - {motion_sensor}")
-    motion_sensor.hold_time = 5
 
 
 # Loop forever
