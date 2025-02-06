@@ -441,6 +441,7 @@ class ZenProtocol:
 
         # Won't implement (because I can't test)
         "TRIGGER_SDDP_IDENTIFY": 0x06,              # Trigger a Control4 SDDP Identify
+        "DMX_COLOUR": 0x10,                         # Send values to a set of DMX channels and configure fading
         "QUERY_DMX_DEVICE_NUMBERS": 0x17,           # Query DMX Device information
         "QUERY_DMX_DEVICE_BY_NUMBER": 0x18,         # Query for DMX Device information by channel number
         "QUERY_DMX_LEVEL_BY_CHANNEL": 0x19,         # Query DMX Channel value by Channel number
@@ -1526,15 +1527,14 @@ class ZenProtocol:
             return serial
         return None
     
-    def dali_custom_fade(self, address: ZenAddress, target_level: int, fade_time_seconds: float) -> bool:
+    def dali_custom_fade(self, address: ZenAddress, level: int, seconds: int) -> bool:
         """Fade a DALI address (ECG or group) to a level (0-254) with a custom fade time in seconds (0-65535). Returns True if successful, else False."""
-        if not 0 <= target_level < Const.MAX_LEVEL:
+        if not 0 <= level < Const.MAX_LEVEL:
             raise ValueError("Target level must be between 0 and 254")
-        if not 0 <= fade_time_seconds <= 65535:
+        if not 0 <= seconds <= 65535:
             raise ValueError("Fade time must be between 0 and 65535 seconds")
 
         # Convert fade time to integer seconds and split into high/low bytes
-        seconds = int(fade_time_seconds)
         seconds_hi = (seconds >> 8) & 0xFF
         seconds_lo = seconds & 0xFF
         
@@ -1655,6 +1655,8 @@ class ZenProtocol:
 
     def dali_stop_fade(self, address: ZenAddress) -> bool:
         """Tell a DALI address (ECG or ECD) to stop running a fade. Returns True if command succeeded, else False.
+
+        Caution: this literally stops the fade. It doesn't jump to the target level.
 
         Note: For custom fades started via DALI_CUSTOM_FADE, this can only stop
         fades that were started with the same target address. For example, you 
@@ -1970,6 +1972,20 @@ class ZenLight:
                 if self.protocol.group_callback:
                     self.protocol.group_callback(light=self,
                                                 scene=self.scene if scene_changed else None)
+    def supports_colour(self, colour: ZenColourType|ZenColour) -> bool:
+        if type(colour) == ZenColour:
+            colour_type = colour.type
+        elif type(colour) == ZenColourType:
+            colour_type = colour
+        else:
+            return False;
+        if (colour_type == ZenColourType.TC and self.features["temperature"]) or \
+            (colour_type == ZenColourType.RGB and self.features["RGB"]) or \
+            (colour_type == ZenColourType.RGBW and self.features["RGBW"]) or \
+            (colour_type == ZenColourType.RGBWAF and self.features["RGBWW"]):
+            return True
+        return False
+
     def on(self, fade: bool = True):
         # Calling this will trigger an event, which updates self.level/self.colour, and sends a callback
         if not fade: self.protocol.dali_enable_dapc_sequence(self.address)
@@ -1984,18 +2000,14 @@ class ZenLight:
         return self.protocol.dali_scene(self.address, scene)
     def set(self, level: int = 255, colour: Optional[ZenColour] = None, fade: bool = True):
         # Calling this will trigger an event, which updates self.level/self.colour, and sends a callback
-        if not fade: self.protocol.dali_enable_dapc_sequence(self.address)
-        if colour:
-            if self.features["temperature"] and colour.type == ZenColourType.TC:
-                return self.protocol.dali_colour(self.address, colour, level)
-            elif self.features["RGB"] and colour.type == ZenColourType.RGB:
-                return self.protocol.dali_colour(self.address, colour, level)
-            elif self.features["RGBW"] and colour.type == ZenColourType.RGBW:
-                return self.protocol.dali_colour(self.address, colour, level)
-            elif self.features["RGBWW"] and colour.type == ZenColourType.RGBWAF:
-                return self.protocol.dali_colour(self.address, colour, level)
-        elif level:
-            return self.protocol.dali_arc_level(self.address, level)
+        if (self.supports_colour(colour)):
+            if not fade: self.protocol.dali_enable_dapc_sequence(self.address)
+            return self.protocol.dali_colour(self.address, colour, level)
+        if level:
+            if fade:
+                return self.protocol.dali_arc_level(self.address, level)
+            else:
+                return self.protocol.dali_custom_fade(self.address, level, 0)
 
 
 class ZenGroup(ZenLight):
