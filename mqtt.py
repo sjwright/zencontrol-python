@@ -4,7 +4,7 @@ import json
 import yaml
 import re
 from typing import Optional, Any, Callable
-from zen import ZenProtocol, ZenController, ZenAddress, ZenInstance, ZenAddressType, ZenColour, ZenColourType, ZenLight, ZenButton,ZenMotionSensor, ZenSystemVariable
+from zen import ZenProtocol, ZenController, ZenAddress, ZenInstance, ZenAddressType, ZenColour, ZenColourType, ZenProfile, ZenLight, ZenGroup, ZenButton, ZenMotionSensor, ZenSystemVariable
 import paho.mqtt.client as mqtt
 from colorama import Fore, Back, Style
 import logging
@@ -226,6 +226,7 @@ class ZenMQTTBridge:
                 client.subscribe(f"{self.discovery_prefix}/sensor/{ctrl.name}/#")
                 client.subscribe(f"{self.discovery_prefix}/switch/{ctrl.name}/#")
                 client.subscribe(f"{self.discovery_prefix}/event/{ctrl.name}/#")
+                client.subscribe(f"{self.discovery_prefix}/select/{ctrl.name}/#")
                 client.subscribe(f"{self.discovery_prefix}/device_automation/{ctrl.name}/#")
                 client.publish(topic=f"{ctrl.name}/availability", payload="online", retain=True)
         else:
@@ -277,16 +278,15 @@ class ZenMQTTBridge:
 
             # Match on object type
             match target_object:
+                case ZenController():
+                    ctrl: ZenController = target_object
+                    self._apply_mqtt_payload_to_zencontroller(ctrl, payload)
                 case ZenLight():
                     light: ZenLight = target_object
                     self._apply_mqtt_payload_to_zenlight(light, json.loads(payload))
                 case ZenSystemVariable():
-                    zsv: ZenSystemVariable = target_object
-                    match zsv.client_data['component']:
-                        case "switch":
-                            self._apply_mqtt_payload_to_zsv(zsv, payload)
-                        case "sensor":
-                            return # Read only
+                    sysvar: ZenSystemVariable = target_object
+                    self._apply_mqtt_payload_to_sysvar(sysvar, payload)
                 case ZenMotionSensor():
                     return # Read only
                 case _:
@@ -296,49 +296,42 @@ class ZenMQTTBridge:
         except json.JSONDecodeError as e:
             self.logger.error(f"Invalid JSON payload: {e}")
 
-    def _apply_mqtt_payload_to_zsv(self, zsv: ZenSystemVariable, payload: str) -> None:
-        self.logger.info(f"Setting {zsv.controller.name} system variable {zsv.id} to {payload}")
-        match payload:
-            case "ON":
-                zsv.set_value(1)
-            case "OFF":
-                zsv.set_value(0)
-            case _:
-                raise ValueError(f"Invalid payload for system variable: {payload}")
+    def _apply_mqtt_payload_to_zencontroller(self, ctrl: ZenController, payload: str) -> None:
+        print(f"HA asking to change profile of {ctrl.name} to {payload}")
+        ctrl.switch_to_profile(payload)
+        
+    def _apply_mqtt_payload_to_sysvar(self, sysvar: ZenSystemVariable, payload: str) -> None:
+        self.logger.info(f"Setting {sysvar.controller.name} system variable {sysvar.id} to {payload}")
+        match sysvar.client_data['component']:
+            case "switch":
+                sysvar.set_value(1 if payload == "ON" else 0)
+            case "sensor":
+                return # Read only
 
     def _apply_mqtt_payload_to_zenlight(self, light: ZenLight, payload: dict[str, Any]) -> None:
         print(payload)
         addr = light.address
         ctrl = addr.controller
-        arc_level = None
-        kelvin = None
-        if "brightness" in payload:
-            brightness = int(payload["brightness"])
-            arc_level = self.brightness_to_arc(brightness)
-        if "color_temp" in payload and light.features["temperature"]:
-            mireds = int(payload["color_temp"])
-            kelvin = self.mireds_to_kelvin(mireds)
-        if kelvin and arc_level:
-            self.logger.info(f"Setting {ctrl.name} gear {addr.number} brightness to arc {arc_level} (linear {brightness}) and temperature to {kelvin}K (mireds {mireds})")
-            light.set(level=arc_level, colour=ZenColour(type=ZenColourType.TC, kelvin=kelvin))
-            return
-        elif kelvin:
-            self.logger.info(f"Setting {ctrl.name} gear {addr.number} temperature to {kelvin}K (mireds {mireds})")
-            light.set(colour=ZenColour(type=ZenColourType.TC, kelvin=kelvin))
-            return
-        elif arc_level:
-            self.logger.info(f"Setting {ctrl.name} gear {addr.number} brightness to arc {arc_level} (linear {brightness}) ")
-            light.set(level=arc_level)
-            return
+        brightness: Optional[int] = payload.get("brightness", None)
+        mireds: Optional[int] = payload.get("color_temp", None)
 
-        # Respond to on/off switching in Home Assistant
+        # If brightness or temperature is set
+        if brightness or mireds:
+            args = {}
+            if brightness: args["level"] = self.brightness_to_arc(brightness)
+            if mireds: args["colour"] = ZenColour(type=ZenColourType.TC, kelvin=self.mireds_to_kelvin(mireds))
+            self.logger.info(f"On {ctrl.name} setting gear {addr.number} to {args}")
+            light.set(**args)
+            return
+        
+        # If switched on/off in HA
         if "state" in payload:
             state = payload["state"]
             if state == "OFF":
-                self.logger.info(f"Turning off {ctrl.name} gear {addr.number}")
+                self.logger.info(f"On {ctrl.name} turning gear {addr.number} OFF")
                 light.off(fade=True)
             elif state == "ON":
-                self.logger.info(f"Turning on {ctrl.name} gear {addr.number}")
+                self.logger.info(f"On {ctrl.name} turning gear {addr.number} ON")
                 light.on()
 
     # ================================
@@ -346,10 +339,17 @@ class ZenMQTTBridge:
     #  ---> SEND TO HOME ASSISTANT
     # ================================
 
+    def _profile_event(self, profile: ZenProfile) -> None:
+        print(f"Zen to HA: profile changed to {profile}")
+
+        ctrl = profile.controller
+        mqtt_topic = ctrl.client_data['mqtt_topic']
+
+        self._publish_state(mqtt_topic, profile.label)
+
     def _light_event(self, light: ZenLight, level: Optional[int] = None, colour: Optional[ZenColour] = None, scene: Optional[int] = None) -> None:
         print(f"Zen to HA: light {light} level {level} colour {colour} scene {scene}")
         
-        #mqtt_topic = self._mqtt_topic_for_address(light.address, "light")
         mqtt_topic = light.client_data['mqtt_topic']
         level = light.level
         colour = light.colour
@@ -394,6 +394,22 @@ class ZenMQTTBridge:
     # ================================
     # SETUP AUTODISCOVERY
     # ================================
+
+    def setup_profiles(self) -> None:
+        """Initialize all profiles for Home Assistant auto-discovery."""
+        for ctrl in self.control:
+            self._client_data_for_object(ctrl, "select")
+            mqtt_topic = ctrl.client_data['mqtt_topic']
+            profiles = self.zen.get_profiles(ctrl)
+            config_dict = self.global_config | ctrl.client_data['attributes'] | {
+                "name": f"{ctrl.label} Profile",
+                "command_topic": f"{mqtt_topic}/set",
+                "state_topic": f"{mqtt_topic}/state",
+                "options": [
+                    profile.label for profile in profiles
+                ]
+            }
+            self._publish_config(mqtt_topic, config_dict, object=ctrl)
 
     def setup_lights(self) -> None:
         """Initialize all lights for Home Assistant auto-discovery."""
@@ -523,12 +539,22 @@ class ZenMQTTBridge:
     
     def _client_data_for_object(self, object: Any, component: str, attributes: dict = {}) -> dict:
         match object:
+            case ZenController():
+                ctrl: ZenController = object
+                serial = ctrl.mac
+                mqtt_target = f"profile"
             case ZenLight():
                 light: ZenLight = object
                 addr = light.address
                 ctrl = addr.controller
                 serial = light.serial
                 mqtt_target = f"ecg{addr.number}"
+            case ZenGroup():
+                group: ZenGroup = object
+                addr = group.address
+                ctrl = addr.controller
+                serial = ""
+                mqtt_target = f"group{addr.number}"
             case ZenButton():
                 button: ZenButton = object
                 inst = button.instance
@@ -632,6 +658,7 @@ class ZenMQTTBridge:
                 
             # Start event monitoring and MQTT services
             self.zen.set_convenience_callbacks(
+                profile_callback=self._profile_event,
                 light_callback=self._light_event,
                 button_callback=self._button_event,
                 motion_callback=self._motion_event,
@@ -643,7 +670,10 @@ class ZenMQTTBridge:
             # Wait for retained topics to be received
             time.sleep(0.3)
 
+            # From here on, we're generating config topics
             self.setup_started = True
+
+            self.setup_profiles()
             self.setup_lights()
             self.setup_buttons()
             self.setup_motion_sensors()

@@ -98,9 +98,11 @@ class ZenController:
         self.label: Optional[str] = None
         self.version: Optional[int] = None
         self.profile: Optional[ZenProfile] = None
+        self.profiles: set[ZenProfile] = set()
+        self.client_data: dict = {}
     def interview(self) -> bool:
         if self.label is None: self.label = self.protocol.query_controller_label(self)
-        if self.version is None: self.version = self.protocol.query_controller_version_number(self)
+        self.version = self.protocol.query_controller_version_number(self)
         current_profile = self.protocol.query_current_profile_number(self)
         self.profile = ZenProfile(protocol=self.protocol, controller=self, number=current_profile)
         return True
@@ -111,11 +113,19 @@ class ZenController:
                 self.protocol.profile_callback(profile=self.profile)
     def ready(self) -> bool:
         return self.protocol.query_controller_startup_complete(self)
-    def switch_to_profile(self, profile: ZenProfile|int) -> bool:
+    def switch_to_profile(self, profile: ZenProfile|int|str) -> bool:
         if isinstance(profile, ZenProfile):
+            print(f"Switching to profile {profile.number} ({profile.label})")
             return self.protocol.change_profile_number(self, profile.number)
         elif isinstance(profile, int):
+            print(f"Switching to profile {profile}")
             return self.protocol.change_profile_number(self, profile)
+        elif isinstance(profile, str):
+            for p in self.profiles:
+                if p.label == profile:
+                    print(f"Switching to profile {p.number} ({p.label})")
+                    return self.protocol.change_profile_number(self, p.number)
+            return False
         else:
             return False
     def return_to_scheduled_profile(self) -> bool:
@@ -1745,10 +1755,11 @@ class ZenProtocol:
     # Convenience commands
     # ============================
 
-    def get_profiles(self) -> List[ZenProfile]:
+    def get_profiles(self, controller: Optional[ZenController] = None) -> List[ZenProfile]:
         """Return a list of all profiles."""
         profiles = []
-        for controller in self.controllers:
+        controllers = [controller] if controller else self.controllers
+        for controller in controllers:
             numbers = self.query_profile_numbers(controller=controller)
             for number in numbers:
                 profile = ZenProfile(protocol=self, controller=controller, number=number)
@@ -1846,6 +1857,8 @@ class ZenProfile:
         self.client_data = {}
     def interview(self) -> bool:
         self.label = self.protocol.query_profile_label(self.controller, self.number)
+        # Add self to controller's set of profiles
+        self.controller.profiles.add(self)
         return True
     def select(self) -> bool:
         return self.protocol.change_profile_number(self.controller, self.number)
