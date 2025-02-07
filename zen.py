@@ -2,7 +2,7 @@ import socket
 import struct
 import time
 import logging
-import datetime
+from datetime import datetime as dt
 from typing import Optional, Tuple, List, Union, Dict, Self
 from enum import Enum
 from threading import Thread, Event, Timer
@@ -520,6 +520,7 @@ class ZenProtocol:
         self.profile_change_callback = None
         self.system_variable_change_callback = None
 
+        self.profile_callback = None
         self.group_callback = None
         self.light_callback = None
         self.button_callback = None
@@ -1187,8 +1188,8 @@ class ZenProtocol:
         state = {
             'current_active_profile': unpacked[0],
             'last_scheduled_profile': unpacked[1],
-            'last_overridden_profile_utc': datetime.fromtimestamp(unpacked[2]),
-            'last_scheduled_profile_utc': datetime.fromtimestamp(unpacked[3])
+            'last_overridden_profile_utc': dt.fromtimestamp(unpacked[2]),
+            'last_scheduled_profile_utc': dt.fromtimestamp(unpacked[3])
         }
         # Process profiles in groups of 3 bytes (2 bytes for profile number, 1 byte for profile behaviour)
         profiles: dict[int, int] = {}
@@ -1197,9 +1198,10 @@ class ZenProtocol:
             profile_behaviour = response[i+2]
             # bit 0: enabled: 0 = disabled, 1 = enabled
             # bit 1-2: priority: two bit int where 0 = scheduled, 1 = medium, 2 = high, 3 = emergency
-            enabled = bool(profile_behaviour & 0x01)
+            enabled = not bool(profile_behaviour & 0x01)
             priority = (profile_behaviour >> 1) & 0x03
-            profiles[profile_number] = {"enabled": enabled, "priority": priority}
+            priority_label = ["Scheduled", "Medium", "High", "Emergency"][priority]
+            profiles[profile_number] = {"enabled": enabled, "priority": priority, "priority_label": priority_label}
         # Return tuple of state and profiles
         return state, profiles
     
