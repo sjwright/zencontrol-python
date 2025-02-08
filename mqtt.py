@@ -13,6 +13,8 @@ import math
 
 class Constants:
 
+    STARTUP_POLL_DELAY = 5
+
     # Default color temperature limits
     DEFAULT_WARMEST_TEMP = 2700
     DEFAULT_COOLEST_TEMP = 6500
@@ -281,6 +283,9 @@ class ZenMQTTBridge:
                 case ZenController():
                     ctrl: ZenController = target_object
                     self._apply_mqtt_payload_to_zencontroller(ctrl, payload)
+                case ZenGroup():
+                    group: ZenGroup = target_object
+                    self._apply_mqtt_payload_to_zengroup(group, payload)
                 case ZenLight():
                     light: ZenLight = target_object
                     self._apply_mqtt_payload_to_zenlight(light, json.loads(payload))
@@ -307,6 +312,10 @@ class ZenMQTTBridge:
                 sysvar.set_value(1 if payload == "ON" else 0)
             case "sensor":
                 return # Read only
+            
+    def _apply_mqtt_payload_to_zengroup(self, group: ZenGroup, payload: str) -> None:
+        print(f"HA asking to change scene of {group} to {payload}")
+        group.set_scene(payload)
 
     def _apply_mqtt_payload_to_zenlight(self, light: ZenLight, payload: dict[str, Any]) -> None:
         print(payload)
@@ -350,14 +359,18 @@ class ZenMQTTBridge:
     def _light_event(self, light: ZenLight, level: Optional[int] = None, colour: Optional[ZenColour] = None, scene: Optional[int] = None) -> None:
         print(f"Zen to HA: light {light} level {level} colour {colour} scene {scene}")
         
-        mqtt_topic = light.client_data['mqtt_topic']
+        mqtt_topic = light.client_data.get('mqtt_topic', None)
+        if not mqtt_topic:
+            self.logger.error(f"Light {light} has no MQTT topic")
+            return
+        
         level = light.level
         colour = light.colour
 
         new_state = {
             "state": "OFF" if light.level == 0 else "ON"
         }
-        if light.level > 0:
+        if light.level and light.level > 0:
             new_state["brightness"] = self.arc_to_brightness(light.level)
 
         if light.colour and light.colour.type == ZenColourType.TC:
@@ -366,7 +379,16 @@ class ZenMQTTBridge:
                 new_state["color"] = self.kelvin_to_mireds(light.colour.kelvin)
 
         self._publish_state(mqtt_topic, new_state)
-        
+    
+    def _group_event(self, group: ZenGroup, scene: Optional[int] = None) -> None:
+        print(f"Zen to HA: group {group} scene {scene}")
+        mqtt_topic = group.client_data['mqtt_topic']
+        # Get the scene label for the ID from the group
+        scene_label = next((s["label"] for s in group.scenes if s["number"] == scene), None)
+        if scene_label:
+            self._publish_state(mqtt_topic, scene_label)
+        else:
+            self.logger.warning(f"Group {group} has no scene with ID {scene}")
         
     def _button_event(self, button: ZenButton, held: bool) -> None:
         print(f"Zen to HA: button {button} held: {held}")
@@ -444,6 +466,24 @@ class ZenMQTTBridge:
                 config_dict["supported_color_modes"] = ["rgb"]
             
             self._publish_config(mqtt_topic, config_dict, object=light)
+
+            # Get the latest state from the controller and trigger an event, which then sends a state update
+            light.sync_from_controller()
+
+    def setup_groups(self) -> None:
+        """Initialize all groups for Home Assistant auto-discovery."""
+        groups = self.zen.get_groups()
+        for group in groups:
+            if group.lights:
+                self._client_data_for_object(group, "select")
+                mqtt_topic = group.client_data['mqtt_topic']
+                config_dict = self.global_config | group.client_data['attributes'] | {
+                    "name": group.label,
+                    "command_topic": f"{mqtt_topic}/set",
+                    "state_topic": f"{mqtt_topic}/state",
+                    "options": [scene["label"] for scene in group.scenes],
+                }
+                self._publish_config(mqtt_topic, config_dict, object=group)
 
     def setup_buttons(self) -> None:
         """Initialize all buttons found on the DALI bus for Home Assistant auto-discovery."""
@@ -543,18 +583,18 @@ class ZenMQTTBridge:
                 ctrl: ZenController = object
                 serial = ctrl.mac
                 mqtt_target = f"profile"
+            case ZenGroup(): # ZenGroup inherits from ZenLight, so needs to be before ZenLight
+                group: ZenGroup = object
+                addr = group.address
+                ctrl = addr.controller
+                serial = ""
+                mqtt_target = f"group{addr.number}"
             case ZenLight():
                 light: ZenLight = object
                 addr = light.address
                 ctrl = addr.controller
                 serial = light.serial
                 mqtt_target = f"ecg{addr.number}"
-            case ZenGroup():
-                group: ZenGroup = object
-                addr = group.address
-                ctrl = addr.controller
-                serial = ""
-                mqtt_target = f"group{addr.number}"
             case ZenButton():
                 button: ZenButton = object
                 inst = button.instance
@@ -646,56 +686,58 @@ class ZenMQTTBridge:
 
     def run(self) -> None:
         """Main method to start the bridge."""
-        try:
-            
-            # Wait for Zen controllers to be ready
-            for ctrl in self.control:
-                print(f"Connecting to Zen controller {ctrl.label} on {ctrl.host}:{ctrl.port}...")
-                self.logger.info(f"Connecting to Zen controller {ctrl.label} on {ctrl.host}:{ctrl.port}...")
-                while not ctrl.ready():
-                    print(f"Controller still starting up...")
-                    time.sleep(Constants.STARTUP_POLL_DELAY)
-                
-            # Start event monitoring and MQTT services
-            self.zen.set_convenience_callbacks(
-                profile_callback=self._profile_event,
-                light_callback=self._light_event,
-                button_callback=self._button_event,
-                motion_callback=self._motion_event,
-                sysvar_callback=self._sysvar_event
-            )
-            self.zen.start_event_monitoring()
-            self.mqttc.loop_start()
-
-            # Wait for retained topics to be received
-            time.sleep(0.3)
-
-            # From here on, we're generating config topics
-            self.setup_started = True
-
-            self.setup_profiles()
-            self.setup_lights()
-            self.setup_buttons()
-            self.setup_motion_sensors()
-            self.setup_system_variables()
-            self.delete_retained_topics()
-
-            # Use signal handling for graceful shutdown
-            import signal
-            signal.signal(signal.SIGINT, lambda s, f: self.stop())
-            signal.signal(signal.SIGTERM, lambda s, f: self.stop())
-            
-            while True:
-                time.sleep(1)
-                
-        except Exception as e:
-            print(f"Fatal error: {e}")
-            self.logger.error(f"Fatal error: {e}")
-            raise
+        # try:
         
-        finally:
-            print(f"Stopping: {e}")
-            self.stop()
+        # Wait for Zen controllers to be ready
+        for ctrl in self.control:
+            print(f"Connecting to Zen controller {ctrl.label} on {ctrl.host}:{ctrl.port}...")
+            self.logger.info(f"Connecting to Zen controller {ctrl.label} on {ctrl.host}:{ctrl.port}...")
+            while not ctrl.ready():
+                print(f"Controller still starting up...")
+                time.sleep(Constants.STARTUP_POLL_DELAY)
+            
+        # Start event monitoring and MQTT services
+        self.zen.set_convenience_callbacks(
+            profile_callback=self._profile_event,
+            light_callback=self._light_event,
+            group_callback=self._group_event,
+            button_callback=self._button_event,
+            motion_callback=self._motion_event,
+            sysvar_callback=self._sysvar_event
+        )
+        self.zen.start_event_monitoring()
+        self.mqttc.loop_start()
+
+        # Wait for retained topics to be received
+        time.sleep(0.3)
+
+        # From here on, we're generating config topics
+        self.setup_started = True
+
+        self.setup_profiles()
+        self.setup_lights()
+        self.setup_groups()
+        self.setup_buttons()
+        self.setup_motion_sensors()
+        self.setup_system_variables()
+        self.delete_retained_topics()
+
+        # Use signal handling for graceful shutdown
+        import signal
+        signal.signal(signal.SIGINT, lambda s, f: self.stop())
+        signal.signal(signal.SIGTERM, lambda s, f: self.stop())
+        
+        while True:
+            time.sleep(1)
+                
+        # except Exception as e:
+        #     print(f"Fatal error: {e}")
+        #     self.logger.error(f"Fatal error: {e}")
+        #     raise
+        
+        # finally:
+        #     print(f"Stopping")
+        #     self.stop()
 
     def stop(self) -> None:
         """Clean shutdown of the bridge"""

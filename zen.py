@@ -646,7 +646,7 @@ class ZenProtocol:
         start_time = time.time()
         while self._send_lock:
             if time.time() - start_time > 1.0:
-                if self.narration: print("Timeout waiting for lock")
+                self.logger.error(f"Timeout waiting for lock")
                 raise ZenTimeoutError(f"No response from {controller.host}:{controller.port}")
             time.sleep(0.01)
             
@@ -677,8 +677,7 @@ class ZenProtocol:
 
                 # Verify response format and sequence counter
                 if len(response) < 4:  # Minimum valid response is 4 bytes
-                    self.logger.debug(f"UDP response too short (len={len(response)})")
-                    if self.narration: print(f"UDP response too short (len={len(response)})")
+                    self.logger.error(f"UDP response too short (len={len(response)})")
                     raise ZenResponseError(f"Invalid response format from {controller.host}:{controller.port}")
                     
                 response_type = response[0]
@@ -687,15 +686,13 @@ class ZenProtocol:
                 
                 # Verify sequence counter matches
                 if sequence != self._sequence_counter:
-                    self.logger.debug(f"UDP response sequence counter mismatch (expected {self._sequence_counter}, got {sequence})")
-                    if self.narration: print(f"UDP response sequence counter mismatch (expected {self._sequence_counter}, got {sequence})")
+                    self.logger.error(f"UDP response sequence counter mismatch (expected {self._sequence_counter}, got {sequence})")
                     raise ZenResponseError(f"Sequence mismatch from {controller.host}:{controller.port}")
                     
                 # Verify total packet length matches data_length
                 expected_length = 4 + data_length  # type + seq + len + data + checksum
                 if len(response) != expected_length:
-                    self.logger.debug(f"UDP response length mismatch (expected {expected_length}, got {len(response)})")
-                    if self.narration: print(f"UDP response length mismatch (expected {expected_length}, got {len(response)})")
+                    self.logger.error(f"UDP response length mismatch (expected {expected_length}, got {len(response)})")
                     raise ZenResponseError(f"Length mismatch from {controller.host}:{controller.port}")
                 
                 # Return data bytes if present, otherwise None
@@ -703,12 +700,10 @@ class ZenProtocol:
                     return response[3:3+data_length], response_type
                 return None, response_type
             except socket.timeout:
-                self.logger.debug(f"UDP packet response from {controller.host}:{controller.port} not received in time, probably offline")
-                if self.narration: print(f"UDP packet response from {controller.host}:{controller.port} not received in time, probably offline")
-                raise ZenTimeoutError(f"No response from {controller.host}:{controller.port}")
+                self.logger.error(f"UDP packet response from {controller.host}:{controller.port} not received in time, probably offline")
+                raise ZenTimeoutError(f"No response from {controller.host}:{controller.port} in time")
             except Exception as e:
-                self.logger.debug(f"UDP packet error sending command: {e}")
-                if self.narration: print(f"UDP packet error sending command: {e}")
+                self.logger.error(f"UDP packet error sending command: {e}")
                 raise ZenError(f"Error sending command: {e}")
             
         finally:
@@ -829,21 +824,18 @@ class ZenProtocol:
 
                 # If no controller found, skip event
                 if not controller:
-                    self.logger.debug(f"{typecast.capitalize()} packet is from unknown controller")
-                    if self.narration: print(f"{typecast.capitalize()} packet is from unknown controller")
+                    self.logger.info(f"{typecast.capitalize()} packet received from unknown controller")
                     continue
 
                 # Verify data length
                 if len(payload) != payload_len:
-                    self.logger.debug(f"{typecast.capitalize()} packet has invalid payload length: {len(payload)} != {payload_len}")
-                    if self.narration: print(f"{typecast.capitalize()} packet has invalid payload length: {len(payload)} != {payload_len}")
+                    self.logger.error(f"{typecast.capitalize()} packet has invalid payload length: {len(payload)} != {payload_len}")
                     continue
                 
                 # Verify checksum
                 calculated_checksum = self._checksum(list(data[:-1]))
                 if received_checksum != calculated_checksum:
-                    self.logger.debug(f"{typecast.capitalize()} packet has invalid checksum: {calculated_checksum} != {received_checksum}")
-                    if self.narration: print(f"{typecast.capitalize()} packet has invalid checksum: {calculated_checksum} != {received_checksum}")
+                    self.logger.error(f"{typecast.capitalize()} packet has invalid checksum: {calculated_checksum} != {received_checksum}")
                     continue
                 
                 # Create event data dictionary with core data
@@ -913,8 +905,7 @@ class ZenProtocol:
                         elif 64 <= target <= 79:
                             address = ZenAddress(controller=controller, type=ZenAddressType.GROUP, number=target-64)
                         else:
-                            self.logger.debug(f"Invalid scene change event target: {target}")
-                            if self.narration: print(f"Invalid scene change event target: {target}")
+                            self.logger.error(f"Invalid scene change event target: {target}")
                             continue
                         
                         # Raw callback
@@ -1768,7 +1759,7 @@ class ZenProtocol:
         return self._send_basic(controller, self.CMD["QUERY_SYSTEM_VARIABLE_NAME"], variable, return_type='str')
 
     # ============================
-    # Convenience commands
+    # Abstraction layer commands
     # ============================
 
     def get_profiles(self, controller: Optional[ZenController] = None) -> List[ZenProfile]:
@@ -1848,7 +1839,7 @@ class ZenProtocol:
 
 
 # ============================
-# Convenience classes
+# Abstraction layer classes
 # ============================ 
 
 
@@ -1915,7 +1906,7 @@ class ZenLight:
         }
         self.level: Optional[int] = None
         self.colour: Optional[ZenColour] = None
-        self.scene: Optional[int] = None
+        self.current_scene: Optional[int] = None
         self.client_data: dict = {}
     def interview(self) -> bool:
         cgstatus = self.protocol.dali_query_control_gear_status(self.address)
@@ -1949,7 +1940,7 @@ class ZenLight:
                 group.lights.add(self) # Add to group's set of lights
                 self.groups.add(group) # Add to light's set of groups
             # Sync light state
-            self.sync_from_controller()
+            # self.sync_from_controller()
             return True
         else:
             self._reset()
@@ -1958,11 +1949,11 @@ class ZenLight:
         self.level = self.protocol.dali_query_level(self.address)
         last_scene = self.protocol.dali_query_last_scene(self.address)
         last_scene_is_current = self.protocol.dali_query_last_scene_is_current(self.address)
-        self.scene = last_scene if last_scene_is_current else None
+        self.current_scene = last_scene if last_scene_is_current else None
         if self.features["temperature"] or self.features["RGB"] or self.features["RGBW"] or self.features["RGBWW"]:
             self.colour = self.protocol.query_dali_colour(self.address)
         # Callback
-        self._event_received(level=self.level, colour=self.colour, scene=self.scene)
+        self._event_received(level=self.level, colour=self.colour, scene=self.current_scene)
     def _event_received(self, level: int = 255, colour: Optional[ZenColour] = None, scene: Optional[int] = None):
         # Called by ZenProtocol when a query command is issued or an event is received
         level_changed = False
@@ -1974,8 +1965,8 @@ class ZenLight:
         if colour and colour != self.colour:
             self.colour = colour
             colour_changed = True
-        if scene and scene != self.scene:
-            self.scene = scene
+        if scene:
+            self.current_scene = scene
             scene_changed = True
         if type(self) is ZenLight:
             if level_changed or colour_changed or scene_changed:
@@ -1983,13 +1974,14 @@ class ZenLight:
                     self.protocol.light_callback(light=self,
                                                 level=self.level if level_changed else None,
                                                 colour=self.colour if colour_changed else None,
-                                                scene=self.scene if scene_changed else None)
+                                                scene=self.current_scene if scene_changed else None)
         if type(self) is ZenGroup:
             if scene_changed:
                 if self.protocol.group_callback:
                     self.protocol.group_callback(group=self,
-                                                scene=self.scene if scene_changed else None)
+                                                scene=self.current_scene if scene_changed else None)
     def supports_colour(self, colour: ZenColourType|ZenColour) -> bool:
+        # colour_type = colour if type(colour) == ZenColourType else colour.type
         if type(colour) == ZenColour:
             colour_type = colour.type
         elif type(colour) == ZenColourType:
@@ -2011,8 +2003,8 @@ class ZenLight:
         # Calling this will trigger an event, which updates self.level/self.colour, and sends a callback
         if fade: return self.protocol.dali_arc_level(self.address, 0)
         else: return self.protocol.dali_off(self.address)
-    def scene(self, scene: int, fade: bool = True):
-        # Calling this will trigger an event, which updates self.level/self.colour, and sends a callback
+    def set_scene(self, scene: int, fade: bool = True):
+        # Calling this will trigger an event, which updates self.level/self.colour/self.scene, and sends a callback
         if not fade: self.protocol.dali_enable_dapc_sequence(self.address)
         return self.protocol.dali_scene(self.address, scene)
     def set(self, level: int = 255, colour: Optional[ZenColour] = None, fade: bool = True):
@@ -2045,10 +2037,10 @@ class ZenGroup(ZenLight):
         return f"ZenGroup<{self.address.controller.name} group {self.address.number}: {self.label}>"
     def _reset(self):
         self.label: Optional[str] = None
-        self.scenes: list[dict] = []
         self.level: Optional[int] = None
         self.colour: Optional[ZenColour] = None
-        self.scene: Optional[int] = None
+        self.scenes: list[dict] = []
+        self.current_scene: Optional[int] = None
         self.client_data: dict = {}
     def interview(self) -> bool:
         self.label = self.protocol.query_group_label(self.address, generic_if_none=True)
@@ -2061,6 +2053,12 @@ class ZenGroup(ZenLight):
                 "label": scene_label,
             })
         return True
+    def supports_colour(self, colour: ZenColourType|ZenColour) -> bool:
+        return True
+    def set_scene(self, scene: int|str, fade: bool = True):
+        if type(scene) == str:
+            scene = next((s["number"] for s in self.scenes if s["label"] == scene), None)
+        return super().set_scene(scene, fade)
 
 
 class ZenButton:
