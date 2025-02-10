@@ -63,7 +63,6 @@ class ZenInterface:
                  listen_ip: Optional[str] = None,
                  listen_port: Optional[int] = None
                  ):
-        print("ZenInterface.__init__")
         self.protocol: ZenProtocol = ZenProtocol(logger=logger, narration=narration, unicast=unicast, listen_ip=listen_ip, listen_port=listen_port)
         self.controllers: List[ZenController] = []
 
@@ -165,7 +164,11 @@ class ZenInterface:
         ZenMotionSensor(protocol=self.protocol, instance=instance)._event_received()
     
     def system_variable_change_event(self, controller: ZenController, target: int, value: int, payload: bytes) -> None:
-        ZenSystemVariable(protocol=self.protocol, controller=controller, id=target)._event_received(value)
+        print(f"System Variable Change Event - controller {controller.name} target {target} value {value}")
+        if not 0 <= target < Const.MAX_SYSVAR:
+            print(f"Variable number must be between 0 and {Const.MAX_SYSVAR}, received {target}")
+        else:
+            ZenSystemVariable(protocol=self.protocol, controller=controller, id=target)._event_received(value)
 
     def colour_change_event(self, address: ZenAddress, colour: bytes, payload: bytes) -> None:
         ZenLight(protocol=self.protocol, address=address)._event_received(colour=colour)
@@ -678,20 +681,18 @@ class ZenMotionSensor:
 
 class ZenSystemVariable:
     _instances = {}
-    def __new__(cls, protocol: ZenProtocol, controller: ZenController, id: int, label: Optional[str] = None):
+    def __new__(cls, protocol: ZenProtocol, controller: ZenController, id: int, value: Optional[int] = None, label: Optional[str] = None):
         # Singleton based on controller and id
         compound_id = f"{controller.name} {id}"
         if compound_id not in cls._instances:
             inst = super().__new__(cls)
             cls._instances[compound_id] = inst
-
-            if not isinstance(protocol, ZenProtocol):
-                print(f"Error: protocol must be of type ZenProtocol, not {type(protocol)}")
-                return None
             inst.protocol = protocol
             inst.controller = controller
             inst.id = id
             inst._reset()
+            inst._value = value
+            inst.label = label
             inst.interview()
         return cls._instances[compound_id]
     def __repr__(self) -> str:
@@ -731,13 +732,7 @@ class ZenSystemVariable:
         return self._value
     @value.setter 
     def value(self, new_value):
-        self._future_value = new_value
-        # If abs(value) is less than 32760, 
-        #   If value has 2 decimal places, use magitude -2 (signed 0xfe)
-        #   Else if value has 1 decimal place, use magitude -1 (signed 0xff)
-        #   Else use magitude 0 (signed 0x00)
-        # Else if abs(value) is less than 327600, use magitude 1 (signed 0x01)
-        # Else if abs(value) is less than 3276000, use magitude 2 (signed 0x02)
+        self._future_value = new_value # If we get this value back as an event, we'll know it's from us
         self.protocol.set_system_variable(self.controller, self.id, new_value)
 
 
