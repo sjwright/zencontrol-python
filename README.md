@@ -19,7 +19,7 @@ No support planned:
 * Any commands involving DMX, Control4, or virtual instances (I don't have licenses for any of these so I couldn't test them even if I wanted to, but the scaffolding is there if anyone wishes to add support)
 * Any commands described in the documentation as "legacy" (they don't serve any purpose)
 
-## Use cases
+## How to run
 
 In order to test this code, I am writing an MQTT bridge to Home Assistant, which can be run by editing **config.yaml** (and **test-config.yaml** if you wish to run the test suite) to suit your environment, setting up a venv, calling pip install -r requirements.txt, and then running **mqtt.py** within the venv.
 
