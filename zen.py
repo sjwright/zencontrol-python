@@ -3,7 +3,7 @@ import struct
 import time
 import logging
 from datetime import datetime as dt
-from typing import Optional, Tuple, List, Union, Dict, Self, Callable
+from typing import Optional, Self, Callable
 from enum import Enum
 from threading import Thread, Event, Timer
 from colorama import Fore, Back, Style
@@ -319,7 +319,7 @@ class ZenEventMask:
 class ZenProtocol:
 
     # Define commands as a dictionary
-    CMD: Dict[str, int] = {
+    CMD: dict[str, int] = {
         # Controller
         "QUERY_CONTROLLER_VERSION_NUMBER": 0x1C,    # Query ZenController Version Number
         "QUERY_CONTROLLER_LABEL": 0x24,             # Query the label of the controller
@@ -463,7 +463,7 @@ class ZenProtocol:
         self.stop_event_monitoring()
         self.command_socket.close()
 
-    def set_controllers(self, controllers: List[ZenController]):
+    def set_controllers(self, controllers: list[ZenController]):
         self.controllers = controllers # Used to match events to controllers, and include controller objects in callbacks
 
     # ============================
@@ -471,7 +471,7 @@ class ZenProtocol:
     # ============================
 
     @staticmethod
-    def _checksum(packet: List[int]) -> int:
+    def _checksum(packet: list[int]) -> int:
         acc = 0x00
         for d in packet:
             acc = d ^ acc
@@ -481,8 +481,8 @@ class ZenProtocol:
                    controller: ZenController,
                    command: int,
                    address: int = 0x00,
-                   data: List[int] = [0x00, 0x00, 0x00], 
-                   return_type: str = 'bytes') -> Optional[Union[bytes, str, List[int], int, bool]]:
+                   data: list[int] = [0x00, 0x00, 0x00], 
+                   return_type: str = 'bytes') -> Optional[bytes | str | list[int] | int | bool]:
         if len(data) > 3: 
             raise ValueError("data must be 0-3 bytes")
         data = data + [0x00] * (3 - len(data))  # Pad data to 3 bytes
@@ -540,7 +540,7 @@ class ZenProtocol:
                 return False
         return None
 
-    def _send_dynamic(self, controller: ZenController, command: int, data: List[int]) -> Optional[bytes]:
+    def _send_dynamic(self, controller: ZenController, command: int, data: list[int]) -> Optional[bytes]:
         # Calculate data length and prepend it to data
         response_data, response_code = self._send_packet(controller, command, [len(data)] + data)
         # Check response type
@@ -568,7 +568,7 @@ class ZenProtocol:
             return response_data
         return None
     
-    def _send_packet(self, controller: ZenController, command: int, data: List[int]) -> Tuple[Optional[bytes], int]:
+    def _send_packet(self, controller: ZenController, command: int, data: list[int]) -> tuple[Optional[bytes], int]:
         # Acquire lock to ensure serial execution
         if not hasattr(self, '_send_lock'):
             self._send_lock = False
@@ -883,7 +883,7 @@ class ZenProtocol:
                              [instance_number, unfilter.upper(), unfilter.lower()],
                              return_type='bool')
 
-    def query_dali_tpi_event_filters(self, address: ZenAddress, instance_number: int = 0xFF, start_at: int = 0) -> List[Dict]:
+    def query_dali_tpi_event_filters(self, address: ZenAddress, instance_number: int = 0xFF, start_at: int = 0) -> list[dict]:
         """Query active event filters for an address. Returns a list of dictionaries containing filter info, or None if query fails.
         
         Args:
@@ -979,7 +979,7 @@ class ZenProtocol:
             }
         return None
 
-    def query_group_numbers(self, controller: ZenController) -> List[ZenAddress]:
+    def query_group_numbers(self, controller: ZenController) -> list[ZenAddress]:
         """Query a controller for groups."""
         groups = self._send_basic(controller, self.CMD["QUERY_GROUP_NUMBERS"], return_type='list')
         zen_groups = []
@@ -994,7 +994,7 @@ class ZenProtocol:
         response = self._send_basic(address.controller, self.CMD["QUERY_DALI_COLOUR"], address.ecg())
         return ZenColour.from_bytes(response)
     
-    def query_profile_information(self, controller: ZenController) -> Optional[Tuple[dict, dict]]:
+    def query_profile_information(self, controller: ZenController) -> Optional[tuple[dict, dict]]:
         """Query a controller for profile information. Returns a tuple of two dicts, or None if query fails."""
         response = self._send_basic(controller, self.CMD["QUERY_PROFILE_INFORMATION"])
         # Initial 12 bytes:
@@ -1023,7 +1023,7 @@ class ZenProtocol:
         # Return tuple of state and profiles
         return state, profiles
     
-    def query_profile_numbers(self, controller: ZenController) -> Optional[List[int]]:
+    def query_profile_numbers(self, controller: ZenController) -> Optional[list[int]]:
         """Query a controller for a list of available Profile Numbers. Returns a list of profile numbers, or None if query fails."""
         response = self._send_basic(controller, self.CMD["QUERY_PROFILE_NUMBERS"])
         if response and len(response) >= 2:
@@ -1056,7 +1056,7 @@ class ZenProtocol:
             }
         return None
 
-    def query_instances_by_address(self, address: ZenAddress) -> List[ZenInstance]:
+    def query_instances_by_address(self, address: ZenAddress) -> list[ZenInstance]:
         """Query a DALI address (ECD) for associated instances. Returns a list of ZenInstance, or an empty list if nothing found."""
         response = self._send_basic(address.controller, self.CMD["QUERY_INSTANCES_BY_ADDRESS"], address.ecd())
         if response and len(response) >= 4:
@@ -1085,7 +1085,7 @@ class ZenProtocol:
         """Set a DALI address (ECG, group, broadcast) to a colour. Returns True if command succeeded, False otherwise."""
         return self._send_colour(address.controller, self.CMD["DALI_COLOUR"], address.ecg_or_group_or_broadcast(), colour, level)
 
-    def query_group_by_number(self, address: ZenAddress) -> Optional[Tuple[int, bool, int]]: # TODO: change to a dict or special class?
+    def query_group_by_number(self, address: ZenAddress) -> Optional[tuple[int, bool, int]]: # TODO: change to a dict or special class?
         """Query a DALI group for its occupancy status and level. Returns a tuple containing group number, occupancy status, and actual level."""
         response = self._send_basic(address.controller, self.CMD["QUERY_GROUP_BY_NUMBER"], address.group())
         if response and len(response) == 3:
@@ -1095,18 +1095,18 @@ class ZenProtocol:
             return (group_num, occupancy, level)
         return None
 
-    def query_scene_numbers_by_address(self, address: ZenAddress) -> Optional[List[int]]:
+    def query_scene_numbers_by_address(self, address: ZenAddress) -> Optional[list[int]]:
         """Query a DALI address (ECG) for associated scenes. Returns a list of scene numbers where levels have been set."""
         return self._send_basic(address.controller, self.CMD["QUERY_SCENE_NUMBERS_BY_ADDRESS"], address.ecg(), return_type='list')
 
-    def query_scene_levels_by_address(self, address: ZenAddress) -> Optional[List[int]]:
+    def query_scene_levels_by_address(self, address: ZenAddress) -> Optional[list[int]]:
         """Query a DALI address (ECG) for its DALI scene levels. Returns a list of 16 scene level values (0-254, or None if not part of scene)."""
         response = self._send_basic(address.controller, self.CMD["QUERY_SCENE_LEVELS_BY_ADDRESS"], address.ecg(), return_type='list')
         if response:
             return [None if x == 255 else x for x in response]
         return None
     
-    def query_group_membership_by_address(self, address: ZenAddress) -> List[ZenAddress]:
+    def query_group_membership_by_address(self, address: ZenAddress) -> list[ZenAddress]:
         """Query an address (ECG) for which DALI groups it belongs to. Returns a list of ZenAddress group instances."""
         response = self._send_basic(address.controller, self.CMD["QUERY_GROUP_MEMBERSHIP_BY_ADDRESS"], address.ecg())
         if response and len(response) == 2:
@@ -1131,7 +1131,7 @@ class ZenProtocol:
             return zen_groups
         return []
 
-    def query_dali_addresses_with_instances(self, controller: ZenController, start_address: int=0) -> List[ZenAddress]: # TODO: automate iteration over start_address=0, start_address=60, etc.
+    def query_dali_addresses_with_instances(self, controller: ZenController, start_address: int=0) -> list[ZenAddress]: # TODO: automate iteration over start_address=0, start_address=60, etc.
         """Query for DALI addresses that have instances associated with them.
         
         Due to payload restrictions, this needs to be called multiple times with different
@@ -1157,7 +1157,7 @@ class ZenProtocol:
                 ))
         return zen_addresses
     
-    def query_scene_numbers_for_group(self, address: ZenAddress) -> List[int]:
+    def query_scene_numbers_for_group(self, address: ZenAddress) -> list[int]:
         """Query which DALI scenes are associated with a given group number. Returns list of scene numbers."""
         response = self._send_basic(address.controller, self.CMD["QUERY_SCENE_NUMBERS_FOR_GROUP"], address.group())
         if response and len(response) == 2:
@@ -1188,7 +1188,7 @@ class ZenProtocol:
             return f"{response[0]}.{response[1]}.{response[2]}"
         return None
     
-    def query_control_gear_dali_addresses(self, controller: ZenController) -> List[ZenAddress]:
+    def query_control_gear_dali_addresses(self, controller: ZenController) -> list[ZenAddress]:
         """Query which DALI control gear addresses are present in the database. Returns a list of ZenAddress instances."""
         response = self._send_basic(controller, self.CMD["QUERY_CONTROL_GEAR_DALI_ADDRESSES"])
         if response and len(response) == 8:
@@ -1276,11 +1276,11 @@ class ZenProtocol:
             }
         return None
     
-    def dali_query_cg_type(self, address: ZenAddress) -> Optional[List[int]]:
+    def dali_query_cg_type(self, address: ZenAddress) -> Optional[list[int]]:
         """Query device type information for a DALI address (ECG).
             
         Returns:
-            Optional[List[int]]: List of device type numbers that the control gear belongs to.
+            Optional[list[int]]: List of device type numbers that the control gear belongs to.
                                 Returns empty list if device doesn't exist.
                                 Returns None if query fails.
         """
@@ -1403,7 +1403,7 @@ class ZenProtocol:
         """Return to the scheduled profile. Returns True if successful, else False."""
         return self.change_profile_number(controller, 0xFFFF) # See docs page 91, 0xFFFF returns to scheduled profile
 
-    def query_instance_groups(self, instance: ZenInstance) -> Optional[Tuple[int, int, int]]: # TODO: replace Tuple with dict
+    def query_instance_groups(self, instance: ZenInstance) -> Optional[tuple[int, int, int]]: # TODO: replace Tuple with dict
         """Query the group targets associated with a DALI instance.
             
         Returns:

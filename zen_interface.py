@@ -64,7 +64,7 @@ class ZenInterface:
                  listen_port: Optional[int] = None
                  ):
         self.protocol: ZenProtocol = ZenProtocol(logger=logger, narration=narration, unicast=unicast, listen_ip=listen_ip, listen_port=listen_port)
-        self.controllers: List[ZenController] = []
+        self.controllers: list[ZenController] = []
 
     # ============================
     # Setup / Start / Stop
@@ -180,7 +180,7 @@ class ZenInterface:
     # Abstraction layer commands
     # ============================ 
 
-    def get_profiles(self, controller: Optional[ZenController] = None) -> List[ZenProfile]:
+    def get_profiles(self, controller: Optional[ZenController] = None) -> list[ZenProfile]:
         """Return a list of all profiles."""
         profiles = []
         controllers = [controller] if controller else self.controllers
@@ -191,7 +191,7 @@ class ZenInterface:
                 profiles.append(profile)
         return profiles
 
-    def get_groups(self) -> List[ZenGroup]:
+    def get_groups(self) -> list[ZenGroup]:
         """Return a list of all groups."""
         groups = []
         for controller in self.controllers:
@@ -201,7 +201,7 @@ class ZenInterface:
                 groups.append(group)
         return groups
     
-    def get_lights(self) -> List[ZenLight]:
+    def get_lights(self) -> list[ZenLight]:
         """Return a list of all lights available."""
         lights = []
         for controller in self.controllers:
@@ -211,7 +211,7 @@ class ZenInterface:
                 lights.append(light)
         return lights
     
-    def get_buttons(self) -> List[ZenButton]:
+    def get_buttons(self) -> list[ZenButton]:
         """Return a list of all buttons available."""
         buttons = []
         for controller in self.controllers:
@@ -224,7 +224,7 @@ class ZenInterface:
                         buttons.append(button)
         return buttons
     
-    def get_motion_sensors(self) -> List[ZenMotionSensor]:
+    def get_motion_sensors(self) -> list[ZenMotionSensor]:
         """Return a list of all motion sensors available."""
         motion_sensors = []
         for controller in self.controllers:
@@ -237,7 +237,7 @@ class ZenInterface:
                         motion_sensors.append(motion_sensor)
         return motion_sensors
 
-    def get_system_variables(self, give_up_after: int = 10) -> List[ZenSystemVariable]:
+    def get_system_variables(self, give_up_after: int = 10) -> list[ZenSystemVariable]:
         """Return a list of all system variables. Will give up searching after give_up_after sequential failures."""
         sysvars = []
         failed_attempts = 0
