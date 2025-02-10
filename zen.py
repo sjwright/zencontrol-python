@@ -18,12 +18,12 @@ class Const:
     RESPONSE_TIMEOUT = 0.5
 
     # DALI limits
-    MAX_ECG = 64
-    MAX_ECD = 64
-    MAX_INSTANCE = 32
-    MAX_GROUP = 16
-    MAX_SCENE = 12
-    MAX_SYSVAR = 147
+    MAX_ECG = 64 # 0-63
+    MAX_ECD = 64 # 0-63
+    MAX_INSTANCE = 32 # 0-31
+    MAX_GROUP = 16 # 0-15
+    MAX_SCENE = 12 # 0-11
+    MAX_SYSVAR = 148 # 0-147
     MAX_LEVEL = 254 # 255 is mask value (i.e. no change)
     MIN_KELVIN = 1000
     MAX_KELVIN = 20000
@@ -824,6 +824,7 @@ class ZenProtocol:
             if self.narration: print(f"Event listener error: {e}")
             raise
         finally:
+            print(f"Event listener no longer listening!")
             if self.event_socket:
                 self.event_socket.close()
 
