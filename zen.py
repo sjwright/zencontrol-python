@@ -804,13 +804,9 @@ class ZenProtocol:
                         # 12 - 15 0xFFFFFF38 (Data) 1st - 4th byte (big endian).
                         # 16 0xFF Magnitude (int8) of –1 (10^–1)
                         if self.system_variable_change_callback:
-                            value = int.from_bytes(payload[0:4], byteorder='big', signed=True)
-
-                            # # Get magnitude as signed 8-bit integer, apply to value
-                            # magnitude = int.from_bytes([payload[4]], byteorder='big', signed=True)
-                            # value = value * (10 ** magnitude)
-
-                            # Raw callback
+                            raw_value = int.from_bytes(payload[0:4], byteorder='big', signed=True)
+                            magnitude = int.from_bytes([payload[4]], byteorder='big', signed=True)
+                            value = raw_value * (10 ** magnitude)
                             self.system_variable_change_callback(controller=controller, target=target, value=value, payload=payload)
 
                     case ZenEventType.COLOUR_CHANGE:

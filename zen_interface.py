@@ -137,7 +137,7 @@ class ZenInterface:
         self.protocol.stop_event_monitoring()
 
     # ============================
-    # ZenProtocol Event callbacks
+    # ZenProtocol callbacks
     # ============================ 
         
     def button_press_event(self, instance: ZenInstance, payload: bytes) -> None:
@@ -172,28 +172,6 @@ class ZenInterface:
 
     def profile_change_event(self, controller: ZenController, profile: int, payload: bytes) -> None:
         controller._event_received(profile=profile)
-
-    # ============================
-    # Factories (ugh)
-    # ============================ 
-    
-    # def new_profile(self, controller: ZenController, number: int) -> ZenProfile:
-    #     return ZenProfile(protocol=self.protocol, controller=controller, number=number)
-    
-    # def new_light(self, address: ZenAddress) -> ZenLight:
-    #     return ZenLight(protocol=self.protocol, address=address)
-    
-    # def new_group(self, address: ZenAddress) -> ZenGroup:
-    #     return ZenGroup(protocol=self.protocol, address=address)
-    
-    # def new_button(self, instance: ZenInstance) -> ZenButton:
-    #     return ZenButton(protocol=self.protocol, instance=instance)
-    
-    # def new_motion_sensor(self, instance: ZenInstance) -> ZenMotionSensor:
-    #     return ZenMotionSensor(protocol=self.protocol, instance=instance)
-    
-    # def new_system_variable(self, controller: ZenController, id: int) -> ZenSystemVariable:
-    #     return ZenSystemVariable(protocol=self.protocol, controller=controller, id=id)
     
     # ============================
     # Abstraction layer commands

@@ -1,4 +1,4 @@
-from zen import ZenProtocol, ZenController, ZenAddress, ZenInstance, ZenColour, ZenAddressType
+from zen import ZenProtocol, ZenController, ZenAddress, ZenInstance
 from typing import Optional
 import yaml
 import time
@@ -27,7 +27,9 @@ def colour_change_event(address: ZenAddress, colour: bytes, payload: bytes) -> N
     print(f"Colour Change Event - address {address.number} colour {colour}")
 def profile_change_event(controller: ZenController, profile: int, payload: bytes) -> None:
     print(f"Profile Change Event - controller {controller.name} profile {profile}")
-    
+def system_variable_change_event(controller: ZenController, target: int, value: int, payload: bytes) -> None:
+    print(f"System Variable Change Event - controller {controller.name} target {target} value {value}")
+
 # Start event monitoring
 tpi.set_callbacks(
     button_press_callback=button_press_event,
@@ -38,7 +40,8 @@ tpi.set_callbacks(
     scene_change_callback=scene_change_event,
     is_occupied_callback=is_occupied_event,
     colour_change_callback=colour_change_event,
-    profile_change_callback=profile_change_event
+    profile_change_callback=profile_change_event,
+    system_variable_change_callback=system_variable_change_event
 )
 tpi.start_event_monitoring()
 
