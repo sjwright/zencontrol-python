@@ -373,10 +373,10 @@ class ZenMQTTBridge:
         if light.colour and light.colour.type == ZenColourType.TC:
             new_state["color_mode"] = "color_temp"
             if light.colour.kelvin is not None:
-                new_state["color"] = self.kelvin_to_mireds(light.colour.kelvin)
+                new_state["color_temp"] = self.kelvin_to_mireds(light.colour.kelvin)
 
         self._publish_state(mqtt_topic, new_state)
-    
+        
     def _group_event(self, group: ZenGroup, scene: Optional[int] = None) -> None:
         print(f"Zen to HA: group {group} scene {scene}")
         mqtt_topic = group.client_data['mqtt_topic']
