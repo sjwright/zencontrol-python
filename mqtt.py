@@ -3,8 +3,8 @@ import time
 import json
 import yaml
 import re
-from typing import Optional, Any, Callable
-from zen import ZenProtocol, ZenController, ZenAddress, ZenInstance, ZenAddressType, ZenColour, ZenColourType, ZenProfile, ZenLight, ZenGroup, ZenButton, ZenMotionSensor, ZenSystemVariable
+from typing import Optional, Any
+from zen_interface import ZenInterface, ZenController, ZenColour, ZenColourType, ZenProfile, ZenLight, ZenGroup, ZenButton, ZenMotionSensor, ZenSystemVariable
 import paho.mqtt.client as mqtt
 from colorama import Fore, Back, Style
 import logging
@@ -55,7 +55,7 @@ class ZenMQTTBridge:
         self.config: dict[str, Any]
         self.discovery_prefix: str
         self.control: list[ZenController]
-        self.zen: ZenProtocol
+        self.zen: ZenInterface
         self.mqttc: mqtt.Client
         self.setup_started: bool = False
         self.sv_config: list[dict]
@@ -134,26 +134,23 @@ class ZenMQTTBridge:
         
         # Initialize Zen
         try:
-            self.zen = ZenProtocol(logger=self.logger, narration=False)
+            self.zen = ZenInterface(logger=self.logger, narration=False)
             self.control = []
             self.sv_config = []
             for config in self.config['zencontrol']:
-                # Define controller
-                ctrl = ZenController(
-                    protocol=self.zen,
+                ctrl = self.zen.add_controller(
                     name=config['name'],
                     label=config['label'],
                     host=config['host'],
                     port=config['port'],
                     mac=config['mac']
                 )
-                # Add to list
+                # Add to my own internal list
                 self.control.append(ctrl)
                 # Add system variables to list
                 for sv in config.get('system_variables', []):
                     sv['controller'] = ctrl
                     self.sv_config.append(sv)
-            self.zen.set_controllers(self.control)
         except Exception as e:
             self.logger.error(f"Failed to initialize Zen: {e}")
             raise
@@ -400,8 +397,8 @@ class ZenMQTTBridge:
         mqtt_topic = sensor.client_data['mqtt_topic']
         self._publish_state(mqtt_topic, "ON" if occupied else "OFF")
 
-    def _sysvar_event(self, system_variable: ZenSystemVariable, value:int, from_controller: bool) -> None:
-        print(f"System Variable Change Event - controller {system_variable.controller.name} system_variable {system_variable.id} value {value} from_controller {from_controller}")
+    def _sysvar_event(self, system_variable: ZenSystemVariable, value:int, changed: bool, by_me: bool) -> None:
+        print(f"System Variable Change Event - controller {system_variable.controller.name} system_variable {system_variable.id} value {value} changed {changed} by_me {by_me}")
         if 'mqtt_topic' in system_variable.client_data:
             match system_variable.client_data['component']:
                 case "switch":
@@ -438,8 +435,6 @@ class ZenMQTTBridge:
         lights = self.zen.get_lights()
         for light in lights:
             self._client_data_for_object(light, "light")
-            addr: ZenAddress = light.address
-            ctrl: ZenController = addr.controller
             mqtt_topic = light.client_data['mqtt_topic']
             config_dict = self.global_config | light.client_data['attributes'] | {
                 "name": light.label,
@@ -506,9 +501,6 @@ class ZenMQTTBridge:
         for sensor in sensors:
             self._client_data_for_object(sensor, "binary_sensor")
             sensor.hold_time = 5
-            inst: ZenInstance = sensor.instance
-            addr: ZenAddress = inst.address
-            ctrl: ZenController = addr.controller
             mqtt_topic = sensor.client_data['mqtt_topic']
             config_dict = self.global_config | sensor.client_data['attributes'] | {
                 "name": sensor.instance_label,
@@ -529,7 +521,7 @@ class ZenMQTTBridge:
         if not self.system_variables:
             for sv in self.sv_config:
                 ctrl: ZenController = sv['controller']
-                zsv = ZenSystemVariable(protocol=self.zen, controller=ctrl, id=sv['id'])
+                zsv = ctrl.get_sysvar(sv['id'])
                 attr = sv['attributes'] | {
                     "object_id": sv['object_id'],
                     "unique_id": f"{ctrl.name}_{sv['object_id']}"
@@ -570,12 +562,6 @@ class ZenMQTTBridge:
     # ================================
     # PUBLISH TO MQTT
     # ================================
-    
-    def _mqtt_topic_for_address(self, address: ZenAddress, component: str) -> str:
-        # Search through existing objects to find matching address
-        for obj in self.topic_object.values():
-            if hasattr(obj, 'address') and obj.address == address:
-                return obj.client_data['mqtt_topic']
     
     def _client_data_for_object(self, object: Any, component: str, attributes: dict = {}) -> dict:
         match object:
@@ -692,20 +678,21 @@ class ZenMQTTBridge:
         for ctrl in self.control:
             print(f"Connecting to Zen controller {ctrl.label} on {ctrl.host}:{ctrl.port}...")
             self.logger.info(f"Connecting to Zen controller {ctrl.label} on {ctrl.host}:{ctrl.port}...")
-            while not ctrl.ready():
+            while not ctrl.is_controller_ready():
                 print(f"Controller still starting up...")
                 time.sleep(Constants.STARTUP_POLL_DELAY)
             
         # Start event monitoring and MQTT services
-        self.zen.set_convenience_callbacks(
-            profile_callback=self._profile_event,
-            light_callback=self._light_event,
-            group_callback=self._group_event,
-            button_callback=self._button_event,
-            motion_callback=self._motion_event,
-            sysvar_callback=self._sysvar_event
+        self.zen.set_callbacks(
+            profile=self._profile_event,
+            group=self._group_event,
+            light=self._light_event,
+            button=self._button_event,
+            motion=self._motion_event,
+            sysvar=self._sysvar_event
         )
-        self.zen.start_event_monitoring()
+        self.zen.start()
+
         self.mqttc.loop_start()
 
         # Wait for retained topics to be received

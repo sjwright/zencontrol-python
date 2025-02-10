@@ -7,8 +7,7 @@ ctrl = ZenController(protocol=tpi, **config.get('zencontrol')[0])
 tpi.set_controllers([ctrl])
 
 
-# version = tpi.query_controller_version_number(ctrl)
-version = ctrl.version
+version = tpi.query_controller_version_number(ctrl)
 print(f"ZenController version: {version}")
 
 controller_label = tpi.query_controller_label(ctrl)
@@ -17,8 +16,7 @@ print(f"ZenController label: {controller_label}")
 controller_fitting_number = tpi.query_controller_fitting_number(ctrl)
 print(f"ZenController fitting number: {controller_fitting_number}")
 
-# startup_complete = tpi.query_controller_startup_complete(ctrl)
-startup_complete = ctrl.ready()
+startup_complete = tpi.query_controller_startup_complete(ctrl)
 print(f"ZenController startup complete: {startup_complete}")
 
 dali_ready = tpi.query_is_dali_ready(ctrl)
