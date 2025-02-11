@@ -29,7 +29,7 @@ class Constants:
     MQTT_RECONNECT_MAX_DELAY = 10
     
     # Logging
-    LOG_FILE = 'zenmqtt.log'
+    LOG_FILE = 'mqtt.log'
     LOG_MAX_BYTES = 5 * 1024 * 1024  # 5MB
     LOG_BACKUP_COUNT = 5
     
@@ -128,7 +128,7 @@ class ZenMQTTBridge:
                 if not isinstance(port, int) or port < 1 or port > 65535:
                     raise ValueError(f"Invalid port number in Zencontrol config {i}: {port}")
             
-        except Exception as e:
+        except ValueError as e:
             self.logger.error(f"Failed to load config file: {e}")
             raise
         
@@ -306,7 +306,7 @@ class ZenMQTTBridge:
         self.logger.info(f"Setting {sysvar.controller.name} system variable {sysvar.id} to {payload}")
         match sysvar.client_data['component']:
             case "switch":
-                sysvar.set_value(1 if payload == "ON" else 0)
+                sysvar.value = 1 if payload == "ON" else 0
             case "sensor":
                 return # Read only
             
@@ -679,7 +679,7 @@ class ZenMQTTBridge:
             print(f"Connecting to Zen controller {ctrl.label} on {ctrl.host}:{ctrl.port}...")
             self.logger.info(f"Connecting to Zen controller {ctrl.label} on {ctrl.host}:{ctrl.port}...")
             while not ctrl.is_controller_ready():
-                print(f"Controller still starting up...")
+                print(f"Controller {ctrl.label} still starting up...")
                 time.sleep(Constants.STARTUP_POLL_DELAY)
             
         # Start event monitoring and MQTT services
@@ -728,7 +728,7 @@ class ZenMQTTBridge:
 
     def stop(self) -> None:
         """Clean shutdown of the bridge"""
-        self.zen.stop_event_monitoring()
+        self.zen.stop()
         self.mqttc.loop_stop()
         self.mqttc.disconnect()
 

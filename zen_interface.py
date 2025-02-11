@@ -238,7 +238,7 @@ class ZenInterface:
         return motion_sensors
 
     def get_system_variables(self, give_up_after: int = 10) -> list[ZenSystemVariable]:
-        """Return a list of all system variables. Will give up searching after give_up_after sequential failures."""
+        """Return a list of all system variables. Variables must have a label. Searching will give_up_after [x] sequential IDs without a label."""
         sysvars = []
         failed_attempts = 0
         for controller in self.controllers:
@@ -275,12 +275,12 @@ class ZenController (SuperZenController):
             inst.filtering = filtering
             inst.version = None
             inst.mac_bytes = bytes.fromhex(inst.mac.replace(':', '')) # Convert MAC address to bytes once
-            inst.reset()
+            inst._reset()
             inst.interview()
         return cls._instances[name]
     def __repr__(self) -> str:
         return f"ZenController<{self.name}>"
-    def reset(self) -> None:
+    def _reset(self) -> None:
         self.label: Optional[str] = None
         self.version: Optional[int] = None
         self.profile: Optional[ZenProfile] = None
@@ -304,18 +304,18 @@ class ZenController (SuperZenController):
     def is_dali_ready(self) -> bool:
         return self.protocol.query_is_dali_ready(self)
     def switch_to_profile(self, profile: ZenProfile|int|str) -> bool:
+        zp = None
         if isinstance(profile, ZenProfile):
-            print(f"Switching to profile {profile.number} ({profile.label})")
-            return self.protocol.change_profile_number(self, profile.number)
-        elif isinstance(profile, int):
-            print(f"Switching to profile {profile}")
-            return self.protocol.change_profile_number(self, profile)
+            zp = profile
         elif isinstance(profile, str):
             for p in self.profiles:
-                if p.label == profile:
-                    print(f"Switching to profile {p.number} ({p.label})")
-                    return self.protocol.change_profile_number(self, p.number)
-            return False
+                if p.label == profile: zp = p
+        elif isinstance(profile, int):
+            for p in self.profiles:
+                if p.number == profile: zp = p
+        if isinstance(zp, ZenProfile):
+            print(f"Switching to profile {zp}")
+            return self.protocol.change_profile_number(self, zp.number)
         else:
             return False
     def return_to_scheduled_profile(self) -> bool:
