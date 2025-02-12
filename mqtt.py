@@ -276,24 +276,23 @@ class ZenMQTTBridge:
             payload = msg.payload.decode('UTF-8')
 
             # Match on object type
-            match target_object:
-                case ZenController():
-                    ctrl: ZenController = target_object
-                    self._apply_mqtt_payload_to_zencontroller(ctrl, payload)
-                case ZenGroup():
-                    group: ZenGroup = target_object
-                    self._apply_mqtt_payload_to_zengroup(group, payload)
-                case ZenLight():
-                    light: ZenLight = target_object
-                    self._apply_mqtt_payload_to_zenlight(light, json.loads(payload))
-                case ZenSystemVariable():
-                    sysvar: ZenSystemVariable = target_object
-                    self._apply_mqtt_payload_to_sysvar(sysvar, payload)
-                case ZenMotionSensor():
-                    return # Read only
-                case _:
-                    print(f"Unknown object type found in self.topic_object: {type(target_object)}")
-                    raise ValueError(f"Unknown object type found in self.topic_object: {type(target_object)}")
+            if isinstance(target_object, ZenController):
+                ctrl = target_object
+                self._apply_mqtt_payload_to_zencontroller(ctrl, payload)
+            elif isinstance(target_object, ZenGroup):
+                group = target_object
+                self._apply_mqtt_payload_to_zengroup(group, payload)
+            elif isinstance(target_object, ZenLight):
+                light = target_object
+                self._apply_mqtt_payload_to_zenlight(light, json.loads(payload))
+            elif isinstance(target_object, ZenSystemVariable):
+                sysvar = target_object
+                self._apply_mqtt_payload_to_sysvar(sysvar, payload)
+            elif isinstance(target_object, ZenMotionSensor):
+                return  # Read only
+            else:
+                print(f"Unknown object type found in self.topic_object: {type(target_object)}")
+                raise ValueError(f"Unknown object type found in self.topic_object: {type(target_object)}")
             
         except json.JSONDecodeError as e:
             self.logger.error(f"Invalid JSON payload: {e}")
@@ -557,51 +556,51 @@ class ZenMQTTBridge:
     def delete_retained_topics(self) -> None:
         for topic in self.config_topics_to_delete:
             self.mqttc.publish(topic, None, retain=True)
-            print(Fore.RED + f"•• MQTT DELETED •• " + Style.DIM + f"{topic}" + Style.RESET_ALL)
+            print(Fore.RED + f"•• MQTT DELETED •• " + Style.DIM + f"{topic}" + Style.RESET_ALL)
 
     # ================================
     # PUBLISH TO MQTT
     # ================================
     
     def _client_data_for_object(self, object: Any, component: str, attributes: dict = {}) -> dict:
-        match object:
-            case ZenController():
-                ctrl: ZenController = object
-                serial = ctrl.mac
-                mqtt_target = f"profile"
-            case ZenGroup(): # ZenGroup inherits from ZenLight, so needs to be before ZenLight
-                group: ZenGroup = object
-                addr = group.address
-                ctrl = addr.controller
-                serial = ""
-                mqtt_target = f"group{addr.number}"
-            case ZenLight():
-                light: ZenLight = object
-                addr = light.address
-                ctrl = addr.controller
-                serial = light.serial
-                mqtt_target = f"ecg{addr.number}"
-            case ZenButton():
-                button: ZenButton = object
-                inst = button.instance
-                addr = inst.address
-                ctrl = addr.controller
-                serial = button.serial
-                mqtt_target = f"ecd{addr.number}_inst{inst.number}"
-            case ZenMotionSensor():
-                sensor: ZenMotionSensor = object
-                inst = sensor.instance
-                addr = inst.address
-                ctrl = addr.controller
-                serial = sensor.serial
-                mqtt_target = f"ecd{addr.number}_inst{inst.number}"
-            case ZenSystemVariable():
-                sysvar: ZenSystemVariable = object
-                ctrl = sysvar.controller
-                serial = component
-                mqtt_target = f"sv{sysvar.id}"
-            case _:
-                raise ValueError(f"Unknown object type: {type(object)}")
+        if isinstance(object, ZenController):
+            ctrl = object
+            serial = ctrl.mac
+            mqtt_target = "profile"
+        elif isinstance(object, ZenGroup):  # ZenGroup inherits from ZenLight, so needs to be before ZenLight
+            group = object
+            addr = group.address
+            ctrl = addr.controller
+            serial = ""
+            mqtt_target = f"group{addr.number}"
+        elif isinstance(object, ZenLight):
+            light = object
+            addr = light.address
+            ctrl = addr.controller
+            serial = light.serial
+            mqtt_target = f"ecg{addr.number}"
+        elif isinstance(object, ZenButton):
+            button = object
+            inst = button.instance
+            addr = inst.address
+            ctrl = addr.controller
+            serial = button.serial
+            mqtt_target = f"ecd{addr.number}_inst{inst.number}"
+        elif isinstance(object, ZenMotionSensor):
+            sensor = object
+            inst = sensor.instance
+            addr = inst.address
+            ctrl = addr.controller
+            serial = sensor.serial
+            mqtt_target = f"ecd{addr.number}_inst{inst.number}"
+        elif isinstance(object, ZenSystemVariable):
+            sysvar = object
+            ctrl = sysvar.controller
+            serial = component
+            mqtt_target = f"sv{sysvar.id}"
+        else:
+            raise ValueError(f"Unknown object type: {type(object)}")
+
         object.client_data = object.client_data | {
             "component": component,
             "attributes": attributes | {

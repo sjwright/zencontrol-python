@@ -1067,7 +1067,7 @@ class ZenProtocol:
                     instances.append(ZenInstance(
                         address=address,
                         number=response[i], # first byte
-                        type=ZenInstanceType(response[i+1]) if response[i+1] in ZenInstanceType else None, # second byte
+                        type=ZenInstanceType(response[i+1]) if response[i+1] in ZenInstanceType._value2member_map_ else None, # second byte
                         active=bool(response[i+2] & 0x02), # third byte, second bit
                         error=bool(response[i+2] & 0x01), # third byte, first bit
                     ))
