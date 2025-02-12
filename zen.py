@@ -726,7 +726,7 @@ class ZenProtocol:
                 macbytes = bytes.fromhex(data[2:8].hex())
                 mac_address = ':'.join(f'{b:02x}' for b in data[2:8])
                 target = int.from_bytes(data[8:10], byteorder='big')
-                event_type = ZenEventType(data[10]) if data[10] in ZenEventType else None
+                event_type = ZenEventType(data[10]) if data[10] in ZenEventType._value2member_map_ else None
                 payload_len = data[11]
                 payload = data[12:-1]
                 received_checksum = data[-1]
