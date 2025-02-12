@@ -5,7 +5,8 @@ import yaml
 import re
 from typing import Optional, Any
 from zen_interface import ZenInterface, ZenController, ZenColour, ZenColourType, ZenProfile, ZenLight, ZenGroup, ZenButton, ZenMotionSensor, ZenSystemVariable
-import paho.mqtt.client as mqtt
+import paho.mqtt
+import paho.mqtt.client
 from colorama import Fore, Back, Style
 import logging
 from logging.handlers import RotatingFileHandler
@@ -56,7 +57,7 @@ class ZenMQTTBridge:
         self.discovery_prefix: str
         self.control: list[ZenController]
         self.zen: ZenInterface
-        self.mqttc: mqtt.Client
+        self.mqttc: paho.mqtt.Client
         self.setup_started: bool = False
         self.sv_config: list[dict]
         self.system_variables: list[ZenSystemVariable] = []
@@ -161,7 +162,10 @@ class ZenMQTTBridge:
 
         # Initialize MQTT
         try:
-            self.mqttc = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+            if paho.mqtt.__version__[0] > '1':
+                self.mqttc = paho.mqtt.client.Client(paho.mqtt.client.CallbackAPIVersion.VERSION1)
+            else:
+                self.mqttc = paho.mqtt.client.Client()
             self.mqttc.on_connect = self._on_mqtt_connect
             self.mqttc.on_message = self._on_mqtt_message
             self.mqttc.on_disconnect = self._on_mqtt_disconnect
@@ -177,7 +181,7 @@ class ZenMQTTBridge:
             raise
 
 
-    def _on_mqtt_disconnect(self, client: mqtt.Client, userdata: Any, 
+    def _on_mqtt_disconnect(self, client: paho.mqtt.client, userdata: Any, 
                           rc: int, properties: Any = None) -> None:
         """Handle MQTT disconnection events."""
         self.logger.warning(f"Disconnected from MQTT broker with code: {rc}")
@@ -205,8 +209,7 @@ class ZenMQTTBridge:
         # ))
         # self.logger.addHandler(console_handler)
 
-    def _on_mqtt_connect(self, client: mqtt.Client, userdata: Any, flags: dict, 
-                        reason_code: int, properties: Any) -> None:
+    def _on_mqtt_connect(self, client: paho.mqtt.client, userdata: Any, flags: dict, reason_code: int) -> None:
         """Called when the client connects or reconnects to the MQTT broker.
 
         Args:
@@ -236,7 +239,7 @@ class ZenMQTTBridge:
     #  ---> SEND TO ZEN
     # ================================
 
-    def _on_mqtt_message(self, client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage) -> None:
+    def _on_mqtt_message(self, client: paho.mqtt.client, userdata: Any, msg: paho.mqtt.client.MQTTMessage) -> None:
         """Handle incoming MQTT messages with improved error handling."""
         try:
 
