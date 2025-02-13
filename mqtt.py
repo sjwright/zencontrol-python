@@ -4,7 +4,7 @@ import json
 import yaml
 import re
 from typing import Optional, Any
-from zen_interface import ZenInterface, ZenController, ZenColour, ZenColourType, ZenProfile, ZenLight, ZenGroup, ZenButton, ZenMotionSensor, ZenSystemVariable
+from zen_interface import ZenInterface, ZenTimeoutError, ZenController, ZenColour, ZenColourType, ZenProfile, ZenLight, ZenGroup, ZenButton, ZenMotionSensor, ZenSystemVariable
 import paho.mqtt
 import paho.mqtt.client
 from colorama import Fore, Back, Style
@@ -699,11 +699,26 @@ class ZenMQTTBridge:
         
         # Wait for Zen controllers to be ready
         for ctrl in self.control:
-            print(f"Connecting to Zen controller {ctrl.label} on {ctrl.host}:{ctrl.port}...")
-            self.logger.info(f"Connecting to Zen controller {ctrl.label} on {ctrl.host}:{ctrl.port}...")
-            while not ctrl.is_controller_ready():
-                print(f"Controller {ctrl.label} still starting up...")
-                time.sleep(Constants.STARTUP_POLL_DELAY)
+            print(f"Connecting to Zen controller {ctrl.name} on {ctrl.host}:{ctrl.port}...")
+            self.logger.info(f"Connecting to Zen controller {ctrl.name} on {ctrl.host}:{ctrl.port}...")
+
+            try:
+                # ctrl.is_controller_ready() returns True when ready, False when starting, None when connection failed
+                
+                while not ctrl.is_controller_ready():
+                    print(f"Controller {ctrl.label} still starting up...")
+                    time.sleep(Constants.STARTUP_POLL_DELAY)
+            
+            except ZenTimeoutError as e:
+                self.logger.fatal(f"Aborting - Zen controller {ctrl.name} cannot be reached.")
+                return # Don't reach the run loop
+                
+            except Exception as e:
+                self.logger.fatal(f"Aborting - Error connecting to Zen controller {ctrl.name}: {e}")
+                return # Don't reach the run loop
+
+            # It's ready, interview it.
+            ctrl.interview()
         
         # Begin listening for MQTT messages
         self.mqttc.loop_start()

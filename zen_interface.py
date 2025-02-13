@@ -1,7 +1,7 @@
 import time
 import logging
 import inspect
-from zen import ZenProtocol, ZenController as SuperZenController, ZenAddress, ZenInstance, ZenAddressType, ZenColour, ZenColourType, ZenInstanceType
+from zen import ZenProtocol, ZenController as SuperZenController, ZenAddress, ZenInstance, ZenAddressType, ZenColour, ZenColourType, ZenInstanceType, ZenTimeoutError
 from typing import Optional, List, Callable
 from threading import Timer
 class Const:
@@ -305,10 +305,8 @@ class ZenController (SuperZenController):
             inst.port = port
             inst.mac = mac
             inst.filtering = filtering
-            inst.version = None
             inst.mac_bytes = bytes.fromhex(inst.mac.replace(':', '')) # Convert MAC address to bytes once
             inst._reset()
-            inst.interview()
         return cls._instances[name]
     def __repr__(self) -> str:
         return f"ZenController<{self.name}>"
