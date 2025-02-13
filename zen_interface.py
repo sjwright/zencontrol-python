@@ -26,14 +26,6 @@ class Const:
     RGBW_CHANNELS = 4
     RGBWW_CHANNELS = 5
 
-class _callbacks:
-    profile: Optional[Callable] = None
-    group: Optional[Callable] = None
-    light: Optional[Callable] = None
-    button: Optional[Callable] = None
-    motion: Optional[Callable] = None
-    sysvar: Optional[Callable] = None
-
 class ZenController:
     pass
 
@@ -55,6 +47,27 @@ class ZenMotionSensor:
 class ZenSystemVariable:
     pass
 
+
+CallbackOnConnect = Callable[[], None]
+CallbackOnDisconnect = Callable[[], None]
+CallbackProfileChange = Callable[[ZenProfile], None]
+CallbackGroupChange = Callable[[ZenGroup, int], None]
+CallbackLightChange = Callable[[ZenLight, int, ZenColour, int], None]
+CallbackButtonPress = Callable[[ZenButton, bool], None]
+CallbackMotionEvent = Callable[[ZenMotionSensor, bool], None]
+CallbackSystemVariableChange = Callable[[ZenSystemVariable, int, bool, bool], None]
+
+class _callbacks:
+    on_connect: Optional[CallbackOnConnect] = None
+    on_disconnect: Optional[CallbackOnDisconnect] = None
+    profile_change: Optional[CallbackProfileChange] = None
+    group_change: Optional[CallbackGroupChange] = None
+    light_change: Optional[CallbackLightChange] = None
+    button_press: Optional[CallbackButtonPress] = None
+    motion_event: Optional[CallbackMotionEvent] = None
+    system_variable_change: Optional[CallbackSystemVariableChange] = None
+
+
 class ZenInterface:
     def __init__(self,
                  logger: logging.Logger=None,
@@ -66,6 +79,62 @@ class ZenInterface:
         self.protocol: ZenProtocol = ZenProtocol(logger=logger, narration=narration, unicast=unicast, listen_ip=listen_ip, listen_port=listen_port)
         self.controllers: list[ZenController] = []
 
+    @property
+    def on_connect(self) -> CallbackOnConnect | None:
+        return _callbacks.on_connect
+    @on_connect.setter
+    def on_connect(self, func: CallbackOnConnect | None) -> None:
+        _callbacks.on_connect = func
+
+    @property
+    def on_disconnect(self) -> CallbackOnDisconnect | None:
+        return _callbacks.on_disconnect
+    @on_disconnect.setter
+    def on_disconnect(self, func: CallbackOnDisconnect | None) -> None:
+        _callbacks.on_disconnect = func
+
+    @property
+    def profile_change(self) -> CallbackProfileChange | None:
+        return _callbacks.profile_change
+    @profile_change.setter
+    def profile_change(self, func: CallbackProfileChange | None) -> None:
+        _callbacks.profile_change = func
+
+    @property
+    def group_change(self) -> CallbackGroupChange | None:
+        return _callbacks.group_change
+    @group_change.setter
+    def group_change(self, func: CallbackGroupChange | None) -> None:
+        _callbacks.group_change = func
+
+    @property
+    def light_change(self) -> CallbackLightChange | None:
+        return _callbacks.light_change
+    @light_change.setter
+    def light_change(self, func: CallbackLightChange | None) -> None:
+        _callbacks.light_change = func
+
+    @property
+    def button_press(self) -> CallbackButtonPress | None:
+        return _callbacks.button_press
+    @button_press.setter
+    def button_press(self, func: CallbackButtonPress | None) -> None:
+        _callbacks.button_press = func
+    
+    @property
+    def motion_event(self) -> CallbackMotionEvent | None:
+        return _callbacks.motion_event
+    @motion_event.setter
+    def motion_event(self, func: CallbackMotionEvent | None) -> None:
+        _callbacks.motion_event = func
+    
+    @property
+    def system_variable_change(self) -> CallbackSystemVariableChange | None:
+        return _callbacks.system_variable_change
+    @system_variable_change.setter
+    def system_variable_change(self, func: CallbackSystemVariableChange | None) -> None:
+        _callbacks.system_variable_change = func
+
     # ============================
     # Setup / Start / Stop
     # ============================
@@ -73,51 +142,10 @@ class ZenInterface:
     def add_controller(self, name: str, label: str, host: str, port: int = 5108, mac: Optional[str] = None, filtering: bool = False) -> ZenController:
         controller = ZenController(protocol=self.protocol, name=name, label=label, host=host, port=port, mac=mac, filtering=filtering)
         self.controllers.append(controller)
+        self.protocol.set_controllers(self.controllers)
         return controller
-    
-    def set_callbacks(self,
-                      profile: Optional[Callable] = None,
-                      group: Optional[Callable] = None,
-                      light: Optional[Callable] = None,
-                      button: Optional[Callable] = None,
-                      motion: Optional[Callable] = None,
-                      sysvar: Optional[Callable] = None
-                      ) -> None:
-        # Verify callback signatures match expected
-        if profile:
-            sig = inspect.signature(profile)
-            if list(sig.parameters.keys()) != ['profile']:
-                raise TypeError("profile callback must accept 'profile' parameter")
-        if group:
-            sig = inspect.signature(group)
-            if list(sig.parameters.keys()) != ['group', 'scene']:
-                raise TypeError("group callback must accept 'group' and 'scene' parameters")
-        if light:
-            sig = inspect.signature(light)
-            if list(sig.parameters.keys()) != ['light', 'level', 'colour', 'scene']:
-                raise TypeError("light callback must accept 'light', 'level', 'colour', and 'scene' parameters")
-        if button:
-            sig = inspect.signature(button)
-            if list(sig.parameters.keys()) != ['button', 'held']:
-                raise TypeError("button callback must accept 'button' and 'held' parameters")
-        if motion:
-            sig = inspect.signature(motion)
-            if list(sig.parameters.keys()) != ['sensor', 'occupied']:
-                raise TypeError("motion callback must accept 'sensor' and 'occupied' parameters")
-        if sysvar:
-            sig = inspect.signature(sysvar)
-            if list(sig.parameters.keys()) != ['system_variable', 'value', 'changed', 'by_me']:
-                raise TypeError("sysvar callback must accept 'system_variable', 'value', 'changed', and 'by_me' parameters")
-        # Update callbacks
-        _callbacks.profile = profile
-        _callbacks.group = group
-        _callbacks.light = light
-        _callbacks.button = button
-        _callbacks.motion = motion
-        _callbacks.sysvar = sysvar
 
     def start(self) -> None:
-        self.protocol.set_controllers(self.controllers)
         self.protocol.set_callbacks(
             button_press_callback = self.button_press_event,
             button_hold_callback = self.button_hold_event,
@@ -131,9 +159,13 @@ class ZenInterface:
             profile_change_callback = self.profile_change_event
         )
         self.protocol.start_event_monitoring()
+        if callable(_callbacks.on_connect):
+            _callbacks.on_connect()
     
     def stop(self) -> None:
         self.protocol.stop_event_monitoring()
+        if callable(_callbacks.on_disconnect):
+            _callbacks.on_disconnect()
 
     # ============================
     # ZenProtocol callbacks
@@ -295,8 +327,8 @@ class ZenController (SuperZenController):
     def _event_received(self, profile: Optional[int] = None):
         if profile is not None:
             self.profile = ZenProfile(protocol=self.protocol, controller=self, number=profile)
-            if callable(self.protocol.profile_callback):
-                self.protocol.profile_callback(profile=self.profile)
+            if callable(_callbacks.profile_change):
+                _callbacks.profile_change(profile=self.profile)
     def get_sysvar(self, id: int) -> ZenSystemVariable:
         return ZenSystemVariable(protocol=self.protocol, controller=self, id=id)
     def is_controller_ready(self) -> bool:
@@ -449,16 +481,15 @@ class ZenLight:
             scene_changed = True
         if type(self) is ZenLight:
             if level_changed or colour_changed or scene_changed:
-                if callable(_callbacks.light):
-                    _callbacks.light(light=self,
+                if callable(_callbacks.light_change):
+                    _callbacks.light_change(light=self,
                                     level=self.level if level_changed else None,
                                     colour=self.colour if colour_changed else None,
                                     scene=self.current_scene if scene_changed else None)
         if type(self) is ZenGroup:
             if scene_changed:
-                if callable(_callbacks.group):
-                    _callbacks.group(group=self,
-                                         scene=self.current_scene if scene_changed else None)
+                if callable(_callbacks.group_change):
+                    _callbacks.group_change(group=self, scene=self.current_scene if scene_changed else None)
     def supports_colour(self, colour: ZenColourType|ZenColour) -> bool:
         # colour_type = colour if type(colour) == ZenColourType else colour.type
         if type(colour) == ZenColour:
@@ -478,16 +509,16 @@ class ZenLight:
     #   These methods send commands to the controller. The controller sends events back.
     #   The events update the internal state.
     # -----------------------------------------------------------------------------------------
-    def on(self, fade: bool = True):
+    def on(self, fade: bool = True) -> bool:
         if not fade: self.protocol.dali_enable_dapc_sequence(self.address)
         return self.protocol.dali_go_to_last_active_level(self.address)
-    def off(self, fade: bool = True):
+    def off(self, fade: bool = True) -> bool:
         if fade: return self.protocol.dali_arc_level(self.address, 0)
         else: return self.protocol.dali_off(self.address)
-    def set_scene(self, scene: int, fade: bool = True):
+    def set_scene(self, scene: int, fade: bool = True) -> bool:
         if not fade: self.protocol.dali_enable_dapc_sequence(self.address)
         return self.protocol.dali_scene(self.address, scene)
-    def set(self, level: int = 255, colour: Optional[ZenColour] = None, fade: bool = True):
+    def set(self, level: int = 255, colour: Optional[ZenColour] = None, fade: bool = True) -> bool:
         if (self.supports_colour(colour)):
             if not fade: self.protocol.dali_enable_dapc_sequence(self.address)
             return self.protocol.dali_colour(self.address, colour, level)
@@ -496,29 +527,29 @@ class ZenLight:
                 return self.protocol.dali_arc_level(self.address, level)
             else:
                 return self.protocol.dali_custom_fade(self.address, level, 0)
-    def dali_inhibit(self, inhibit: bool = True):
+    def dali_inhibit(self, inhibit: bool = True) -> bool:
         return self.protocol.dali_inhibit(self.address, inhibit)
-    def dali_on_step_up(self):
+    def dali_on_step_up(self) -> bool:
         return self.protocol.dali_on_step_up(self.address)
-    def dali_step_down_off(self):
+    def dali_step_down_off(self) -> bool:
         return self.protocol.dali_step_down_off(self.address)
-    def dali_up(self):
+    def dali_up(self) -> bool:
         return self.protocol.dali_up(self.address)
-    def dali_down(self):
+    def dali_down(self) -> bool:
         return self.protocol.dali_down(self.address)
-    def dali_recall_max(self):
+    def dali_recall_max(self) -> bool:
         return self.protocol.dali_recall_max(self.address)
-    def dali_recall_min(self):
+    def dali_recall_min(self) -> bool:
         return self.protocol.dali_recall_min(self.address)
-    def dali_go_to_last_active_level(self):
+    def dali_go_to_last_active_level(self) -> bool:
         return self.protocol.dali_go_to_last_active_level(self.address)
-    def dali_off(self):
+    def dali_off(self) -> bool:
         return self.protocol.dali_off(self.address)
-    def dali_enable_dapc_sequence(self):
+    def dali_enable_dapc_sequence(self) -> bool:
         return self.protocol.dali_enable_dapc_sequence(self.address)
-    def dali_custom_fade(self, level: int, duration: int):
+    def dali_custom_fade(self, level: int, duration: int) -> bool:
         return self.protocol.dali_custom_fade(self.address, level, duration)
-    def dali_stop_fade(self):
+    def dali_stop_fade(self) -> bool:
         return self.protocol.dali_stop_fade(self.address)
         
 
@@ -563,7 +594,7 @@ class ZenGroup(ZenLight):
     #   These methods send commands to the controller. The controller sends events back.
     #   The events update the internal state.
     # -----------------------------------------------------------------------------------------
-    def set_scene(self, scene: int|str, fade: bool = True):
+    def set_scene(self, scene: int|str, fade: bool = True) -> bool:
         if type(scene) == str:
             scene = next((s["number"] for s in self.scenes if s["label"] == scene), None)
         return super().set_scene(scene, fade)
@@ -599,8 +630,8 @@ class ZenButton:
         self.instance_label = self.protocol.query_dali_instance_label(inst, generic_if_none=True)
         return True
     def _event_received(self, held: bool = False):
-        if callable(_callbacks.button):
-            _callbacks.button(button=self, held=held)
+        if callable(_callbacks.button_press):
+            _callbacks.button_press(button=self, held=held)
 
 
 class ZenMotionSensor:
@@ -668,15 +699,15 @@ class ZenMotionSensor:
             self._occupied = True
             # If we're going from False to True
             if old_value is False:
-                if callable(_callbacks.motion):
-                    _callbacks.motion(sensor=self, occupied=True)
+                if callable(_callbacks.motion_event):
+                    _callbacks.motion_event(sensor=self, occupied=True)
         else:
             self._occupied = False
             self.last_detect = None
             # If we're going from True to False
             if old_value is True:
-                if callable(_callbacks.motion):
-                    _callbacks.motion(sensor=self, occupied=False)
+                if callable(_callbacks.motion_event):
+                    _callbacks.motion_event(sensor=self, occupied=False)
 
 
 class ZenSystemVariable:
@@ -714,8 +745,8 @@ class ZenSystemVariable:
         self._value = new_value
         self._future_value = None
         if changed:
-            if callable(_callbacks.sysvar):
-                _callbacks.sysvar(system_variable=self,
+            if callable(_callbacks.system_variable_change):
+                _callbacks.system_variable_change(system_variable=self,
                                   value=self._value,
                                   changed=changed,
                                   by_me=by_me)

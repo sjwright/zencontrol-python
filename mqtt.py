@@ -52,15 +52,20 @@ class ZenMQTTBridge:
     """
     
     def __init__(self, config_path: str = "config.yaml") -> None:
-        self.logger: logging.Logger
         self.config: dict[str, Any]
+        with open(config_path) as f:
+            self.config = yaml.safe_load(f)
+        
+        self.logger: logging.Logger
         self.discovery_prefix: str
         self.control: list[ZenController]
         self.zen: ZenInterface
-        self.mqttc: paho.mqtt.Client
+        self.mqttc: paho.mqtt.client.Client
         self.setup_started: bool = False
-        self.sv_config: list[dict]
+        self.setup_complete: bool = False
         self.system_variables: list[ZenSystemVariable] = []
+        self.control: list[ZenController] = []
+        self.sv_config: list[dict] = []
 
         self.config_topics_to_delete: list[str] = [] # List of topics to delete after completing setup
         self.topic_object: dict[str, Any] = {} # Map of topics to objects
@@ -73,15 +78,8 @@ class ZenMQTTBridge:
             }
         }
         
-        # Setup logging
-        self.setup_logging()
-        self.logger.setLevel(logging.DEBUG)
-        self.logger.info("==================================== Starting ZenMQTTBridge ====================================")
-        
-        # Load configuration
+    def setup_config(self) -> None:
         try:
-            with open(config_path) as f:
-                self.config = yaml.safe_load(f)
             
             # Improved config validation
             required_sections = ['homeassistant', 'mqtt', 'zencontrol']
@@ -132,12 +130,39 @@ class ZenMQTTBridge:
         except ValueError as e:
             self.logger.error(f"Failed to load config file: {e}")
             raise
-        
-        # Initialize Zen
+
+    def setup_logging(self) -> None:
+        """Configure logging with both file and console handlers."""
+        self.logger = logging.getLogger('ZenMQTTBridge')
+        self.logger.setLevel(logging.INFO)
+
+        # File handler
+        file_handler = RotatingFileHandler(
+            Constants.LOG_FILE,
+            maxBytes=Constants.LOG_MAX_BYTES,
+            backupCount=Constants.LOG_BACKUP_COUNT
+        )
+        file_handler.setFormatter(logging.Formatter(fmt="%(asctime)s\t%(levelname)s\t%(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
+        self.logger.addHandler(file_handler)
+
+        # Console handler
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(logging.Formatter(
+            '%(levelname)s: %(message)s'
+        ))
+        self.logger.addHandler(console_handler)
+
+    def setup_zen(self) -> None:
         try:
-            self.zen = ZenInterface(logger=self.logger, narration=False)
-            self.control = []
-            self.sv_config = []
+            self.zen: ZenInterface = ZenInterface(logger=self.logger, narration=True)
+            self.zen.on_connect = self._zen_on_connect
+            self.zen.on_disconnect = self._zen_on_disconnect
+            self.zen.profile_change = self._zen_profile_change
+            self.zen.group_change = self._zen_group_change
+            self.zen.light_change = self._zen_light_change
+            self.zen.button_press = self._zen_button_press
+            self.zen.motion_event = self._zen_motion_event
+            self.zen.system_variable_change = self._zen_system_variable_change
             for config in self.config['zencontrol']:
                 ctrl = self.zen.add_controller(
                     name=config['name'],
@@ -155,21 +180,17 @@ class ZenMQTTBridge:
         except Exception as e:
             self.logger.error(f"Failed to initialize Zen: {e}")
             raise
-        
-        
-        self.discovery_prefix = self.config['homeassistant']['discovery_prefix']
-        
-
-        # Initialize MQTT
+    
+    def setup_mqtt(self) -> None:
         try:
+            self.discovery_prefix = self.config['homeassistant']['discovery_prefix']
             if paho.mqtt.__version__[0] > '1':
                 self.mqttc = paho.mqtt.client.Client(paho.mqtt.client.CallbackAPIVersion.VERSION1)
             else:
                 self.mqttc = paho.mqtt.client.Client()
-            self.mqttc.on_connect = self._on_mqtt_connect
-            self.mqttc.on_message = self._on_mqtt_message
-            self.mqttc.on_disconnect = self._on_mqtt_disconnect
-            
+            self.mqttc.on_connect = self._mqtt_on_connect
+            self.mqttc.on_message = self._mqtt_on_message
+            self.mqttc.on_disconnect = self._mqtt_on_disconnect
             mqtt_config = self.config["mqtt"]
             for ctrl in self.control:
                 self.mqttc.will_set(topic=f"{ctrl.name}/availability", payload="offline", retain=True)
@@ -180,36 +201,21 @@ class ZenMQTTBridge:
             self.logger.error(f"Failed to connect to MQTT broker: {e}")
             raise
 
+    # ================================
+    # Zen events
+    # ================================
+    
+    def _zen_on_connect(self) -> None:
+        self.logger.info("Connected to Zen controllers")
 
-    def _on_mqtt_disconnect(self, client: paho.mqtt.client, userdata: Any, 
-                          rc: int, properties: Any = None) -> None:
-        """Handle MQTT disconnection events."""
-        self.logger.warning(f"Disconnected from MQTT broker with code: {rc}")
-        if rc != 0:
-            self.logger.info("Attempting to reconnect to MQTT broker")
+    def _zen_on_disconnect(self) -> None:
+        self.logger.info("Disconnected from Zen controllers")
 
-    def setup_logging(self) -> None:
-        """Configure logging with both file and console handlers."""
-        self.logger = logging.getLogger('ZenMQTTBridge')
-        self.logger.setLevel(logging.INFO)
+    # ================================
+    # MQTT events
+    # ================================
 
-        # File handler
-        file_handler = RotatingFileHandler(
-            Constants.LOG_FILE,
-            maxBytes=Constants.LOG_MAX_BYTES,
-            backupCount=Constants.LOG_BACKUP_COUNT
-        )
-        file_handler.setFormatter(logging.Formatter(fmt="%(asctime)s\t%(levelname)s\t%(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
-        self.logger.addHandler(file_handler)
-
-        # Console handler
-        # console_handler = logging.StreamHandler()
-        # console_handler.setFormatter(logging.Formatter(
-        #     '%(levelname)s: %(message)s'
-        # ))
-        # self.logger.addHandler(console_handler)
-
-    def _on_mqtt_connect(self, client: paho.mqtt.client, userdata: Any, flags: dict, reason_code: int) -> None:
+    def _mqtt_on_connect(self, client: paho.mqtt.client, userdata: Any, flags: dict, reason_code: int) -> None:
         """Called when the client connects or reconnects to the MQTT broker.
 
         Args:
@@ -234,12 +240,19 @@ class ZenMQTTBridge:
         else:
             self.logger.error(f"Failed to connect to MQTT broker with result code {reason_code}")
 
+    def _mqtt_on_disconnect(self, client: paho.mqtt.client, userdata: Any, 
+                          rc: int, properties: Any = None) -> None:
+        """Handle MQTT disconnection events."""
+        self.logger.warning(f"Disconnected from MQTT broker with code: {rc}")
+        if rc != 0:
+            self.logger.info("Attempting to reconnect to MQTT broker")
+
     # ================================
     # RECEIVED FROM HOME ASSISTANT
     #  ---> SEND TO ZEN
     # ================================
 
-    def _on_mqtt_message(self, client: paho.mqtt.client, userdata: Any, msg: paho.mqtt.client.MQTTMessage) -> None:
+    def _mqtt_on_message(self, client: paho.mqtt.client, userdata: Any, msg: paho.mqtt.client.MQTTMessage) -> None:
         """Handle incoming MQTT messages with improved error handling."""
         try:
 
@@ -272,7 +285,12 @@ class ZenMQTTBridge:
 
             # If we don't have an object, ignore the message
             if not target_object:
-                self.logger.debug(f"No matching object found for topic {base_topic}")
+                self.logger.debug(f"No matching object found for {base_topic}")
+                return
+            
+            # If setup is not complete, ignore the message
+            if not self.setup_complete:
+                self.logger.debug(f"Setup not complete, ignoring message {msg.topic}")
                 return
             
             # Convert payload to str
@@ -347,7 +365,7 @@ class ZenMQTTBridge:
     #  ---> SEND TO HOME ASSISTANT
     # ================================
 
-    def _profile_event(self, profile: ZenProfile) -> None:
+    def _zen_profile_change(self, profile: ZenProfile) -> None:
         print(f"Zen to HA: profile changed to {profile}")
 
         ctrl = profile.controller
@@ -355,7 +373,7 @@ class ZenMQTTBridge:
 
         self._publish_state(mqtt_topic, profile.label)
 
-    def _light_event(self, light: ZenLight, level: Optional[int] = None, colour: Optional[ZenColour] = None, scene: Optional[int] = None) -> None:
+    def _zen_light_change(self, light: ZenLight, level: Optional[int] = None, colour: Optional[ZenColour] = None, scene: Optional[int] = None) -> None:
         print(f"Zen to HA: light {light} level {level} colour {colour} scene {scene}")
         
         mqtt_topic = light.client_data.get('mqtt_topic', None)
@@ -379,7 +397,7 @@ class ZenMQTTBridge:
 
         self._publish_state(mqtt_topic, new_state)
         
-    def _group_event(self, group: ZenGroup, scene: Optional[int] = None) -> None:
+    def _zen_group_change(self, group: ZenGroup, scene: Optional[int] = None) -> None:
         print(f"Zen to HA: group {group} scene {scene}")
         mqtt_topic = group.client_data['mqtt_topic']
         # Get the scene label for the ID from the group
@@ -389,17 +407,17 @@ class ZenMQTTBridge:
         else:
             self.logger.warning(f"Group {group} has no scene with ID {scene}")
         
-    def _button_event(self, button: ZenButton, held: bool) -> None:
+    def _zen_button_press(self, button: ZenButton, held: bool) -> None:
         print(f"Zen to HA: button {button} held: {held}")
         mqtt_topic = button.client_data['mqtt_topic']
         self._publish_event(mqtt_topic, "button_short_press")
     
-    def _motion_event(self, sensor: ZenMotionSensor, occupied: bool) -> None:
+    def _zen_motion_event(self, sensor: ZenMotionSensor, occupied: bool) -> None:
         print(f"Zen to HA: sensor {sensor} occupied: {occupied}")
         mqtt_topic = sensor.client_data['mqtt_topic']
         self._publish_state(mqtt_topic, "ON" if occupied else "OFF")
 
-    def _sysvar_event(self, system_variable: ZenSystemVariable, value:int, changed: bool, by_me: bool) -> None:
+    def _zen_system_variable_change(self, system_variable: ZenSystemVariable, value:int, changed: bool, by_me: bool) -> None:
         print(f"System Variable Change Event - controller {system_variable.controller.name} system_variable {system_variable.id} value {value} changed {changed} by_me {by_me}")
         if 'mqtt_topic' in system_variable.client_data:
             match system_variable.client_data['component']:
@@ -673,8 +691,11 @@ class ZenMQTTBridge:
     # ================================
 
     def run(self) -> None:
-        """Main method to start the bridge."""
-        # try:
+        self.setup_config()
+        self.setup_logging()
+        self.logger.info("==================================== Starting ZenMQTTBridge ====================================")
+        self.setup_zen()
+        self.setup_mqtt()
         
         # Wait for Zen controllers to be ready
         for ctrl in self.control:
@@ -683,26 +704,15 @@ class ZenMQTTBridge:
             while not ctrl.is_controller_ready():
                 print(f"Controller {ctrl.label} still starting up...")
                 time.sleep(Constants.STARTUP_POLL_DELAY)
-            
-        # Start event monitoring and MQTT services
-        self.zen.set_callbacks(
-            profile=self._profile_event,
-            group=self._group_event,
-            light=self._light_event,
-            button=self._button_event,
-            motion=self._motion_event,
-            sysvar=self._sysvar_event
-        )
-        self.zen.start()
-
+        
+        # Begin listening for MQTT messages
         self.mqttc.loop_start()
 
-        # Wait for retained topics to be received
-        time.sleep(0.3)
+        # Wait for all retained topics to arrive
+        time.sleep(0.5)
 
-        # From here on, we're generating config topics
+        # Generate config topics
         self.setup_started = True
-
         self.setup_profiles()
         self.setup_lights()
         self.setup_groups()
@@ -710,23 +720,13 @@ class ZenMQTTBridge:
         self.setup_motion_sensors()
         self.setup_system_variables()
         self.delete_retained_topics()
+        self.setup_complete = True
 
-        # Use signal handling for graceful shutdown
-        import signal
-        signal.signal(signal.SIGINT, lambda s, f: self.stop())
-        signal.signal(signal.SIGTERM, lambda s, f: self.stop())
+        # Begin listening for zen events
+        self.zen.start()
         
         while True:
             time.sleep(1)
-                
-        # except Exception as e:
-        #     print(f"Fatal error: {e}")
-        #     self.logger.error(f"Fatal error: {e}")
-        #     raise
-        
-        # finally:
-        #     print(f"Stopping")
-        #     self.stop()
 
     def stop(self) -> None:
         """Clean shutdown of the bridge"""
