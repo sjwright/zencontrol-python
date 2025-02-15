@@ -5,7 +5,7 @@ import logging
 from datetime import datetime as dt
 from typing import Optional, Self, Callable
 from enum import Enum
-from threading import Thread, Event, Timer
+from threading import Thread, Event
 from colorama import Fore, Back, Style
 from dataclasses import dataclass, field
 
@@ -27,15 +27,6 @@ class Const:
     MAX_LEVEL = 254 # 255 is mask value (i.e. no change)
     MIN_KELVIN = 1000
     MAX_KELVIN = 20000
-    
-    # Default color temperature limits
-    DEFAULT_WARMEST_TEMP = 2700
-    DEFAULT_COOLEST_TEMP = 6500
-    
-    # RGBWAF channel counts
-    RGB_CHANNELS = 3
-    RGBW_CHANNELS = 4
-    RGBWW_CHANNELS = 5
 
     # Multicast
     MULTICAST_GROUP = "239.255.90.67"

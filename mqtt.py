@@ -16,15 +16,6 @@ class Constants:
 
     STARTUP_POLL_DELAY = 5
 
-    # Default color temperature limits
-    DEFAULT_WARMEST_TEMP = 2700
-    DEFAULT_COOLEST_TEMP = 6500
-    
-    # RGBWAF channel counts
-    RGB_CHANNELS = 3
-    RGBW_CHANNELS = 4
-    RGBWW_CHANNELS = 5
-
     # MQTT settings
     MQTT_RECONNECT_MIN_DELAY = 1
     MQTT_RECONNECT_MAX_DELAY = 10
