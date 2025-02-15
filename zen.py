@@ -162,18 +162,6 @@ class ZenEventMode:
             unicast = (mode_flag & 0x40) != 0,
             multicast = (mode_flag & 0x80) == 0
         )
-
-class ZenEventType(Enum):
-    BUTTON_PRESS = 0x00        # Button has been pressed
-    BUTTON_HOLD = 0x01         # Button has been pressed and is being held down
-    ABSOLUTE_INPUT = 0x02      # Absolute input has changed
-    LEVEL_CHANGE = 0x03        # Arc Level on an Address target has changed
-    GROUP_LEVEL_CHANGE = 0x04  # Arc Level on a Group target has changed
-    SCENE_CHANGE = 0x05        # Scene has been recalled
-    IS_OCCUPIED = 0x06         # An occupancy sensor has been triggered, area is occupied
-    SYSTEM_VARIABLE_CHANGE = 0x07 # A system variable has changed
-    COLOUR_CHANGE = 0x08       # A Tc, RGBWAF or XY colour change has occurred
-    PROFILE_CHANGE = 0x09      # The active profile on the controller has changed
     
 class ZenInstanceType(Enum):
     PUSH_BUTTON = 0x01         # Push button - generates short/long press events
@@ -736,13 +724,13 @@ class ZenProtocol:
                 macbytes = bytes.fromhex(data[2:8].hex())
                 mac_address = ':'.join(f'{b:02x}' for b in data[2:8])
                 target = int.from_bytes(data[8:10], byteorder='big')
-                event_type = ZenEventType(data[10]) if data[10] in ZenEventType._value2member_map_ else None
+                event_code = data[10]
                 payload_len = data[11]
                 payload = data[12:-1]
                 received_checksum = data[-1]
 
-                self.logger.debug(f" ... IP: {ip_address} - MAC: {mac_address} - EVENT: {event_type} - TARGET: {target} - PAYLOAD: {payload}")
-                if self.narration: print(Fore.CYAN + Style.DIM + f"         IP: {ip_address} - MAC: {mac_address} - EVENT: {event_type} - TARGET: {target} - PAYLOAD: {payload}" + Style.RESET_ALL)
+                self.logger.debug(f" ... IP: {ip_address} - MAC: {mac_address} - EVENT: {event_code} - TARGET: {target} - PAYLOAD: {payload}")
+                if self.narration: print(Fore.CYAN + Style.DIM + f"         IP: {ip_address} - MAC: {mac_address} - EVENT: {event_code} - TARGET: {target} - PAYLOAD: {payload}" + Style.RESET_ALL)
                 
                 # Find controller where macbytes matches mac_address
                 controller = next((c for c in self.controllers if c.mac_bytes == macbytes), None)
@@ -763,36 +751,36 @@ class ZenProtocol:
                     self.logger.error(f"{typecast.capitalize()} packet has invalid checksum: {calculated_checksum} != {received_checksum}")
                     continue
                 
-                match event_type:
-                    case ZenEventType.BUTTON_PRESS:
+                match event_code:
+                    case 0x00: # Button Press - Button has been pressed
                         if self.button_press_callback:
                             address = ZenAddress(controller=controller, type=ZenAddressType.ECD, number=target-64)
                             instance = ZenInstance(address=address, type=ZenInstanceType.PUSH_BUTTON, number=payload[0])
                             self.button_press_callback(instance=instance, payload=payload)
 
-                    case ZenEventType.BUTTON_HOLD:
+                    case 0x01: # Button Hold - Button has been pressed and is being held down
                         if self.button_hold_callback:
                             address = ZenAddress(controller=controller, type=ZenAddressType.ECD, number=target-64)
                             instance = ZenInstance(address=address, type=ZenInstanceType.PUSH_BUTTON, number=payload[0])
                             self.button_hold_callback(instance=instance, payload=payload)
 
-                    case ZenEventType.ABSOLUTE_INPUT:
+                    case 0x02: # Absolute Input - Absolute input has changed
                         if self.absolute_input_callback:
                             address = ZenAddress(controller=controller, type=ZenAddressType.ECD, number=target-64)
                             instance = ZenInstance(address=address, type=ZenInstanceType.PUSH_BUTTON, number=payload[0])
                             self.absolute_input_callback(instance=instance, payload=payload)
 
-                    case ZenEventType.LEVEL_CHANGE:
+                    case 0x03: # Level Change - Arc Level on an Address target has changed
                         if self.level_change_callback:
                             address = ZenAddress(controller=controller, type=ZenAddressType.ECG, number=target)
                             self.level_change_callback(address=address, arc_level=payload[0], payload=payload)
 
-                    case ZenEventType.GROUP_LEVEL_CHANGE:
+                    case 0x04: # Group Level Change - Arc Level on a Group target has changed
                         if self.group_level_change_callback:
                             address = ZenAddress(controller=controller, type=ZenAddressType.GROUP, number=target)
                             self.group_level_change_callback(address=address, arc_level=payload[0], payload=payload)
 
-                    case ZenEventType.SCENE_CHANGE:
+                    case 0x05: # Scene Change - Scene has been recalled
                         if self.scene_change_callback:
                             if target <= 63:
                                 address = ZenAddress(controller=controller, type=ZenAddressType.ECG, number=target)
@@ -803,29 +791,30 @@ class ZenProtocol:
                                 continue
                             self.scene_change_callback(address=address, scene=payload[0], payload=payload)
                         
-                    case ZenEventType.IS_OCCUPIED:
+                    case 0x06: # Is Occupied - An occupancy sensor has been triggered, area is occupied
                         if self.is_occupied_callback:
                             address = ZenAddress(controller=controller, type=ZenAddressType.ECD, number=target-64)
                             instance = ZenInstance(address=address, type=ZenInstanceType.OCCUPANCY_SENSOR, number=payload[0])
                             self.is_occupied_callback(instance=instance, payload=payload)
                         
-                    case ZenEventType.SYSTEM_VARIABLE_CHANGE:
-                        # ======= Data bytes =======
-                        # 12 - 15 0xFFFFFF38 (Data) 1st - 4th byte (big endian).
-                        # 16 0xFF Magnitude (int8) of –1 (10^–1)
+                    case 0x07: # System Variable Change - A system variable has changed
+
+                        if not 0 <= target < Const.MAX_SYSVAR:
+                            self.logger.error(f"Variable number must be between 0 and {Const.MAX_SYSVAR}, received {target}")
+                            continue
                         if self.system_variable_change_callback:
                             raw_value = int.from_bytes(payload[0:4], byteorder='big', signed=True)
                             magnitude = int.from_bytes([payload[4]], byteorder='big', signed=True)
                             value = raw_value * (10 ** magnitude)
                             self.system_variable_change_callback(controller=controller, target=target, value=value, payload=payload)
 
-                    case ZenEventType.COLOUR_CHANGE:
+                    case 0x08: # Colour Change - A Tc, RGBWAF or XY colour change has occurred
                         if self.colour_change_callback:
                             address = ZenAddress(controller=controller, type=ZenAddressType.ECG if target < 64 else ZenAddressType.GROUP, number=target)
                             colour = ZenColour.from_bytes(payload)
                             self.colour_change_callback(address=address, colour=colour, payload=payload)
                                 
-                    case ZenEventType.PROFILE_CHANGE:
+                    case 0x09: # Profile Change - The active profile on the controller has changed
                         if self.profile_change_callback:
                             payload_int = int.from_bytes(payload, byteorder='big')
                             self.profile_change_callback(controller=controller, profile=payload_int, payload=payload)
