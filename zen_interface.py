@@ -188,11 +188,7 @@ class ZenInterface:
         ZenMotionSensor(protocol=self.protocol, instance=instance)._event_received()
     
     def system_variable_change_event(self, controller: ZenController, target: int, value: int, payload: bytes) -> None:
-        print(f"System Variable Change Event - controller {controller.name} target {target} value {value}")
-        if not 0 <= target < Const.MAX_SYSVAR:
-            print(f"Variable number must be between 0 and {Const.MAX_SYSVAR}, received {target}")
-        else:
-            ZenSystemVariable(protocol=self.protocol, controller=controller, id=target)._event_received(value)
+        ZenSystemVariable(protocol=self.protocol, controller=controller, id=target)._event_received(value)
 
     def colour_change_event(self, address: ZenAddress, colour: bytes, payload: bytes) -> None:
         ZenLight(protocol=self.protocol, address=address)._event_received(colour=colour)
