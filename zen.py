@@ -859,38 +859,40 @@ class ZenProtocol:
         response = self._send_basic(controller, self.CMD["QUERY_TPI_EVENT_EMIT_STATE"])
         return ZenEventMode.from_byte(response[0])
     
-    def dali_add_tpi_event_filter(self, address: ZenAddress, filter: ZenEventMask = ZenEventMask.all_events(), instance_number: int = 0xFF) -> bool:
+    def dali_add_tpi_event_filter(self, address: ZenAddress|ZenInstance, filter: ZenEventMask = ZenEventMask.all_events()) -> bool:
         """Stop specific events from an address/instance from being sent. Events in mask will be muted. Returns true if filter was added successfully."""
+        instance_number = 0xFF
+        if isinstance(address, ZenInstance):
+            instance: ZenInstance = address
+            instance_number = instance.number
+            address = instance.address
         return self._send_basic(address.controller,
                              self.CMD["DALI_ADD_TPI_EVENT_FILTER"],
                              address.ecg_or_ecd_or_broadcast(),
                              [instance_number, filter.upper(), filter.lower()],
                              return_type='bool')
     
-    def dali_clear_tpi_event_filter(self, address: ZenAddress, unfilter: ZenEventMask = ZenEventMask.all_events(), instance_number: int = 0xFF) -> bool:
+    def dali_clear_tpi_event_filter(self, address: ZenAddress|ZenInstance, unfilter: ZenEventMask = ZenEventMask.all_events()) -> bool:
         """Allow specific events from an address/instance to be sent again. Events in mask will be unmuted. Returns true if filter was cleared successfully."""
+        instance_number = 0xFF
+        if isinstance(address, ZenInstance):
+            instance: ZenInstance = address
+            instance_number = instance.number
+            address = instance.address
         return self._send_basic(address.controller,
                              self.CMD["DALI_CLEAR_TPI_EVENT_FILTERS"],
                              address.ecg_or_ecd_or_broadcast(),
                              [instance_number, unfilter.upper(), unfilter.lower()],
                              return_type='bool')
 
-    def query_dali_tpi_event_filters(self, address: ZenAddress, instance_number: int = 0xFF, start_at: int = 0) -> list[dict]:
-        """Query active event filters for an address. Returns a list of dictionaries containing filter info, or None if query fails.
-        
-        Args:
-            address: ZenAddress to query filters for (broadcast = set for all)
-            instance_number: Instance number to query (0xFF for ECG, or specific instance for ECD)
-            start_at: Result index to start at (for paging results)
+    def query_dali_tpi_event_filters(self, address: ZenAddress|ZenInstance, start_at: int = 0) -> list[dict]: # TODO: remove start_at and page results automatically
+        """Query active event filters for an address (or a specific instance). Returns a list of dictionaries containing filter info, or None if query fails."""
+        instance_number = 0xFF
+        if isinstance(address, ZenInstance):
+            instance: ZenInstance = address
+            instance_number = instance.number
+            address = instance.address
             
-        Returns:
-            List of dictionaries containing filter info, or None if query fails:
-            [{
-                'address': int,           # Address number
-                'instance': int,          # Instance number 
-                'event_mask': ZenEventMask # Event mask
-            }]
-        """
         response = self._send_basic(address.controller, 
                                  self.CMD["QUERY_DALI_TPI_EVENT_FILTERS"],
                                  address.ecg_or_ecd_or_broadcast(),
