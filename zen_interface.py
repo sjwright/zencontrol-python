@@ -297,6 +297,7 @@ class ZenController (SuperZenController):
             inst.port = port
             inst.mac = mac
             inst.filtering = filtering
+            inst.connected = False
             inst.mac_bytes = bytes.fromhex(inst.mac.replace(':', '')) # Convert MAC address to bytes once
             inst._reset()
         return cls._instances[name]
@@ -313,6 +314,7 @@ class ZenController (SuperZenController):
         self.version = self.protocol.query_controller_version_number(self)
         current_profile = self.protocol.query_current_profile_number(self)
         self.profile = ZenProfile(protocol=self.protocol, controller=self, number=current_profile)
+        self.connected = True
         return True
     def _event_received(self, profile: Optional[int] = None):
         if profile is not None:

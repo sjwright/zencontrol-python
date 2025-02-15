@@ -57,6 +57,7 @@ class ZenController:
     mac: Optional[str] = None
     filtering: bool = False
     mac_bytes: bytes = field(init=False)
+    connected: bool = False
     def __post_init__(self):
         if self.mac:
             self.mac_bytes = bytes.fromhex(self.mac.replace(':', ''))
@@ -555,6 +556,7 @@ class ZenProtocol:
                 return self._send_packet(controller, command, data)
             except ZenTimeoutError:
                 pass
+            controller.connected = False
         return None, None
     
     def _send_packet(self, controller: ZenController, command: int, data: list[int]) -> tuple[Optional[bytes], int]:
