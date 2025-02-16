@@ -1,24 +1,49 @@
 # zencontrol-python
 
-This is an implementation of the **Zencontrol TPI Advanced** protocol written in python. The TPI Advanced protocol has been fully implemented as **ZenProtocol** in *zen.py*, including class methods for most API commands, and callbacks for multicast (or unicast) event packets. It works for me, but temper your expectations. This code has only been tested in my development environment, with one zc-controller-pro connected to a small number of lights, sensors and wall switches.
+This is an implementation of the **Zencontrol TPI Advanced** protocol, written in Python. The TPI Advanced protocol is implemented as **ZenProtocol** in *zen.py*, featuring class methods for most API commands and callbacks for event packets (multicast or unicast). It does work, however this isn't production quality code yet, having only been tested in my development environment, using one zc-controller-pro connected to a small number of lights, sensors, and wall switches.
 
-An opinionated abstraction layer has been implemented as **ZenInterface** in *zen_interface.py*, using ZenProtocol, intended for writing integrations into smart building control software. This sanitises the raw protocol into a relatively straightforward set of methods for controlling lights, groups, profiles, buttons, motion sensors and system variables.
+An opinionated abstraction layer is implemented as **ZenInterface** in *zen_interface.py*, built on top of ZenProtocol. It’s designed to simplify integrations with smart building control software by abstracting the raw protocol into a uniform set of methods, objects, and callbacks for managing lights, groups, profiles, buttons, motion sensors, and Zen system variables.
 
-A bridge to Home Assistant has been implmented as **mqtt.py**, which uses ZenInterface to interact with Zencontrol devices, and MQTT to interact with Home Assistant. Currently it's a headless process which reads *config.json* for settings and dumps out a ton of console messsages and log entries. To run this, you need to have Python 3.11 installed, plus the following python3 packages: paho-mqtt, yaml, colorama. Edit **config.yaml** appropriately for your environment. Then run **mqtt.py**.
+To test ZenInterface, I have written **mqtt.py**, built on top of ZenInterface, to interface with Home Assistant via an MQTT broker. Currently, it runs as a headless process that reads settings from *config.json* and (currently) spams your console with lots of debug messages. To run this, ensure you have Python 3.11 (or later) installed, along with the following Python packages: `paho-mqtt`, `yaml`, and `colorama`. To run, modify **config.yaml** as needed for your environment, then execute **mqtt.py**.
 
 ## Requirements
 
-* Python 3.11
-* Controller firmware 2.1.35
+* Python 3.11 (or later)
+* Controller firmware 2.1.35 (or later)
 
 _Note: A sufficiently new version of Zencontrol firmware may not be publicly available yet. If it's not available from within Zen cloud interface, you might be able to request it by raising a support ticket._
+
+## Quick start
+
+The following are the minimum steps necessary to run the MQTT bridge on a Raspberry Pi running the lastest release of Raspberry Pi OS.
+
+```
+# Update/Install packages:
+sudo apt update
+sudo apt upgrade -y
+sudo apt install -y git python3-yaml python3-colorama python3-paho-mqtt
+
+# Download this code:
+cd ~/Documents
+git clone https://github.com/sjwright/zencontrol-python
+cd zencontrol-python
+
+# Edit config.yaml to suit your environment
+nano config.yaml
+
+# Run the MQTT bridge
+python3 mqtt.py
+```
+
+Be aware that other distributions may ship with an older version of python and could require non-trivial steps to install a newer version. You can check your python version by running `python3 -V`
 
 ## Limitations
 
 Implemented but untested:
   
-* Dealing with multiple controllers (I can't test as I only have one controller)
+* Dealing with multiple controllers
 * RGB+ and XY colour commands (I don't have any compatible lights)
+* Numerical (absolute) instances (I don't have any such devices)
 * Event filtering (I haven't tested it)
 
 No support planned:
