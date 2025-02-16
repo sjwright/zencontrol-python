@@ -125,7 +125,7 @@ class ZenMQTTBridge:
     def setup_logging(self) -> None:
         """Configure logging with both file and console handlers."""
         self.logger = logging.getLogger('ZenMQTTBridge')
-        self.logger.setLevel(logging.INFO)
+        self.logger.setLevel(logging.DEBUG)
 
         # File handler
         file_handler = RotatingFileHandler(

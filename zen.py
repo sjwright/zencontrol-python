@@ -191,6 +191,8 @@ class ZenColour:
     y: Optional[int] = None
     @classmethod
     def from_bytes(cls, bytes: bytes) -> Optional[Self]:
+        if not bytes: # If bytes is empty, return None
+            return None
         if bytes[0] == ZenColourType.RGBWAF.value and len(bytes) == 7:
             return cls(type=ZenColourType.RGBWAF, r=bytes[1], g=bytes[2], b=bytes[3], w=bytes[4], a=bytes[5], f=bytes[6])
         if bytes[0] == ZenColourType.TC.value and len(bytes) == 3:
