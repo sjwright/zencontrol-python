@@ -138,6 +138,7 @@ class ZenMQTTBridge:
 
         # Console handler
         console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.INFO)
         console_handler.setFormatter(logging.Formatter(
             '%(levelname)s: %(message)s'
         ))
@@ -145,7 +146,7 @@ class ZenMQTTBridge:
 
     def setup_zen(self) -> None:
         try:
-            self.zen: ZenInterface = ZenInterface(logger=self.logger, narration=True)
+            self.zen: ZenInterface = ZenInterface(logger=self.logger, narration=False)
             self.zen.on_connect = self._zen_on_connect
             self.zen.on_disconnect = self._zen_on_disconnect
             self.zen.profile_change = self._zen_profile_change
@@ -440,6 +441,7 @@ class ZenMQTTBridge:
                 ]
             }
             self._publish_config(mqtt_topic, config_dict, object=ctrl)
+            self._publish_state(mqtt_topic, ctrl.profile.label)
 
     def setup_lights(self) -> None:
         """Initialize all lights for Home Assistant auto-discovery."""
@@ -490,6 +492,7 @@ class ZenMQTTBridge:
                     "options": [scene["label"] for scene in group.scenes],
                 }
                 self._publish_config(mqtt_topic, config_dict, object=group)
+                self._publish_state(mqtt_topic, group.scene)
 
     def setup_buttons(self) -> None:
         """Initialize all buttons found on the DALI bus for Home Assistant auto-discovery."""
@@ -521,9 +524,9 @@ class ZenMQTTBridge:
                 "state_topic": f"{mqtt_topic}/state",
                 "json_attributes_topic": f"{mqtt_topic}/attributes",
                 "retain": False,
-                "expire_after": 120,
             }
             self._publish_config(mqtt_topic, config_dict, object=sensor)
+            self._publish_state(mqtt_topic, "ON" if sensor.occupied else "OFF")
 
     def setup_system_variables(self) -> None:
         """Initialize system variables in config.yaml for Home Assistant auto-discovery."""
@@ -564,6 +567,7 @@ class ZenMQTTBridge:
                     raise ValueError(f"Unknown component: {zsv.client_data['component']}")
             config_dict = self.global_config | zsv.client_data['attributes'] | config_dict
             self._publish_config(zsv.client_data['mqtt_topic'], config_dict, object=zsv)
+            self._publish_state(mqtt_topic, zsv.value)
     
     def delete_retained_topics(self) -> None:
         for topic in self.config_topics_to_delete:

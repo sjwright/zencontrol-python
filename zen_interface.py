@@ -1,8 +1,7 @@
 import time
 import logging
-import inspect
-from zen import ZenProtocol, ZenController as SuperZenController, ZenAddress, ZenInstance, ZenAddressType, ZenColour, ZenColourType, ZenInstanceType, ZenTimeoutError
-from typing import Optional, List, Callable
+from zen import ZenProtocol, ZenController as SuperZenController, ZenAddress, ZenInstance, ZenAddressType, ZenColour, ZenColourType, ZenInstanceType, ZenTimeoutError, ZenEventMask
+from typing import Optional, Callable
 from threading import Timer
 class Const:
 
@@ -405,7 +404,8 @@ class ZenLight:
         }
         self.level: Optional[int] = None
         self.colour: Optional[ZenColour] = None
-        self.current_scene: Optional[int] = None
+        self.scenes: list[dict] = []
+        self._scene: Optional[int] = None
         self.client_data: dict = {}
     def interview(self) -> bool:
         cgstatus = self.protocol.dali_query_control_gear_status(self.address)
@@ -448,11 +448,11 @@ class ZenLight:
         self.level = self.protocol.dali_query_level(self.address)
         last_scene = self.protocol.dali_query_last_scene(self.address)
         last_scene_is_current = self.protocol.dali_query_last_scene_is_current(self.address)
-        self.current_scene = last_scene if last_scene_is_current else None
+        self._scene = last_scene if last_scene_is_current else None
         if self.features["temperature"] or self.features["RGB"] or self.features["RGBW"] or self.features["RGBWW"]:
             self.colour = self.protocol.query_dali_colour(self.address)
         # Callback
-        self._event_received(level=self.level, colour=self.colour, scene=self.current_scene)
+        self._event_received(level=self.level, colour=self.colour, scene=self._scene)
     def _event_received(self, level: int = 255, colour: Optional[ZenColour] = None, scene: Optional[int] = None):
         # Called by ZenProtocol when a query command is issued or an event is received
         level_changed = False
@@ -465,7 +465,7 @@ class ZenLight:
             self.colour = colour
             colour_changed = True
         if scene:
-            self.current_scene = scene
+            self._scene = scene
             scene_changed = True
         if type(self) is ZenLight:
             if level_changed or colour_changed or scene_changed:
@@ -473,11 +473,11 @@ class ZenLight:
                     _callbacks.light_change(light=self,
                                     level=self.level if level_changed else None,
                                     colour=self.colour if colour_changed else None,
-                                    scene=self.current_scene if scene_changed else None)
+                                    scene=self._scene if scene_changed else None)
         if type(self) is ZenGroup:
             if scene_changed:
                 if callable(_callbacks.group_change):
-                    _callbacks.group_change(group=self, scene=self.current_scene if scene_changed else None)
+                    _callbacks.group_change(group=self, scene=self._scene if scene_changed else None)
     def supports_colour(self, colour: ZenColourType|ZenColour) -> bool:
         # colour_type = colour if type(colour) == ZenColourType else colour.type
         if type(colour) == ZenColour:
@@ -492,6 +492,10 @@ class ZenLight:
             (colour_type == ZenColourType.RGBWAF and self.features["RGBWW"]):
             return True
         return False
+    @property
+    def scene(self) -> Optional[dict]:
+        # Return the current scene dict from self.scenes
+        return next((s for s in self.scenes if s["number"] == self._scene), None)
     # -----------------------------------------------------------------------------------------
     # REMINDER: None of the following methods should update the internal object state directly.
     #   These methods send commands to the controller. The controller sends events back.
@@ -503,7 +507,15 @@ class ZenLight:
     def off(self, fade: bool = True) -> bool:
         if fade: return self.protocol.dali_arc_level(self.address, 0)
         else: return self.protocol.dali_off(self.address)
-    def set_scene(self, scene: int, fade: bool = True) -> bool:
+    def set_scene(self, scene: int|str|dict, fade: bool = True) -> bool:
+        if type(scene) == str:
+            scene = next((s["number"] for s in self.scenes if s["label"] == scene), None)
+        elif type(scene) == dict:
+            scene = scene["number"]
+        elif type(scene) == int:
+            pass
+        else:
+            return False
         if not fade: self.protocol.dali_enable_dapc_sequence(self.address)
         return self.protocol.dali_scene(self.address, scene)
     def set(self, level: int = 255, colour: Optional[ZenColour] = None, fade: bool = True) -> bool:
@@ -557,13 +569,6 @@ class ZenGroup(ZenLight):
         return cls._instances[compound_id]
     def __repr__(self) -> str:
         return f"ZenGroup<{self.address.controller.name} group {self.address.number}: {self.label}>"
-    def _reset(self):
-        self.label: Optional[str] = None
-        self.level: Optional[int] = None
-        self.colour: Optional[ZenColour] = None
-        self.scenes: list[dict] = []
-        self.current_scene: Optional[int] = None
-        self.client_data: dict = {}
     def interview(self) -> bool:
         self.label = self.protocol.query_group_label(self.address, generic_if_none=True)
         self.scenes = []
