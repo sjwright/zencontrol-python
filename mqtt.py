@@ -12,7 +12,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 import math
 
-class Constants:
+class Const:
 
     STARTUP_POLL_DELAY = 5
 
@@ -34,6 +34,9 @@ class Constants:
     # Attempt at a better fit, less extreme
     LOG_A = -59.53
     LOG_B = 56.58
+
+    # Default hold time for motion sensors
+    DEFAULT_HOLD_TIME = 15
 
 class ZenMQTTBridge:
     """Bridge between Zen lighting control system and MQTT/Home Assistant.
@@ -129,9 +132,9 @@ class ZenMQTTBridge:
 
         # File handler
         file_handler = RotatingFileHandler(
-            Constants.LOG_FILE,
-            maxBytes=Constants.LOG_MAX_BYTES,
-            backupCount=Constants.LOG_BACKUP_COUNT
+            Const.LOG_FILE,
+            maxBytes=Const.LOG_MAX_BYTES,
+            backupCount=Const.LOG_BACKUP_COUNT
         )
         file_handler.setFormatter(logging.Formatter(fmt="%(asctime)s\t%(levelname)s\t%(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
         self.logger.addHandler(file_handler)
@@ -534,7 +537,7 @@ class ZenMQTTBridge:
         sensors = self.zen.get_motion_sensors()
         for sensor in sensors:
             self._client_data_for_object(sensor, "binary_sensor")
-            sensor.hold_time = 5
+            sensor.hold_time = Const.DEFAULT_HOLD_TIME
             mqtt_topic = sensor.client_data['mqtt_topic']
             config_dict = self.global_config | sensor.client_data['attributes'] | {
                 "name": sensor.instance_label,
@@ -690,14 +693,14 @@ class ZenMQTTBridge:
     def arc_to_brightness(self, value):
         """Convert logarithmic DALI ARC value (0-254) to linear brightness (0-255)"""
         if value <= 0: return 0
-        X = round(math.exp((value - Constants.LOG_A) / Constants.LOG_B))
+        X = round(math.exp((value - Const.LOG_A) / Const.LOG_B))
         print(f"arc_to_brightness({value}) = {X}")
         return X
 
     def brightness_to_arc(self, value):
         """Convert linear brightness (0-255) to logarithmic DALI ARC value (0-254)"""
         if value <= 0: return 0
-        X = round(Constants.LOG_A + Constants.LOG_B * math.log(value))
+        X = round(Const.LOG_A + Const.LOG_B * math.log(value))
         print(f"brightness_to_arc({value}) = {X}")
         return X
     
@@ -722,7 +725,7 @@ class ZenMQTTBridge:
                 
                 while not ctrl.is_controller_ready():
                     print(f"Controller {ctrl.label} still starting up...")
-                    time.sleep(Constants.STARTUP_POLL_DELAY)
+                    time.sleep(Const.STARTUP_POLL_DELAY)
             
             except ZenTimeoutError as e:
                 self.logger.fatal(f"Aborting - Zen controller {ctrl.name} cannot be reached.")
