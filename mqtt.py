@@ -361,7 +361,10 @@ class ZenMQTTBridge:
         print(f"Zen to HA: profile changed to {profile}")
 
         ctrl = profile.controller
-        mqtt_topic = ctrl.client_data['mqtt_topic']
+        mqtt_topic = ctrl.client_data.get('mqtt_topic', None)
+        if not mqtt_topic:
+            self.logger.error(f"Controller {ctrl} has no MQTT topic")
+            return
 
         self._publish_state(mqtt_topic, profile.label)
 
@@ -391,7 +394,12 @@ class ZenMQTTBridge:
         
     def _zen_group_change(self, group: ZenGroup, scene: Optional[int] = None) -> None:
         print(f"Zen to HA: group {group} scene {scene}")
-        mqtt_topic = group.client_data['mqtt_topic']
+        
+        mqtt_topic = group.client_data.get('mqtt_topic', None)
+        if not mqtt_topic:
+            self.logger.error(f"Group {group} has no MQTT topic")
+            return
+
         # Get the scene label for the ID from the group
         scene_label = next((s["label"] for s in group.scenes if s["number"] == scene), None)
         if scene_label:
@@ -401,23 +409,35 @@ class ZenMQTTBridge:
         
     def _zen_button_press(self, button: ZenButton, held: bool) -> None:
         print(f"Zen to HA: button {button} held: {held}")
-        mqtt_topic = button.client_data['mqtt_topic']
+        mqtt_topic = button.client_data.get('mqtt_topic', None)
+        if not mqtt_topic:
+            self.logger.error(f"Button {button} has no MQTT topic")
+            return
+
         self._publish_event(mqtt_topic, "button_short_press")
     
     def _zen_motion_event(self, sensor: ZenMotionSensor, occupied: bool) -> None:
         print(f"Zen to HA: sensor {sensor} occupied: {occupied}")
-        mqtt_topic = sensor.client_data['mqtt_topic']
+        mqtt_topic = sensor.client_data.get('mqtt_topic', None)
+        if not mqtt_topic:
+            self.logger.error(f"Sensor {sensor} has no MQTT topic")
+            return
+
         self._publish_state(mqtt_topic, "ON" if occupied else "OFF")
 
     def _zen_system_variable_change(self, system_variable: ZenSystemVariable, value:int, changed: bool, by_me: bool) -> None:
         print(f"System Variable Change Event - controller {system_variable.controller.name} system_variable {system_variable.id} value {value} changed {changed} by_me {by_me}")
-        if 'mqtt_topic' in system_variable.client_data:
-            match system_variable.client_data['component']:
-                case "switch":
-                    self._publish_state(system_variable.client_data['mqtt_topic'], "OFF" if value == 0 else "ON")
-                case "sensor":
-                    self._publish_state(system_variable.client_data['mqtt_topic'], value)
-                case _:
+        mqtt_topic = system_variable.client_data.get('mqtt_topic', None)
+        if not mqtt_topic:
+            self.logger.error(f"Ignoring system variable {system_variable}")
+            return
+    
+        match system_variable.client_data['component']:
+            case "switch":
+                self._publish_state(mqtt_topic, "OFF" if value == 0 else "ON")
+            case "sensor":
+                self._publish_state(mqtt_topic, value)
+            case _:
                     raise ValueError(f"Unknown component: {system_variable.client_data['component']}")
 
         return
