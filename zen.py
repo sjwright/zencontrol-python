@@ -887,34 +887,49 @@ class ZenProtocol:
                              [instance_number, unfilter.upper(), unfilter.lower()],
                              return_type='bool')
 
-    def query_dali_tpi_event_filters(self, address: ZenAddress|ZenInstance, start_at: int = 0) -> list[dict]: # TODO: remove start_at and page results automatically
+    def query_dali_tpi_event_filters(self, address: ZenAddress|ZenInstance) -> list[dict]:
         """Query active event filters for an address (or a specific instance). Returns a list of dictionaries containing filter info, or None if query fails."""
         instance_number = 0xFF
         if isinstance(address, ZenInstance):
             instance: ZenInstance = address
             instance_number = instance.number
             address = instance.address
+        
+        # As the data payload can only be up to 64 bytes and there are up to 64 event filters, it may be necessary to query several times.
+        # If you have all 64 event filters active, you will receive results 0-14 in the first response.
+        results = []
+        start_at = 0
+        while True:
+        
+            response = self._send_basic(address.controller, 
+                                    self.CMD["QUERY_DALI_TPI_EVENT_FILTERS"],
+                                    address.ecg_or_ecd_or_broadcast(),
+                                    [start_at, 0x00, instance_number])
             
-        response = self._send_basic(address.controller, 
-                                 self.CMD["QUERY_DALI_TPI_EVENT_FILTERS"],
-                                 address.ecg_or_ecd_or_broadcast(),
-                                 [start_at, 0x00, instance_number])
-                                 
-        if response and len(response) >= 5:  # Need at least modes + one result
-            results = []
-            modes_active = response[0] # same as query_tpi_event_emit_state()
-            
-            # Process results in groups of 4 bytes
-            for i in range(1, len(response)-3, 4):
-                result = {
-                    'address': response[i],
-                    'instance': response[i+1],
-                    'event_mask': ZenEventMask.from_upper_lower(response[i+2], response[i+3])
-                }
-                results.append(result)
+            # Byte 0: TPI event modes active, ignored here.
+            # modes_active = response[0]
+                                    
+            if response and len(response) >= 5:  # Need at least modes + one result
+
+                # Starting from the second byte (1), process results in groups of 4 bytes
+                for i in range(1, len(response)-3, 4):
+                    result = {
+                        'address': response[i],
+                        'instance': response[i+1],
+                        'event_mask': ZenEventMask.from_upper_lower(response[i+2], response[i+3])
+                    }
+                    results.append(result)
                 
-            return results
-        return []
+                if len(results) < 60: # 15 results * 4 bytes = 60 bytes. If we received fewer than 15 results, then there are no more.
+                    break
+            
+            else:
+                break # If there are no more results, stop querying
+            
+            # To complete the set, you would request 15, 30, 45, 60 as starting numbers or until you receive None (NO_ANSWER).
+            start_at += 15
+                
+        return results
 
     def tpi_event_emit(self, controller: ZenController, mode: ZenEventMode = ZenEventMode(enabled=True, filtering=False, unicast=False, multicast=True)) -> bool:
         """Enable or disable TPI Event emission. Returns True if successful, else False."""
