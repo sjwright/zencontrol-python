@@ -644,7 +644,7 @@ class ZenMotionSensor:
         return f"ZenMotionSensor<{self.instance.address.controller.name} ecd {self.instance.address.number} inst {self.instance.number}: {self.label} / {self.instance_label}>"
     def _reset(self):
         self.hold_time: int = 60
-        self.hold_timer: Optional[Timer] = None
+        self.hold_expiry_timer: Optional[Timer] = None
         #
         self.serial: Optional[str] = None
         self.label: Optional[str] = None
@@ -675,20 +675,27 @@ class ZenMotionSensor:
         self.occupied = False
     @property
     def occupied(self) -> bool:
-        return (time.time() - self.last_detect) < self.hold_time
+        seconds_since_last_motion = time.time() - self.last_detect
+        within_hold_time = seconds_since_last_motion < self.hold_time
+        # if occupied but a hold timer isn't running, start one with the time remaining
+        if within_hold_time and self.hold_expiry_timer is None:
+            seconds_until_hold_time_expires = self.hold_time - seconds_since_last_motion
+            self.hold_expiry_timer = Timer(seconds_until_hold_time_expires, self.timeout_callback)
+            self.hold_expiry_timer.start()
+        return within_hold_time
     @occupied.setter 
     def occupied(self, new_value: bool):
         old_value = self._occupied or False
         # Cancel any hold time timer
-        if self.hold_timer is not None:
-            self.hold_timer.cancel()
-            self.hold_timer = None
+        if self.hold_expiry_timer is not None:
+            self.hold_expiry_timer.cancel()
+            self.hold_expiry_timer = None
         # Start a new timer
         if new_value:
             # Update last detect time, begin a timer, and set occupied to True
             self.last_detect = time.time()
-            self.hold_timer = Timer(self.hold_time, self.timeout_callback)
-            self.hold_timer.start()
+            self.hold_expiry_timer = Timer(self.hold_time, self.timeout_callback)
+            self.hold_expiry_timer.start()
             self._occupied = True
             # If we're going from False to True
             if old_value is False:
