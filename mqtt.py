@@ -35,8 +35,11 @@ class Const:
     LOG_A = -59.53
     LOG_B = 56.58
 
-    # Default hold time for motion sensors
+    # Default hold time for motion sensors, in seconds
     DEFAULT_HOLD_TIME = 15
+
+    # Default long press time for buttons, in msec
+    DEFAULT_LONG_PRESS_TIME = 1000
 
 class ZenMQTTBridge:
     """Bridge between Zen lighting control system and MQTT/Home Assistant.
@@ -522,6 +525,7 @@ class ZenMQTTBridge:
         buttons = self.zen.get_buttons()
         for button in buttons:
             self._client_data_for_object(button, "device_automation")
+            button.long_press_time = Const.DEFAULT_LONG_PRESS_TIME
             mqtt_topic = button.client_data['mqtt_topic']
             config_dict = self.global_config | button.client_data['attributes'] | {
                 "automation_type": "trigger",

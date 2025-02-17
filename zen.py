@@ -503,7 +503,7 @@ class ZenProtocol:
                         return None
             case 0xA3: # ERROR
                 if response_data:
-                    error_code = ZenErrorCode(response_data[0]) if response_data[0] in ZenErrorCode else None
+                    error_code = ZenErrorCode(response_data[0]) if response_data[0] in ZenErrorCode._value2member_map_ else None
                     error_label = error_code.name if error_code else f"Unknown error code: {hex(response_data[0])}"
                     if self.narration: print(f"Command error code: {error_label}")
                 else:
