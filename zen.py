@@ -33,7 +33,7 @@ class Const:
     MULTICAST_PORT = 6969
 
     # Unicast
-    UNICAST_PORT = 6969
+    DEFAULT_UNICAST_PORT = 6969
 
 class ZenError(Exception):
     """Base exception for Zen protocol errors"""
@@ -409,7 +409,7 @@ class ZenProtocol:
         self.narration = narration
         self.unicast = unicast
         self.listen_ip = (listen_ip if listen_ip else "0.0.0.0") if unicast else None
-        self.listen_port = (listen_port if listen_port else Const.UNICAST_PORT) if unicast else None
+        self.listen_port = (listen_port if listen_port else Const.DEFAULT_UNICAST_PORT) if unicast else None
         
         # If unicast, and we're binding to 0.0.0.0, we still need to know our actual IP address
         self.local_ip = (socket.gethostbyname(socket.gethostname()) if self.listen_ip == "0.0.0.0" else self.listen_ip) if self.unicast else None

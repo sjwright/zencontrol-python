@@ -5,17 +5,18 @@ from typing import Optional, Callable
 from threading import Timer
 class Const:
 
-    # DALI limits
     MAX_SYSVAR = 148 # 0-147
     
-    # Default color temperature limits
     DEFAULT_WARMEST_TEMP = 2700
     DEFAULT_COOLEST_TEMP = 6500
     
-    # RGBWAF channel counts
     RGB_CHANNELS = 3
     RGBW_CHANNELS = 4
     RGBWW_CHANNELS = 5
+
+    LONG_PRESS_COUNT = 2
+
+    DEFAULT_HOLD_TIME = 60
 
 class ZenController:
     pass
@@ -44,7 +45,8 @@ CallbackOnDisconnect = Callable[[], None]
 CallbackProfileChange = Callable[[ZenProfile], None]
 CallbackGroupChange = Callable[[ZenGroup, int], None]
 CallbackLightChange = Callable[[ZenLight, int, ZenColour, int], None]
-CallbackButtonPress = Callable[[ZenButton, bool], None]
+CallbackButtonPress = Callable[[ZenButton], None]
+CallbackButtonLongPress = Callable[[ZenButton], None]
 CallbackMotionEvent = Callable[[ZenMotionSensor, bool], None]
 CallbackSystemVariableChange = Callable[[ZenSystemVariable, int, bool, bool], None]
 
@@ -55,6 +57,7 @@ class _callbacks:
     group_change: Optional[CallbackGroupChange] = None
     light_change: Optional[CallbackLightChange] = None
     button_press: Optional[CallbackButtonPress] = None
+    button_long_press: Optional[CallbackButtonLongPress] = None
     motion_event: Optional[CallbackMotionEvent] = None
     system_variable_change: Optional[CallbackSystemVariableChange] = None
 
@@ -111,6 +114,13 @@ class ZenInterface:
     @button_press.setter
     def button_press(self, func: CallbackButtonPress | None) -> None:
         _callbacks.button_press = func
+    
+    @property
+    def button_long_press(self) -> CallbackButtonLongPress | None:
+        return _callbacks.button_long_press
+    @button_long_press.setter
+    def button_long_press(self, func: CallbackButtonLongPress | None) -> None:
+        _callbacks.button_long_press = func
     
     @property
     def motion_event(self) -> CallbackMotionEvent | None:
@@ -612,6 +622,8 @@ class ZenButton:
         self.serial: Optional[str] = None
         self.label: Optional[str] = None
         self.instance_label: Optional[str] = None
+        self.last_press_time: float = time.time()
+        self.long_press_count: Optional[int] = None
         self.client_data: dict = {}
     def interview(self) -> bool:
         inst = self.instance
@@ -623,8 +635,22 @@ class ZenButton:
         self.instance_label = self.protocol.query_dali_instance_label(inst, generic_if_none=True)
         return True
     def _event_received(self, held: bool = False):
-        if callable(_callbacks.button_press):
-            _callbacks.button_press(button=self, held=held)
+        if not held:
+            if callable(_callbacks.button_press):
+                _callbacks.button_press(button=self)
+        else:
+            seconds_since_last_press = time.time() - self.last_press_time
+            # if there's been less than 500 msec between the last hold message, increment the hold count
+            if seconds_since_last_press < 0.5:
+                self.long_press_count += 1
+            else:
+                self.long_press_count = 0
+            self.last_press_time = time.time()
+            # if the hold count is exactly Const.LONG_PRESS_COUNT, call the long press callback
+            if self.long_press_count == Const.LONG_PRESS_COUNT:
+                if callable(_callbacks.button_long_press):
+                    _callbacks.button_long_press(button=self)
+
 
 
 class ZenMotionSensor:
@@ -643,7 +669,7 @@ class ZenMotionSensor:
     def __repr__(self) -> str:
         return f"ZenMotionSensor<{self.instance.address.controller.name} ecd {self.instance.address.number} inst {self.instance.number}: {self.label} / {self.instance_label}>"
     def _reset(self):
-        self.hold_time: int = 60
+        self.hold_time: int = Const.DEFAULT_HOLD_TIME
         self.hold_expiry_timer: Optional[Timer] = None
         #
         self.serial: Optional[str] = None
