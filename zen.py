@@ -35,6 +35,9 @@ class Const:
     # Unicast
     DEFAULT_UNICAST_PORT = 6969
 
+    # Cache
+    CACHE_TIMEOUT = 1*60*60 # 1 hour
+
 class ZenError(Exception):
     """Base exception for Zen protocol errors"""
     pass
@@ -50,6 +53,7 @@ class ZenResponseError(ZenError):
 @dataclass
 class ZenController:
     protocol: ZenProtocol
+    id: int
     name: str
     label: str
     host: str
@@ -403,13 +407,17 @@ class ZenProtocol:
                  narration: bool = False,
                  unicast: bool = False,
                  listen_ip: Optional[str] = None,
-                 listen_port: Optional[int] = None
+                 listen_port: Optional[int] = None,
+                 cache: dict = {}
                  ):
         self.logger = logger
         self.narration = narration
         self.unicast = unicast
         self.listen_ip = (listen_ip if listen_ip else "0.0.0.0") if unicast else None
         self.listen_port = (listen_port if listen_port else Const.DEFAULT_UNICAST_PORT) if unicast else None
+
+        # Cache object
+        self.cache: dict = cache
         
         # If unicast, and we're binding to 0.0.0.0, we still need to know our actual IP address
         self.local_ip = (socket.gethostbyname(socket.gethostname()) if self.listen_ip == "0.0.0.0" else self.listen_ip) if self.unicast else None
@@ -464,11 +472,13 @@ class ZenProtocol:
                    command: int,
                    address: int = 0x00,
                    data: list[int] = [0x00, 0x00, 0x00], 
-                   return_type: str = 'bytes') -> Optional[bytes | str | list[int] | int | bool]:
+                   return_type: str = 'bytes',
+                   cacheable: bool = False
+                   ) -> Optional[bytes | str | list[int] | int | bool]:
         if len(data) > 3: 
             raise ValueError("data must be 0-3 bytes")
         data = data + [0x00] * (3 - len(data))  # Pad data to 3 bytes
-        response_data, response_code = self._send_packet_retry_on_timeout(controller, command, [address] + data)
+        response_data, response_code = self._send_packet_retry_and_cache(controller, command, [address] + data, cacheable=cacheable)
         if response_data is None and response_code is None:
             return None
         match response_code:
@@ -514,7 +524,7 @@ class ZenProtocol:
         
     def _send_colour(self, controller: ZenController, command: int, address: int, colour: ZenColour, level: int = 255) -> Optional[bool]:
         """Send a DALI colour command."""
-        response_data, response_code = self._send_packet_retry_on_timeout(controller, command, [address] + list(colour.to_bytes(level)))
+        response_data, response_code = self._send_packet_retry_and_cache(controller, command, [address] + list(colour.to_bytes(level)))
         match response_code:
             case 0xA0: # OK
                 return True
@@ -524,7 +534,7 @@ class ZenProtocol:
 
     def _send_dynamic(self, controller: ZenController, command: int, data: list[int]) -> Optional[bytes]:
         # Calculate data length and prepend it to data
-        response_data, response_code = self._send_packet_retry_on_timeout(controller, command, [len(data)] + data)
+        response_data, response_code = self._send_packet_retry_and_cache(controller, command, [len(data)] + data)
         # Check response type
         match response_code:
             case 0xA0: # OK
@@ -550,12 +560,34 @@ class ZenProtocol:
             return response_data
         return None
     
-    def _send_packet_retry_on_timeout(self, controller: ZenController, command: int, data: list[int]) -> tuple[Optional[bytes], int]:
+    def _send_packet_retry_and_cache(self, controller: ZenController, command: int, data: list[int], cacheable: bool = False) -> tuple[Optional[bytes], int]:
+        cache_key = bytes([controller.id, command] + data)
+        
+        if cacheable:
+            if cache_key in self.cache:
+                c = self.cache[cache_key]
+                t = c.get('t', None)
+                if t is not None and time.time() - t < Const.CACHE_TIMEOUT:
+                    if self.narration: print(Fore.MAGENTA + f"SEND: [{', '.join(f'0x{b:02x}' for b in cache_key)}]  "
+                                                + Fore.RED + Style.DIM + f"CACHE HIT"
+                                                + Style.BRIGHT + Fore.CYAN + f"  {c}"
+                                                + Style.RESET_ALL)
+                    return c.get('d', None), c.get('c', None)
+                else:
+                    del self.cache[cache_key]
+        
         for _ in range(3):
             if _ > 0:
                 self.logger.error(f"Trying again...")
             try:
-                return self._send_packet(controller, command, data)
+                response_data, response_code = self._send_packet(controller, command, data)
+                if cacheable:
+                    self.cache[cache_key] = {
+                        'd': response_data,
+                        'c': response_code,
+                        't': time.time()
+                    }
+                return response_data, response_code
             except ZenTimeoutError:
                 pass
             controller.connected = False
@@ -828,13 +860,13 @@ class ZenProtocol:
 
     def query_group_label(self, address: ZenAddress, generic_if_none: bool=False) -> Optional[str]:
         """Get the label for a DALI Group. Returns a string, or None if no label is set."""
-        label = self._send_basic(address.controller, self.CMD["QUERY_GROUP_LABEL"], address.group(), return_type='str')
+        label = self._send_basic(address.controller, self.CMD["QUERY_GROUP_LABEL"], address.group(), return_type='str', cacheable=True)
         if label is None and generic_if_none: return f"Group {address.number}"
         return label;
     
     def query_dali_device_label(self, address: ZenAddress, generic_if_none: bool=False) -> Optional[str]:
         """Query the label for a DALI device (control gear or control device). Returns a string, or None if no label is set."""
-        label = self._send_basic(address.controller, self.CMD["QUERY_DALI_DEVICE_LABEL"], address.ecg_or_ecd(), return_type='str')
+        label = self._send_basic(address.controller, self.CMD["QUERY_DALI_DEVICE_LABEL"], address.ecg_or_ecd(), return_type='str', cacheable=True)
         if label is None and generic_if_none: label = f"{address.controller.label} ECD {address.number}"
         return label
         
@@ -847,7 +879,7 @@ class ZenProtocol:
         profile_upper = (profile >> 8) & 0xFF
         profile_lower = profile & 0xFF
         # Send request
-        return self._send_basic(controller, self.CMD["QUERY_PROFILE_LABEL"], 0x00, [0x00, profile_upper, profile_lower], return_type='str')
+        return self._send_basic(controller, self.CMD["QUERY_PROFILE_LABEL"], 0x00, [0x00, profile_upper, profile_lower], return_type='str', cacheable=True)
     
     def query_current_profile_number(self, controller: ZenController) -> Optional[int]:
         """Get the current/active Profile number for a controller. Returns int, else None if query fails."""
@@ -1007,7 +1039,7 @@ class ZenProtocol:
     
     def query_profile_information(self, controller: ZenController) -> Optional[tuple[dict, dict]]:
         """Query a controller for profile information. Returns a tuple of two dicts, or None if query fails."""
-        response = self._send_basic(controller, self.CMD["QUERY_PROFILE_INFORMATION"])
+        response = self._send_basic(controller, self.CMD["QUERY_PROFILE_INFORMATION"], cacheable=True)
         # Initial 12 bytes:
         # 0-1 0x00 Current Active Profile Number
         # 2-3 0x00 Last Scheduled Profile Number
@@ -1187,7 +1219,7 @@ class ZenProtocol:
     def query_scene_label_for_group(self, address: ZenAddress, scene: int, generic_if_none: bool=False) -> Optional[str]:
         """Query the label for a scene (0-11) and group number combination. Returns string, or None if no label is set."""
         if not 0 <= scene < Const.MAX_SCENE: raise ValueError("Scene must be between 0 and 11")
-        label = self._send_basic(address.controller, self.CMD["QUERY_SCENE_LABEL_FOR_GROUP"], address.group(), [scene], return_type='str')
+        label = self._send_basic(address.controller, self.CMD["QUERY_SCENE_LABEL_FOR_GROUP"], address.group(), [scene], return_type='str', cacheable=True)
         if label is None and generic_if_none:
             return f"Scene {scene}"
         return label
@@ -1398,7 +1430,7 @@ class ZenProtocol:
     
     def query_dali_instance_label(self, instance: ZenInstance, generic_if_none: bool=False) -> Optional[str]:
         """Query the label for a DALI Instance. Returns a string, or None if not set. Optionally, returns a generic label if the instance label is not set."""
-        label = self._send_basic(instance.address.controller, self.CMD["QUERY_DALI_INSTANCE_LABEL"], instance.address.ecd(), [0x00, 0x00, instance.number], return_type='str')
+        label = self._send_basic(instance.address.controller, self.CMD["QUERY_DALI_INSTANCE_LABEL"], instance.address.ecd(), [0x00, 0x00, instance.number], return_type='str', cacheable=True)
         if label is None and generic_if_none:
             label = instance.type.name.title().replace("_", " ")  + " " + str(instance.number)
         return label
@@ -1445,7 +1477,7 @@ class ZenProtocol:
     
     def query_dali_fitting_number(self, address: ZenAddress) -> Optional[str]:
         """Query a DALI address (ECG or ECD) for its fitting number. Returns the fitting number (e.g. '1.2') or a generic identifier if the address doesn't exist, or None if the query fails."""
-        return self._send_basic(address.controller, self.CMD["QUERY_DALI_FITTING_NUMBER"], address.ecg_or_ecd(), return_type='str')
+        return self._send_basic(address.controller, self.CMD["QUERY_DALI_FITTING_NUMBER"], address.ecg_or_ecd(), return_type='str', cacheable=True)
         
     def query_dali_instance_fitting_number(self, instance: ZenInstance) -> Optional[str]:
         """Query a DALI instance for its fitting number. Returns a string (e.g. '1.2.0') or None if query fails."""
@@ -1453,7 +1485,7 @@ class ZenProtocol:
     
     def query_controller_label(self, controller: ZenController) -> Optional[str]:
         """Request the label for the controller. Returns the controller's label string, or None if query fails."""
-        return self._send_basic(controller, self.CMD["QUERY_CONTROLLER_LABEL"], return_type='str')
+        return self._send_basic(controller, self.CMD["QUERY_CONTROLLER_LABEL"], return_type='str', cacheable=True)
     
     def query_controller_fitting_number(self, controller: ZenController) -> Optional[str]:
         """Request the fitting number string for the controller itself. Returns the controller's fitting number (e.g. '1'), or None if query fails."""
@@ -1525,7 +1557,7 @@ class ZenProtocol:
                 'rgbwaf_channels': int,      # Number of RGBWAF channels (0-7)
             }
         """
-        response = self._send_basic(address.controller, self.CMD["QUERY_DALI_COLOUR_FEATURES"], address.ecg())
+        response = self._send_basic(address.controller, self.CMD["QUERY_DALI_COLOUR_FEATURES"], address.ecg(), cacheable=True)
         if response and len(response) == 1:
             features = response[0]
             return {
@@ -1560,7 +1592,7 @@ class ZenProtocol:
                 'step_value': int         # Step value (K)
             }
         """
-        response = self._send_basic(address.controller, self.CMD["QUERY_DALI_COLOUR_TEMP_LIMITS"], address.ecg())
+        response = self._send_basic(address.controller, self.CMD["QUERY_DALI_COLOUR_TEMP_LIMITS"], address.ecg(), cacheable=True)
         if response and len(response) == 10:
             return {
                 'physical_warmest': (response[0] << 8) | response[1],
@@ -1601,4 +1633,4 @@ class ZenProtocol:
         """Query the name of a system variable (0-147). Returns the variable's name, or None if query fails."""
         if not 0 <= variable < Const.MAX_SYSVAR:
             raise ValueError(f"Variable number must be between 0 and {Const.MAX_SYSVAR}, received {variable}")
-        return self._send_basic(controller, self.CMD["QUERY_SYSTEM_VARIABLE_NAME"], variable, return_type='str')
+        return self._send_basic(controller, self.CMD["QUERY_SYSTEM_VARIABLE_NAME"], variable, return_type='str', cacheable=True)

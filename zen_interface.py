@@ -68,10 +68,15 @@ class ZenInterface:
                  narration: bool = False,
                  unicast: bool = False,
                  listen_ip: Optional[str] = None,
-                 listen_port: Optional[int] = None
+                 listen_port: Optional[int] = None,
+                 cache: dict = {}
                  ):
-        self.protocol: ZenProtocol = ZenProtocol(logger=logger, narration=narration, unicast=unicast, listen_ip=listen_ip, listen_port=listen_port)
+        self.protocol: ZenProtocol = ZenProtocol(logger=logger, narration=narration, unicast=unicast, listen_ip=listen_ip, listen_port=listen_port, cache=cache)
         self.controllers: list[ZenController] = []
+
+    @property
+    def cache(self) -> dict:
+        return self.protocol.cache
 
     @property
     def on_connect(self) -> CallbackOnConnect | None:
@@ -140,8 +145,8 @@ class ZenInterface:
     # Setup / Start / Stop
     # ============================
 
-    def add_controller(self, name: str, label: str, host: str, port: int = 5108, mac: Optional[str] = None, filtering: bool = False) -> ZenController:
-        controller = ZenController(protocol=self.protocol, name=name, label=label, host=host, port=port, mac=mac, filtering=filtering)
+    def add_controller(self, id: int, name: str, label: str, host: str, port: int = 5108, mac: Optional[str] = None, filtering: bool = False) -> ZenController:
+        controller = ZenController(protocol=self.protocol, id=id, name=name, label=label, host=host, port=port, mac=mac, filtering=filtering)
         self.controllers.append(controller)
         self.protocol.set_controllers(self.controllers)
         return controller
@@ -288,14 +293,15 @@ class ZenInterface:
 # Abstraction layer classes
 # ============================ 
 
-class ZenController (SuperZenController):
+class ZenController(SuperZenController):
     _instances = {}
-    def __new__(cls, protocol: ZenProtocol, name: str, label: str, host: str, port: int = 5108, mac: Optional[str] = None, filtering: bool = False):
+    def __new__(cls, protocol: ZenProtocol, id: int, name: str, label: str, host: str, port: int = 5108, mac: Optional[str] = None, filtering: bool = False):
         # Singleton based on controller name
         if name not in cls._instances:
             inst = super().__new__(cls)
-            cls._instances[name] = inst
+            cls._instances[id] = inst
             inst.protocol = protocol
+            inst.id = id
             inst.name = name
             inst.label = label
             inst.host = host
@@ -305,7 +311,7 @@ class ZenController (SuperZenController):
             inst.connected = False
             inst.mac_bytes = bytes.fromhex(inst.mac.replace(':', '')) # Convert MAC address to bytes once
             inst._reset()
-        return cls._instances[name]
+        return cls._instances[id]
     def __repr__(self) -> str:
         return f"ZenController<{self.name}>"
     def _reset(self) -> None:
@@ -409,8 +415,8 @@ class ZenLight:
             "RGBWW": False,
         }
         self.properties: dict[str, Optional[int]] = {
-            "min_kelvin": None,
-            "max_kelvin": None,
+            "min_kelvin": Const.DEFAULT_WARMEST_TEMP,
+            "max_kelvin": Const.DEFAULT_COOLEST_TEMP,
         }
         self.level: Optional[int] = None
         self.colour: Optional[ZenColour] = None
@@ -485,9 +491,12 @@ class ZenLight:
                                     colour=self.colour if colour_changed else None,
                                     scene=self._scene if scene_changed else None)
         if type(self) is ZenGroup:
-            if scene_changed:
+            if level_changed or colour_changed or scene_changed:
                 if callable(_callbacks.group_change):
-                    _callbacks.group_change(group=self, scene=self._scene if scene_changed else None)
+                    _callbacks.group_change(group=self,
+                                    level=self.level if level_changed else None,
+                                    colour=self.colour if colour_changed else None,
+                                    scene=self._scene if scene_changed else None)
     def supports_colour(self, colour: ZenColourType|ZenColour) -> bool:
         # colour_type = colour if type(colour) == ZenColourType else colour.type
         if type(colour) == ZenColour:
@@ -591,7 +600,7 @@ class ZenGroup(ZenLight):
             })
         return True
     def supports_colour(self, colour: ZenColourType|ZenColour) -> bool:
-        return True
+        return False
     # -----------------------------------------------------------------------------------------
     # REMINDER: None of the following methods should update the internal object state directly.
     #   These methods send commands to the controller. The controller sends events back.

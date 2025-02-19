@@ -11,6 +11,7 @@ from colorama import Fore, Back, Style
 import logging
 from logging.handlers import RotatingFileHandler
 import math
+import pickle
 
 class Const:
 
@@ -129,6 +130,9 @@ class ZenMQTTBridge:
 
         # Begin listening for zen events
         self.zen.start()
+
+        with open("cache.pkl", "wb") as f:
+            pickle.dump(self.zen.cache, f)
         
         while True:
             time.sleep(1)
@@ -163,7 +167,7 @@ class ZenMQTTBridge:
             if not isinstance(self.config['zencontrol'], list):
                 raise ValueError("zencontrol config must be a list")
             
-            zencontrol_required = ['name', 'label', 'mac', 'host', 'port']
+            zencontrol_required = ['id', 'name', 'label', 'mac', 'host', 'port']
             for i, config in enumerate(self.config['zencontrol']):
 
                 # Check for required fields
@@ -229,7 +233,12 @@ class ZenMQTTBridge:
 
     def setup_zen(self) -> None:
         try:
-            self.zen: ZenInterface = ZenInterface(logger=self.logger, narration=False)
+            try:
+                with open("cache.pkl", "rb") as infile:
+                    cache = pickle.load(infile)
+            except FileNotFoundError:
+                cache = {}
+            self.zen: ZenInterface = ZenInterface(logger=self.logger, narration=True, cache=cache)
             self.zen.on_connect = self._zen_on_connect
             self.zen.on_disconnect = self._zen_on_disconnect
             self.zen.profile_change = self._zen_profile_change
