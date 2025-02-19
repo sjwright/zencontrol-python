@@ -250,6 +250,7 @@ class ZenMQTTBridge:
             self.zen.system_variable_change = self._zen_system_variable_change
             for config in self.config['zencontrol']:
                 ctrl = self.zen.add_controller(
+                    id=config['id'],
                     name=config['name'],
                     label=config['label'],
                     host=config['host'],
@@ -402,17 +403,16 @@ class ZenMQTTBridge:
 
             # Match on object type
             if isinstance(target_object, ZenController):
-                ctrl = target_object
-                self._mqtt_profile_change(ctrl, payload)
+                self._mqtt_profile_change(target_object, payload)
             elif isinstance(target_object, ZenGroup):
-                group = target_object
-                self._mqtt_group_change(group, payload)
+                if "/select/" in base_topic:
+                    self._mqtt_groupscene_change(target_object, payload)
+                elif "/light/" in base_topic:
+                    self._mqtt_light_change(target_object, json.loads(payload))
             elif isinstance(target_object, ZenLight):
-                light = target_object
-                self._mqtt_light_change(light, json.loads(payload))
+                self._mqtt_light_change(target_object, json.loads(payload))
             elif isinstance(target_object, ZenSystemVariable):
-                sysvar = target_object
-                self._mqtt_system_variable_change(sysvar, payload)
+                self._mqtt_system_variable_change(target_object, payload)
             elif isinstance(target_object, ZenMotionSensor):
                 return  # Read only
             else:
@@ -464,7 +464,7 @@ class ZenMQTTBridge:
         else:
             raise ValueError(f"Unknown object type: {type(object)}")
 
-        object.client_data = object.client_data | {
+        object.client_data[component] = object.client_data.get(component, {}) | {
             "component": component,
             "attributes": attributes | {
                 "component": component,
@@ -481,7 +481,7 @@ class ZenMQTTBridge:
             "mqtt_target": mqtt_target,
             "mqtt_topic": f"{self.discovery_prefix}/{component}/{ctrl.name}/{mqtt_target}",
         }
-        return object.client_data
+        return object.client_data[component]
     
     def _publish_config(self, topic: str, config: dict, object: Any = None, retain: bool = True) -> None:
         if object:
@@ -515,10 +515,10 @@ class ZenMQTTBridge:
     def setup_profiles(self) -> None:
         """Initialize all profiles for Home Assistant auto-discovery."""
         for ctrl in self.control:
-            self._client_data_for_object(ctrl, "select")
-            mqtt_topic = ctrl.client_data['mqtt_topic']
+            client_data = self._client_data_for_object(ctrl, "select")
+            mqtt_topic = client_data['mqtt_topic']
             profiles = self.zen.get_profiles(ctrl)
-            config_dict = self.global_config | ctrl.client_data['attributes'] | {
+            config_dict = self.global_config | client_data.get("attributes",{}) | {
                 "name": f"{ctrl.label} Profile",
                 "command_topic": f"{mqtt_topic}/set",
                 "state_topic": f"{mqtt_topic}/state",
@@ -537,7 +537,7 @@ class ZenMQTTBridge:
         print(f"Zen to HA: profile changed to {profile}")
 
         ctrl = profile.controller
-        mqtt_topic = ctrl.client_data.get('mqtt_topic', None)
+        mqtt_topic = ctrl.client_data.get("select", {}).get('mqtt_topic', None)
         if not mqtt_topic:
             self.logger.error(f"Controller {ctrl} has no MQTT topic")
             return
@@ -552,9 +552,9 @@ class ZenMQTTBridge:
         """Initialize all lights for Home Assistant auto-discovery."""
         lights = self.zen.get_lights()
         for light in lights:
-            self._client_data_for_object(light, "light")
-            mqtt_topic = light.client_data['mqtt_topic']
-            config_dict = self.global_config | light.client_data['attributes'] | {
+            client_data = self._client_data_for_object(light, "light")
+            mqtt_topic = client_data['mqtt_topic']
+            config_dict = self.global_config | client_data.get("attributes",{}) | {
                 "name": light.label,
                 "schema": "json",
                 "payload_off": "OFF",
@@ -583,8 +583,7 @@ class ZenMQTTBridge:
             # Get the latest state from the controller and trigger an event, which then sends a state update
             light.sync_from_controller()
 
-    def _mqtt_light_change(self, light: ZenLight, payload: dict[str, Any]) -> None:
-        print(payload)
+    def _mqtt_light_change(self, light: ZenLight|ZenGroup, payload: dict[str, Any]) -> None:
         addr = light.address
         ctrl = addr.controller
         brightness: Optional[int] = payload.get("brightness", None)
@@ -612,13 +611,10 @@ class ZenMQTTBridge:
     def _zen_light_change(self, light: ZenLight, level: Optional[int] = None, colour: Optional[ZenColour] = None, scene: Optional[int] = None) -> None:
         print(f"Zen to HA: light {light} level {level} colour {colour} scene {scene}")
         
-        mqtt_topic = light.client_data.get('mqtt_topic', None)
+        mqtt_topic = light.client_data.get("light", {}).get('mqtt_topic', None)
         if not mqtt_topic:
             self.logger.error(f"Light {light} has no MQTT topic")
             return
-        
-        level = light.level
-        colour = light.colour
 
         new_state = {
             "state": "OFF" if light.level == 0 else "ON"
@@ -642,9 +638,30 @@ class ZenMQTTBridge:
         groups = self.zen.get_groups()
         for group in groups:
             if group.lights:
-                self._client_data_for_object(group, "select")
-                mqtt_topic = group.client_data['mqtt_topic']
-                config_dict = self.global_config | group.client_data['attributes'] | {
+                client_data = self._client_data_for_object(group, "light")
+                mqtt_topic = client_data['mqtt_topic']
+                config_dict = self.global_config | client_data.get("attributes",{}) | {
+                    "name": group.label,
+                    "schema": "json",
+                    "payload_off": "OFF",
+                    "payload_on": "ON",
+                    "command_topic": f"{mqtt_topic}/set",
+                    "state_topic": f"{mqtt_topic}/state",
+                    "json_attributes_topic": f"{mqtt_topic}/attributes",
+                    "effect": False,
+                    "retain": False,
+                    "brightness": True,
+                    "supported_color_modes": ["brightness"],
+                    #"supported_color_modes": ["color_temp"],
+                    #"min_mireds": self.kelvin_to_mireds(group.properties["max_kelvin"]),
+                    #"max_mireds": self.kelvin_to_mireds(group.properties["min_kelvin"]),
+                }
+                self._publish_config(mqtt_topic, config_dict, object=group)
+        for group in groups:
+            if group.lights:
+                client_data = self._client_data_for_object(group, "select")
+                mqtt_topic = client_data['mqtt_topic']
+                config_dict = self.global_config | client_data.get("attributes",{}) | {
                     "name": group.label,
                     "command_topic": f"{mqtt_topic}/set",
                     "state_topic": f"{mqtt_topic}/state",
@@ -653,24 +670,38 @@ class ZenMQTTBridge:
                 self._publish_config(mqtt_topic, config_dict, object=group)
                 self._publish_state(mqtt_topic, group.scene)
             
-    def _mqtt_group_change(self, group: ZenGroup, payload: str) -> None:
+    def _mqtt_groupscene_change(self, group: ZenGroup, payload: str) -> None:
         print(f"HA asking to change scene of {group} to {payload}")
         group.set_scene(payload)
         
-    def _zen_group_change(self, group: ZenGroup, scene: Optional[int] = None) -> None:
-        print(f"Zen to HA: group {group} scene {scene}")
+    def _zen_group_change(self, group: ZenGroup, level: Optional[int] = None, colour: Optional[ZenColour] = None, scene: Optional[int] = None) -> None:
+        print(f"Zen to HA: group {group} level {level} colour {colour} scene {scene}")
         
-        mqtt_topic = group.client_data.get('mqtt_topic', None)
+        mqtt_topic = group.client_data.get("light", {}).get('mqtt_topic', None)
         if not mqtt_topic:
             self.logger.error(f"Group {group} has no MQTT topic")
             return
 
         # Get the scene label for the ID from the group
-        scene_label = next((s["label"] for s in group.scenes if s["number"] == scene), None)
-        if scene_label:
-            self._publish_state(mqtt_topic, scene_label)
-        else:
-            self.logger.warning(f"Group {group} has no scene with ID {scene}")
+        if scene:
+            scene_label = next((s["label"] for s in group.scenes if s["number"] == scene), None)
+            if scene_label:
+                self._publish_state(mqtt_topic, scene_label)
+            else:
+                self.logger.warning(f"Group {group} has no scene with ID {scene}")
+
+        elif level == 0:
+            new_state = {
+                "state": "OFF"
+            }
+            self._publish_state(mqtt_topic, new_state)
+        
+        elif level > 0:
+            new_state = {
+                "brightness": self.arc_to_brightness(level)
+            }
+            self._publish_state(mqtt_topic, new_state)
+
 
     # ================================
     #           BUTTONS
@@ -680,10 +711,10 @@ class ZenMQTTBridge:
         """Initialize all buttons found on the DALI bus for Home Assistant auto-discovery."""
         buttons = self.zen.get_buttons()
         for button in buttons:
-            self._client_data_for_object(button, "device_automation")
+            client_data = self._client_data_for_object(button, "device_automation")
             button.long_press_time = Const.DEFAULT_LONG_PRESS_TIME
-            mqtt_topic = button.client_data['mqtt_topic']
-            config_dict = self.global_config | button.client_data['attributes'] | {
+            mqtt_topic = client_data['mqtt_topic']
+            config_dict = self.global_config | client_data.get("attributes",{}) | {
                 "automation_type": "trigger",
                 "subtype": re.sub(r'[^a-z0-9]', '_', button.label.lower()) + "_" + re.sub(r'[^a-z0-9]', '_', button.instance_label.lower()),
                 "type": "button_short_press",
@@ -700,7 +731,7 @@ class ZenMQTTBridge:
         
     def _zen_button_press(self, button: ZenButton) -> None:
         print(f"Zen to HA: button press {button}")
-        mqtt_topic = button.client_data.get('mqtt_topic', None)
+        mqtt_topic = button.client_data.get("button", {}).get("device_automation", {}).get("mqtt_topic", None)
         if not mqtt_topic:
             self.logger.error(f"Button {button} has no MQTT topic")
             return
@@ -708,7 +739,7 @@ class ZenMQTTBridge:
         
     def _zen_button_long_press(self, button: ZenButton) -> None:
         print(f"Zen to HA: button long press {button}")
-        mqtt_topic = button.client_data.get('mqtt_topic', None)
+        mqtt_topic = button.client_data.get("button", {}).get("device_automation", {}).get("mqtt_topic", None)
         if not mqtt_topic:
             self.logger.error(f"Button {button} has no MQTT topic")
             return
@@ -722,10 +753,10 @@ class ZenMQTTBridge:
         """Initialize all motion sensors found on the DALI bus for Home Assistant auto-discovery."""
         sensors = self.zen.get_motion_sensors()
         for sensor in sensors:
-            self._client_data_for_object(sensor, "binary_sensor")
+            client_data = self._client_data_for_object(sensor, "binary_sensor")
             sensor.hold_time = Const.DEFAULT_HOLD_TIME
-            mqtt_topic = sensor.client_data['mqtt_topic']
-            config_dict = self.global_config | sensor.client_data['attributes'] | {
+            mqtt_topic = client_data['mqtt_topic']
+            config_dict = self.global_config | client_data.get("attributes",{}) | {
                 "name": sensor.instance_label,
                 "device_class": "motion",
                 "payload_off": "OFF",
@@ -739,7 +770,7 @@ class ZenMQTTBridge:
     
     def _zen_motion_event(self, sensor: ZenMotionSensor, occupied: bool) -> None:
         print(f"Zen to HA: sensor {sensor} occupied: {occupied}")
-        mqtt_topic = sensor.client_data.get('mqtt_topic', None)
+        mqtt_topic = sensor.client_data.get("binary_sensor", {}).get("mqtt_topic", None)
         if not mqtt_topic:
             self.logger.error(f"Sensor {sensor} has no MQTT topic")
             return
@@ -766,54 +797,49 @@ class ZenMQTTBridge:
                 self.system_variables.append(zsv)
 
         for zsv in self.system_variables:
-            self._client_data_for_object(zsv, zsv.client_data['component'])
             ctrl: ZenController = zsv.controller
-            mqtt_topic = zsv.client_data['mqtt_topic']
-            match zsv.client_data['component']:
-                case "sensor":
-                    config_dict = {
-                        "component": "sensor",
-                        "state_topic": f"{mqtt_topic}/state",
-                        "retain": False,
-                    }
-                case "switch":
-                    config_dict = {
-                        "component": "switch",
-                        "state_topic": f"{mqtt_topic}/state",
-                        "command_topic": f"{mqtt_topic}/set",
-                        "payload_off": "OFF",
-                        "payload_on": "ON",
-                        "retain": False,
-                    }
-                case _:
-                    raise ValueError(f"Unknown component: {zsv.client_data['component']}")
-            config_dict = self.global_config | zsv.client_data['attributes'] | config_dict
-            self._publish_config(zsv.client_data['mqtt_topic'], config_dict, object=zsv)
+            if zsv.client_data.get("switch", None):
+                client_data = self._client_data_for_object(zsv, zsv.client_data["switch"]['component'])
+                mqtt_topic = zsv.client_data["switch"]["mqtt_topic"]
+                config_dict = self.global_config | client_data.get("attributes",{}) | {
+                    "component": "switch",
+                    "state_topic": f"{mqtt_topic}/state",
+                    "command_topic": f"{mqtt_topic}/set",
+                    "payload_off": "OFF",
+                    "payload_on": "ON",
+                    "retain": False,
+                }
+            elif zsv.client_data.get("sensor", None):
+                client_data = self._client_data_for_object(zsv, zsv.client_data["sensor"]['component'])
+                mqtt_topic = zsv.client_data["sensor"]["mqtt_topic"]
+                config_dict = self.global_config | client_data.get("attributes",{}) | {
+                    "component": "sensor",
+                    "state_topic": f"{mqtt_topic}/state",
+                    "retain": False,
+                }
+            else:
+                continue
+
+            self._publish_config(client_data['mqtt_topic'], config_dict, object=zsv)
             self._publish_state(mqtt_topic, zsv.value)
         
     def _mqtt_system_variable_change(self, sysvar: ZenSystemVariable, payload: str) -> None:
         self.logger.info(f"Setting {sysvar.controller.name} system variable {sysvar.id} to {payload}")
-        match sysvar.client_data['component']:
-            case "switch":
-                sysvar.value = 1 if payload == "ON" else 0
-            case "sensor":
-                return # Read only
+        if sysvar.client_data.get("switch", None):
+            sysvar.value = 1 if payload == "ON" else 0
+        elif sysvar.client_data.get("sensor", None):
+            return # Read only
 
     def _zen_system_variable_change(self, system_variable: ZenSystemVariable, value:int, changed: bool, by_me: bool) -> None:
         print(f"System Variable Change Event - controller {system_variable.controller.name} system_variable {system_variable.id} value {value} changed {changed} by_me {by_me}")
-        mqtt_topic = system_variable.client_data.get('mqtt_topic', None)
-        if not mqtt_topic:
+        if system_variable.client_data.get("switch", None):
+            mqtt_topic = system_variable.client_data["switch"]["mqtt_topic"]
+            self._publish_state(mqtt_topic, "OFF" if value == 0 else "ON")
+        elif system_variable.client_data.get("sensor", None):
+            mqtt_topic = system_variable.client_data["sensor"]["mqtt_topic"]
+            self._publish_state(mqtt_topic, value)
+        else:
             self.logger.error(f"Ignoring system variable {system_variable}")
-            return
-    
-        match system_variable.client_data['component']:
-            case "switch":
-                self._publish_state(mqtt_topic, "OFF" if value == 0 else "ON")
-            case "sensor":
-                self._publish_state(mqtt_topic, value)
-            case _:
-                    raise ValueError(f"Unknown component: {system_variable.client_data['component']}")
-
         return
     
 # Usage
