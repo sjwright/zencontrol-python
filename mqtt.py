@@ -6,7 +6,7 @@ import re
 from typing import Optional, Any
 from zen_interface import ZenInterface, ZenTimeoutError, ZenController, ZenColour, ZenColourType, ZenProfile, ZenLight, ZenGroup, ZenButton, ZenMotionSensor, ZenSystemVariable
 import paho.mqtt
-import paho.mqtt.client
+import paho.mqtt.client as mqtt
 from colorama import Fore, Back, Style
 import logging
 from logging.handlers import RotatingFileHandler
@@ -63,7 +63,7 @@ class ZenMQTTBridge:
         self.discovery_prefix: str
         self.control: list[ZenController]
         self.zen: ZenInterface
-        self.mqttc: paho.mqtt.client.Client
+        self.mqttc: mqtt.Client
         self.setup_started: bool = False
         self.setup_complete: bool = False
         self.system_variables: list[ZenSystemVariable] = []
@@ -309,9 +309,9 @@ class ZenMQTTBridge:
         try:
             self.discovery_prefix = self.config['homeassistant']['discovery_prefix']
             if paho.mqtt.__version__[0] > '1':
-                self.mqttc = paho.mqtt.client.Client(paho.mqtt.client.CallbackAPIVersion.VERSION1)
+                self.mqttc = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, protocol=mqtt.MQTTv5)
             else:
-                self.mqttc = paho.mqtt.client.Client()
+                self.mqttc = mqtt.Client(protocol=mqtt.MQTTv5)
             self.mqttc.on_connect = self._mqtt_on_connect
             self.mqttc.on_message = self._mqtt_on_message
             self.mqttc.on_disconnect = self._mqtt_on_disconnect
@@ -325,7 +325,7 @@ class ZenMQTTBridge:
             self.logger.error(f"Failed to connect to MQTT broker: {e}")
             raise
 
-    def _mqtt_on_connect(self, client: paho.mqtt.client, userdata: Any, flags: dict, reason_code: int) -> None:
+    def _mqtt_on_connect(self, client: mqtt, userdata: Any, flags: dict, reason_code: int, props) -> None:
         """Called when the client connects or reconnects to the MQTT broker.
 
         Args:
@@ -333,35 +333,37 @@ class ZenMQTTBridge:
             userdata: Private user data
             flags: Response flags sent by the broker
             reason_code: Connection result code (0 indicates success)
-            properties: Properties from the connection response
+            props: Properties from the connection response
         """
         if reason_code == 0:
             self.logger.info("Successfully connected to MQTT broker")
             # Resubscribe to topics in case of reconnection
+            options = paho.mqtt.subscribeoptions.SubscribeOptions(noLocal=True)
             for ctrl in self.control:
-                client.subscribe(f"{self.discovery_prefix}/light/{ctrl.name}/#")
-                client.subscribe(f"{self.discovery_prefix}/binary_sensor/{ctrl.name}/#")
-                client.subscribe(f"{self.discovery_prefix}/sensor/{ctrl.name}/#")
-                client.subscribe(f"{self.discovery_prefix}/switch/{ctrl.name}/#")
-                client.subscribe(f"{self.discovery_prefix}/event/{ctrl.name}/#")
-                client.subscribe(f"{self.discovery_prefix}/select/{ctrl.name}/#")
-                client.subscribe(f"{self.discovery_prefix}/device_automation/{ctrl.name}/#")
+                client.subscribe(f"{self.discovery_prefix}/light/{ctrl.name}/#", options=options)
+                client.subscribe(f"{self.discovery_prefix}/binary_sensor/{ctrl.name}/#", options=options)
+                client.subscribe(f"{self.discovery_prefix}/sensor/{ctrl.name}/#", options=options)
+                client.subscribe(f"{self.discovery_prefix}/switch/{ctrl.name}/#", options=options)
+                client.subscribe(f"{self.discovery_prefix}/event/{ctrl.name}/#", options=options)
+                client.subscribe(f"{self.discovery_prefix}/select/{ctrl.name}/#", options=options)
+                client.subscribe(f"{self.discovery_prefix}/device_automation/{ctrl.name}/#", options=options)
                 client.publish(topic=f"{Const.MQTT_SERVICE_PREFIX}/{ctrl.name}/availability", payload="online", retain=True)
         else:
             self.logger.error(f"Failed to connect to MQTT broker with result code {reason_code}")
 
-    def _mqtt_on_disconnect(self, client: paho.mqtt.client, userdata: Any, 
+    def _mqtt_on_disconnect(self, client: mqtt, userdata: Any, 
                           rc: int, properties: Any = None) -> None:
         """Handle MQTT disconnection events."""
         self.logger.warning(f"Disconnected from MQTT broker with code: {rc}")
         if rc != 0:
             self.logger.info("Attempting to reconnect to MQTT broker")
 
-    def _mqtt_on_message(self, client: paho.mqtt.client, userdata: Any, msg: paho.mqtt.client.MQTTMessage) -> None:
+    def _mqtt_on_message(self, client: mqtt, userdata: Any, msg: mqtt.MQTTMessage) -> None:
         """Handle incoming MQTT messages with improved error handling."""
         try:
 
             # Debug
+            self.logger.debug(f"MQTT received - {msg.topic}: {msg.payload.decode('UTF-8')}")
             print(Fore.YELLOW + f"MQTT received - {msg.topic}: " + Style.DIM + f"{msg.payload.decode('UTF-8')}" + Style.RESET_ALL)
             
             # Get the last part of the topic
@@ -490,15 +492,18 @@ class ZenMQTTBridge:
         config_json = json.dumps(config)
         self.mqttc.publish(config_topic, config_json, retain=retain)
         if config_topic in self.config_topics_to_delete: self.config_topics_to_delete.remove(config_topic)
+        self.logger.debug(f"MQTT sent - {topic}/config: {config_json}")
         print(Fore.LIGHTRED_EX + f"MQTT sent - {topic}/config: " + Style.DIM + f"{config_json}" + Style.RESET_ALL)
     
     def _publish_state(self, topic: str, state: str|dict, retain: bool = False) -> None:
         if isinstance(state, dict): state = json.dumps(state)
         self.mqttc.publish(f"{topic}/state", state, retain=retain)
+        self.logger.debug(f"MQTT sent - {topic}/state: {state}")
         print(Fore.LIGHTRED_EX + f"MQTT sent - {topic}/state: " + Style.DIM + f"{state}" + Style.RESET_ALL)
     
     def _publish_event(self, topic: str, event: str, retain: bool = False) -> None:
         self.mqttc.publish(f"{topic}/event", event, retain=retain)
+        self.logger.debug(f"MQTT sent - {topic}/event: {event}")
         print(Fore.LIGHTRED_EX + f"MQTT sent - {topic}/event: " + Style.DIM + f"{event}" + Style.RESET_ALL)
 
     def delete_retained_topics(self) -> None:
