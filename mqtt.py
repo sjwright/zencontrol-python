@@ -591,6 +591,7 @@ class ZenMQTTBridge:
     def _mqtt_light_change(self, light: ZenLight|ZenGroup, payload: dict[str, Any]) -> None:
         addr = light.address
         ctrl = addr.controller
+        state: Optional[str] = payload.get("state", None)
         brightness: Optional[int] = payload.get("brightness", None)
         mireds: Optional[int] = payload.get("color_temp", None)
 
@@ -604,14 +605,12 @@ class ZenMQTTBridge:
             return
         
         # If switched on/off in HA
-        if "state" in payload:
-            state = payload["state"]
-            if state == "OFF":
-                self.logger.info(f"On {ctrl.name} turning gear {addr.number} OFF")
-                light.off(fade=True)
-            elif state == "ON":
-                self.logger.info(f"On {ctrl.name} turning gear {addr.number} ON")
-                light.on()
+        if state == "OFF":
+            self.logger.info(f"On {ctrl.name} turning gear {addr.number} OFF")
+            light.off(fade=True)
+        elif state == "ON":
+            self.logger.info(f"On {ctrl.name} turning gear {addr.number} ON")
+            light.on()
 
     def _zen_light_change(self, light: ZenLight, level: Optional[int] = None, colour: Optional[ZenColour] = None, scene: Optional[int] = None) -> None:
         print(f"Zen to HA: light {light} level {level} colour {colour} scene {scene}")
@@ -624,6 +623,7 @@ class ZenMQTTBridge:
         new_state = {
             "state": "OFF" if light.level == 0 else "ON"
         }
+
         if light.level and light.level > 0:
             new_state["brightness"] = self.arc_to_brightness(light.level)
 
@@ -686,31 +686,18 @@ class ZenMQTTBridge:
     def _zen_group_change(self, group: ZenGroup, level: Optional[int] = None, colour: Optional[ZenColour] = None, scene: Optional[int] = None) -> None:
         print(f"Zen to HA: group {group} level {level} colour {colour} scene {scene}")
         
-        mqtt_topic = group.client_data.get("light", {}).get('mqtt_topic', None)
-        if not mqtt_topic:
-            self.logger.error(f"Group {group} has no MQTT topic")
-            return
+        select_mqtt_topic = group.client_data.get("select", {}).get('mqtt_topic', None)
 
         # Get the scene label for the ID from the group
-        if scene:
+        if select_mqtt_topic and scene:
             scene_label = next((s["label"] for s in group.scenes if s["number"] == scene), None)
             if scene_label:
-                self._publish_state(mqtt_topic, scene_label)
+                self._publish_state(select_mqtt_topic, scene_label)
             else:
                 self.logger.warning(f"Group {group} has no scene with ID {scene}")
-
-        elif level == 0:
-            new_state = {
-                "state": "OFF"
-            }
-            self._publish_state(mqtt_topic, new_state)
         
-        elif level > 0:
-            new_state = {
-                "brightness": self.arc_to_brightness(level)
-            }
-            self._publish_state(mqtt_topic, new_state)
-
+        # Do light stuff
+        self._zen_light_change(light=group, level=level, colour=colour, scene=scene)
 
     # ================================
     #           BUTTONS
