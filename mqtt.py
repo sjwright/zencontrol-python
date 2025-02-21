@@ -121,11 +121,11 @@ class ZenMQTTBridge:
         self.setup_started = True
         self.setup_profiles()
         self.setup_lights()
-        # self.setup_groups()
-        # self.setup_buttons()
-        # self.setup_motion_sensors()
-        # self.setup_system_variables()
-        # self.delete_retained_topics()
+        self.setup_groups()
+        self.setup_buttons()
+        self.setup_motion_sensors()
+        self.setup_system_variables()
+        self.delete_retained_topics()
         self.setup_complete = True
 
         # Begin listening for zen events
@@ -238,7 +238,7 @@ class ZenMQTTBridge:
                     cache = pickle.load(infile)
             except FileNotFoundError:
                 cache = {}
-            self.zen: ZenInterface = ZenInterface(logger=self.logger, narration=True, cache=cache)
+            self.zen: ZenInterface = ZenInterface(logger=self.logger, narration=False, cache=cache)
             self.zen.on_connect = self._zen_on_connect
             self.zen.on_disconnect = self._zen_on_disconnect
             self.zen.profile_change = self._zen_profile_change
