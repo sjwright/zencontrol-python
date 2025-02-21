@@ -121,11 +121,11 @@ class ZenMQTTBridge:
         self.setup_started = True
         self.setup_profiles()
         self.setup_lights()
-        self.setup_groups()
-        self.setup_buttons()
-        self.setup_motion_sensors()
-        self.setup_system_variables()
-        self.delete_retained_topics()
+        # self.setup_groups()
+        # self.setup_buttons()
+        # self.setup_motion_sensors()
+        # self.setup_system_variables()
+        # self.delete_retained_topics()
         self.setup_complete = True
 
         # Begin listening for zen events
@@ -662,6 +662,8 @@ class ZenMQTTBridge:
                     #"max_mireds": self.kelvin_to_mireds(group.properties["min_kelvin"]),
                 }
                 self._publish_config(mqtt_topic, config_dict, object=group)
+                # Get the latest state from the controller and trigger an event, which then sends a state update
+                group.sync_from_controller()
         for group in groups:
             if group.lights:
                 client_data = self._client_data_for_object(group, "select")
@@ -678,6 +680,8 @@ class ZenMQTTBridge:
     def _mqtt_groupscene_change(self, group: ZenGroup, payload: str) -> None:
         print(f"HA asking to change scene of {group} to {payload}")
         group.set_scene(payload)
+    
+    # mqtt group light change calls _mqtt_light_change
         
     def _zen_group_change(self, group: ZenGroup, level: Optional[int] = None, colour: Optional[ZenColour] = None, scene: Optional[int] = None) -> None:
         print(f"Zen to HA: group {group} level {level} colour {colour} scene {scene}")

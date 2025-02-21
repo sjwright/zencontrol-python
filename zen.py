@@ -15,7 +15,7 @@ class ZenProtocol:
 class Const:
     # UDP protocol
     MAGIC_BYTE = 0x04
-    RESPONSE_TIMEOUT = 0.5
+    RESPONSE_TIMEOUT = 1.0 # In rare circumstances 0.5 seconds can be too short. 1 second is sufficient. Any longer is a cure worse than the disease.
 
     # DALI limits
     MAX_ECG = 64 # 0-63
@@ -658,9 +658,6 @@ class ZenProtocol:
         except socket.timeout:
             self.logger.error(f"UDP packet response from {controller.host}:{controller.port} not received in time, probably offline")
             raise ZenTimeoutError(f"No response from {controller.host}:{controller.port} in time")
-        except Exception as e:
-            self.logger.error(f"UDP packet error sending command: {e}")
-            raise ZenError(f"Error sending command: {e}")
             
         finally:
             # Always release lock when done

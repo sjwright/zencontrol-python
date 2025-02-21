@@ -461,14 +461,17 @@ class ZenLight:
             self._reset()
             return False
     def sync_from_controller(self) -> bool:
-        self.level = self.protocol.dali_query_level(self.address)
-        last_scene = self.protocol.dali_query_last_scene(self.address)
-        last_scene_is_current = self.protocol.dali_query_last_scene_is_current(self.address)
-        self._scene = last_scene if last_scene_is_current else None
+        print(f"Syncing light {self}")
+        current_level = self.protocol.dali_query_level(self.address)
+        current_colour = None
+        current_scene = None
+        if self.protocol.dali_query_last_scene_is_current(self.address):
+            current_scene = self.protocol.dali_query_last_scene(self.address)
         if self.features["temperature"] or self.features["RGB"] or self.features["RGBW"] or self.features["RGBWW"]:
-            self.colour = self.protocol.query_dali_colour(self.address)
-        # Callback
-        self._event_received(level=self.level, colour=self.colour, scene=self._scene)
+            current_colour = self.protocol.query_dali_colour(self.address)
+        # Mimic an incoming event
+        print(f"Syncing light {self} - level: {current_level}, colour: {current_colour}, scene: {current_scene}")
+        self._event_received(level=current_level, colour=current_colour, scene=current_scene)
     def _event_received(self, level: int = 255, colour: Optional[ZenColour] = None, scene: Optional[int] = None):
         # Called by ZenProtocol when a query command is issued or an event is received
         level_changed = False
