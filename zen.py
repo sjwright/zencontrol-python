@@ -114,11 +114,11 @@ class ZenAddress:
             case ZenAddressType.BROADCAST:
                 self.number = 255
             case ZenAddressType.ECG:
-                if not 0 <= self.number < Const.MAX_ECG: raise ValueError("Control Gear address must be between 0 and 63")
+                if not 0 <= self.number < Const.MAX_ECG: raise ValueError(f"Control Gear address must be between 0 and {Const.MAX_ECG-1}, received {self.number}")
             case ZenAddressType.ECD:
-                if not 0 <= self.number < Const.MAX_ECD: raise ValueError("Control Device address must be between 0 and 63")
+                if not 0 <= self.number < Const.MAX_ECD: raise ValueError(f"Control Device address must be between 0 and {Const.MAX_ECD-1}, received {self.number}")
             case ZenAddressType.GROUP:
-                if not 0 <= self.number < Const.MAX_GROUP: raise ValueError("Group number must be between 0 and 15")
+                if not 0 <= self.number < Const.MAX_GROUP: raise ValueError(f"Group number must be between 0 and {Const.MAX_GROUP-1}, received {self.number}")
             case _:
                 raise ValueError("Invalid address type")
 
@@ -834,7 +834,13 @@ class ZenProtocol:
 
                     case 0x08: # Colour Change - A Tc, RGBWAF or XY colour change has occurred
                         if self.colour_change_callback:
-                            address = ZenAddress(controller=controller, type=ZenAddressType.ECG if target < 64 else ZenAddressType.GROUP, number=target)
+                            if target < 64:
+                                address = ZenAddress(controller=controller, type=ZenAddressType.ECG, number=target)
+                            elif 64 <= target <= 79:
+                                address = ZenAddress(controller=controller, type=ZenAddressType.GROUP, number=target-64)
+                            else:
+                                self.logger.error(f"Invalid colour change event target: {target}")
+                                continue
                             colour = ZenColour.from_bytes(payload)
                             self.colour_change_callback(address=address, colour=colour, payload=payload)
                                 
