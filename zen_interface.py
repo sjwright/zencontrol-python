@@ -493,6 +493,10 @@ class ZenLight:
                                     level=self.level if level_changed else None,
                                     colour=self.colour if colour_changed else None,
                                     scene=self._scene if scene_changed else None)
+                    # For each group it's a member of, assess synchronicity
+                    for group in self.groups:
+                        if group.assess_synchronicity() is False:
+                            group.become_discoordinated()
         if type(self) is ZenGroup:
             if level_changed or colour_changed or scene_changed:
                 if callable(_callbacks.group_change):
@@ -544,7 +548,7 @@ class ZenLight:
         if (self.supports_colour(colour)):
             if not fade: self.protocol.dali_enable_dapc_sequence(self.address)
             return self.protocol.dali_colour(self.address, colour, level)
-        if level:
+        if 0 <= level <= 254:
             if fade:
                 return self.protocol.dali_arc_level(self.address, level)
             else:
@@ -603,17 +607,58 @@ class ZenGroup(ZenLight):
             })
         return True
     def supports_colour(self, colour: ZenColourType|ZenColour) -> bool:
+        if type(colour) == ZenColour:
+            colour_type = colour.type
+        elif type(colour) == ZenColourType:
+            colour_type = colour
+        else:
+            return False;
+        for light in self.lights:
+            if light.supports_colour(colour):
+                return True
         return False
     # -----------------------------------------------------------------------------------------
     # REMINDER: None of the following methods should update the internal object state directly.
     #   These methods send commands to the controller. The controller sends events back.
     #   The events update the internal state.
     # -----------------------------------------------------------------------------------------
-    def set_scene(self, scene: int|str, fade: bool = True) -> bool:
-        if type(scene) == str:
-            scene = next((s["number"] for s in self.scenes if s["label"] == scene), None)
-        return super().set_scene(scene, fade)
-
+    def assess_synchronicity(self) -> bool:
+        # Is every ZenLight in self.lights group set to the same level and colour?
+        level = None
+        colour = None
+        for light in self.lights:
+            if level is None:
+                level = light.level
+            elif level != light.level:
+                return False
+            if colour is None:
+                colour = light.colour
+            elif colour != light.colour:
+                return False
+        return True
+    def become_discoordinated(self):
+        # This is called when members of the group are no longer in a uniform state
+        self.level = None
+        self.colour = None
+        self._scene = None
+        if callable(_callbacks.group_change):
+            _callbacks.group_change(group=self,
+                                    level=self.level,
+                                    colour=self.colour,
+                                    scene=self._scene,
+                                    discoordinated=True)
+    def contains_dimmable_lights(self) -> bool:
+        # Is there at least one ZenLight in self.lights that supports dimming?
+        for light in self.lights:
+            if light.features["brightness"]:
+                return True
+        return False
+    def contains_temperature_lights(self) -> bool:
+        # Is there at least one ZenLight in self.lights that supports temperature?
+        for light in self.lights:
+            if light.features["temperature"]:
+                return True
+        return False
 
 class ZenButton:
     _instances = {}
