@@ -570,19 +570,23 @@ class ZenMQTTBridge:
                 "effect": False,
                 "retain": False,
                 "brightness": light.features["brightness"],
-                "supported_color_modes": ["brightness"],
+                "supported_color_modes": [],
             }
-            if light.features["temperature"]:
-                config_dict["supported_color_modes"] = ["color_temp"]
-                config_dict["min_mireds"] = self.kelvin_to_mireds(light.properties["max_kelvin"]) if light.properties["max_kelvin"] is not None else None
-                config_dict["max_mireds"] = self.kelvin_to_mireds(light.properties["min_kelvin"]) if light.properties["min_kelvin"] is not None else None
-            elif light.features["RGBWW"]:
+            if light.features["RGBWW"]:
                 config_dict["supported_color_modes"] = ["rgbww"]
             elif light.features["RGBW"]:
                 config_dict["supported_color_modes"] = ["rgbw"]
             elif light.features["RGB"]:
                 config_dict["supported_color_modes"] = ["rgb"]
-            
+            elif light.features["temperature"]:
+                config_dict["supported_color_modes"] = ["color_temp"]
+                config_dict["min_mireds"] = self.kelvin_to_mireds(light.properties["max_kelvin"]) if light.properties["max_kelvin"] is not None else None
+                config_dict["max_mireds"] = self.kelvin_to_mireds(light.properties["min_kelvin"]) if light.properties["min_kelvin"] is not None else None
+            elif light.features["brightness"]:
+                config_dict["supported_color_modes"] = ["brightness"]
+            else:
+                config_dict["supported_color_modes"] = ["onoff"]
+
             self._publish_config(mqtt_topic, config_dict, object=light)
 
             # Get the latest state from the controller and trigger an event, which then sends a state update
@@ -594,6 +598,7 @@ class ZenMQTTBridge:
         state: Optional[str] = payload.get("state", None)
         brightness: Optional[int] = payload.get("brightness", None)
         mireds: Optional[int] = payload.get("color_temp", None)
+        print(f"HA to Zen: light {light} state {state} brightness {brightness} mireds {mireds}")
 
         # If brightness or temperature is set
         if brightness or mireds:
@@ -641,6 +646,7 @@ class ZenMQTTBridge:
     def setup_groups(self) -> None:
         """Initialize all groups for Home Assistant auto-discovery."""
         groups = self.zen.get_groups()
+        # Group-lights
         for group in groups:
             if group.lights:
                 client_data = self._client_data_for_object(group, "light")
@@ -655,15 +661,29 @@ class ZenMQTTBridge:
                     "json_attributes_topic": f"{mqtt_topic}/attributes",
                     "effect": False,
                     "retain": False,
-                    "brightness": True,
-                    "supported_color_modes": ["brightness"],
-                    #"supported_color_modes": ["color_temp"],
-                    #"min_mireds": self.kelvin_to_mireds(group.properties["max_kelvin"]),
-                    #"max_mireds": self.kelvin_to_mireds(group.properties["min_kelvin"]),
+                    "brightness": False,
                 }
+                if group.contains_temperature_lights():
+                    config_dict = config_dict | {
+                        "brightness": True,
+                        "supported_color_modes": ["color_temp"],
+                        "min_mireds": self.kelvin_to_mireds(group.properties["max_kelvin"]),
+                        "max_mireds": self.kelvin_to_mireds(group.properties["min_kelvin"]),
+                    }
+                elif group.contains_dimmable_lights():
+                    config_dict = config_dict | {
+                        "brightness": True,
+                        "supported_color_modes": ["brightness"],
+                    }
+                else:
+                    config_dict = config_dict | {
+                        "supported_color_modes": ["onoff"],
+                    }
+                
                 self._publish_config(mqtt_topic, config_dict, object=group)
                 # Get the latest state from the controller and trigger an event, which then sends a state update
                 group.sync_from_controller()
+        # Group-scenes
         for group in groups:
             if group.lights:
                 client_data = self._client_data_for_object(group, "select")
@@ -683,7 +703,7 @@ class ZenMQTTBridge:
     
     # mqtt group light change calls _mqtt_light_change
         
-    def _zen_group_change(self, group: ZenGroup, level: Optional[int] = None, colour: Optional[ZenColour] = None, scene: Optional[int] = None) -> None:
+    def _zen_group_change(self, group: ZenGroup, level: Optional[int] = None, colour: Optional[ZenColour] = None, scene: Optional[int] = None, discoordinated: bool = False) -> None:
         print(f"Zen to HA: group {group} level {level} colour {colour} scene {scene}")
         
         select_mqtt_topic = group.client_data.get("select", {}).get('mqtt_topic', None)
@@ -695,6 +715,12 @@ class ZenMQTTBridge:
                 self._publish_state(select_mqtt_topic, scene_label)
             else:
                 self.logger.warning(f"Group {group} has no scene with ID {scene}")
+        
+        # If discoordinated, set the group-light's state to null and return
+        if discoordinated:
+            light_mqtt_topic = group.client_data.get("light", {}).get('mqtt_topic', None)
+            self._publish_state(light_mqtt_topic, {"state": None})
+            return
         
         # Do light stuff
         self._zen_light_change(light=group, level=level, colour=colour, scene=scene)
