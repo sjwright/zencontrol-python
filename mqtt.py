@@ -692,7 +692,7 @@ class ZenMQTTBridge:
                     "name": group.label,
                     "command_topic": f"{mqtt_topic}/set",
                     "state_topic": f"{mqtt_topic}/state",
-                    "options": [scene["label"] for scene in group.scenes],
+                    "options": group.get_scene_labels(exclude_none=True),
                 }
                 self._publish_config(mqtt_topic, config_dict, object=group)
                 self._publish_state(mqtt_topic, group.scene)
@@ -710,7 +710,7 @@ class ZenMQTTBridge:
 
         # Get the scene label for the ID from the group
         if select_mqtt_topic and scene:
-            scene_label = next((s["label"] for s in group.scenes if s["number"] == scene), None)
+            scene_label = group.get_scene_label_from_number(scene)
             if scene_label:
                 self._publish_state(select_mqtt_topic, scene_label)
             else:

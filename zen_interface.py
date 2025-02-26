@@ -6,6 +6,7 @@ from threading import Timer
 class Const:
 
     MAX_SYSVAR = 148 # 0-147
+    MAX_SCENE = 12 # 0-11
     
     DEFAULT_WARMEST_TEMP = 2700
     DEFAULT_COOLEST_TEMP = 6500
@@ -418,44 +419,54 @@ class ZenLight:
             "min_kelvin": Const.DEFAULT_WARMEST_TEMP,
             "max_kelvin": Const.DEFAULT_COOLEST_TEMP,
         }
+        self._scene_labels: list[Optional[str]] = [None] * Const.MAX_SCENE # Scene labels (only used by ZenGroup)
+        self._scene_levels: list[Optional[int]] = [None] * Const.MAX_SCENE # Scene levels (only used by ZenLight)
+        self._scene_colours: list[Optional[ZenColour]] = [None] * Const.MAX_SCENE # Scene colours (only used by ZenLight)
         self.level: Optional[int] = None
         self.colour: Optional[ZenColour] = None
-        self.scenes: list[dict] = []
-        self._scene: Optional[int] = None
+        self.scene: Optional[int] = None # Current scene number
         self.client_data: dict = {}
     def interview(self) -> bool:
         cgstatus = self.protocol.dali_query_control_gear_status(self.address)
         if cgstatus:
             self.label = self.protocol.query_dali_device_label(self.address, generic_if_none=True)
             self.serial = self.protocol.query_dali_serial(self.address)
-            # Colour features
-            cgtype = self.protocol.query_dali_colour_features(self.address)
-            if cgtype.get("supports_tunable", False) is True:
+            self.cgtype = self.protocol.dali_query_cg_type(self.address)
+            
+            # If cgtype contains 6, it supports brightness
+            if 6 in self.cgtype:
                 self.features["brightness"] = True
-                self.features["temperature"] = True
-                self.colour = self.protocol.query_dali_colour(self.address)
-                colour_temp_limits = self.protocol.query_dali_colour_temp_limits(self.address)
-                self.properties["min_kelvin"] = colour_temp_limits.get("soft_warmest", Const.DEFAULT_WARMEST_TEMP)
-                self.properties["max_kelvin"] = colour_temp_limits.get("soft_coolest", Const.DEFAULT_COOLEST_TEMP)
-            elif cgtype.get("rgbwaf_channels", 0) == Const.RGB_CHANNELS:
-                self.features["brightness"] = True
-                self.features["RGB"] = True
-                self.colour = self.protocol.query_dali_colour(self.address)
-            elif cgtype.get("rgbwaf_channels", 0) == Const.RGBW_CHANNELS:
-                self.features["brightness"] = True
-                self.features["RGBW"] = True
-                self.colour = self.protocol.query_dali_colour(self.address)
-            elif cgtype.get("rgbwaf_channels", 0) == Const.RGBWW_CHANNELS:
-                self.features["brightness"] = True
-                self.features["RGBWW"] = True
-                self.colour = self.protocol.query_dali_colour(self.address)
+            
+            # If cgtype contains 8, it supports some kind of colour
+            if 8 in self.cgtype:
+                cgtype = self.protocol.query_dali_colour_features(self.address)
+                if cgtype.get("supports_tunable", False) is True:
+                    self.features["brightness"] = True
+                    self.features["temperature"] = True
+                    colour_temp_limits = self.protocol.query_dali_colour_temp_limits(self.address)
+                    self.properties["min_kelvin"] = colour_temp_limits.get("soft_warmest", Const.DEFAULT_WARMEST_TEMP)
+                    self.properties["max_kelvin"] = colour_temp_limits.get("soft_coolest", Const.DEFAULT_COOLEST_TEMP)
+                elif cgtype.get("rgbwaf_channels", 0) == Const.RGB_CHANNELS:
+                    self.features["brightness"] = True
+                    self.features["RGB"] = True
+                elif cgtype.get("rgbwaf_channels", 0) == Const.RGBW_CHANNELS:
+                    self.features["brightness"] = True
+                    self.features["RGBW"] = True
+                elif cgtype.get("rgbwaf_channels", 0) == Const.RGBWW_CHANNELS:
+                    self.features["brightness"] = True
+                    self.features["RGBWW"] = True
+            
+            # Scenes
+            self._scene_levels = self.protocol.query_scene_levels_by_address(self.address)
+            self._scene_colours = self.protocol.query_scene_colours_by_address(self.address)
+
+            # Groups
             groups = self.protocol.query_group_membership_by_address(self.address)
             for group in groups:
                 group = ZenGroup(protocol=self.protocol, address=group)
                 group.lights.add(self) # Add to group's set of lights
                 self.groups.add(group) # Add to light's set of groups
-            # Sync light state
-            # self.sync_from_controller()
+            
             return True
         else:
             self._reset()
@@ -484,7 +495,7 @@ class ZenLight:
             self.colour = colour
             colour_changed = True
         if scene:
-            self._scene = scene
+            self.scene = scene
             scene_changed = True
         if type(self) is ZenLight:
             if level_changed or colour_changed or scene_changed:
@@ -492,7 +503,7 @@ class ZenLight:
                     _callbacks.light_change(light=self,
                                     level=self.level if level_changed else None,
                                     colour=self.colour if colour_changed else None,
-                                    scene=self._scene if scene_changed else None)
+                                    scene=self.scene if scene_changed else None)
                     # For each group it's a member of, assess synchronicity
                     for group in self.groups:
                         if group.assess_synchronicity() is False:
@@ -503,7 +514,7 @@ class ZenLight:
                     _callbacks.group_change(group=self,
                                     level=self.level if level_changed else None,
                                     colour=self.colour if colour_changed else None,
-                                    scene=self._scene if scene_changed else None)
+                                    scene=self.scene if scene_changed else None)
     def supports_colour(self, colour: ZenColourType|ZenColour) -> bool:
         # colour_type = colour if type(colour) == ZenColourType else colour.type
         if type(colour) == ZenColour:
@@ -518,10 +529,6 @@ class ZenLight:
             (colour_type == ZenColourType.RGBWAF and self.features["RGBWW"]):
             return True
         return False
-    @property
-    def scene(self) -> Optional[dict]:
-        # Return the current scene dict from self.scenes
-        return next((s for s in self.scenes if s["number"] == self._scene), None)
     # -----------------------------------------------------------------------------------------
     # REMINDER: None of the following methods should update the internal object state directly.
     #   These methods send commands to the controller. The controller sends events back.
@@ -535,7 +542,7 @@ class ZenLight:
         else: return self.protocol.dali_off(self.address)
     def set_scene(self, scene: int|str|dict, fade: bool = True) -> bool:
         if type(scene) == str:
-            scene = next((s["number"] for s in self.scenes if s["label"] == scene), None)
+            return next((i for i, s in enumerate(self._scene_labels) if s == scene), False)
         elif type(scene) == dict:
             scene = scene["number"]
         elif type(scene) == int:
@@ -597,14 +604,7 @@ class ZenGroup(ZenLight):
         return f"ZenGroup<{self.address.controller.name} group {self.address.number}: {self.label}>"
     def interview(self) -> bool:
         self.label = self.protocol.query_group_label(self.address, generic_if_none=True)
-        self.scenes = []
-        scene_numbers = self.protocol.query_scene_numbers_for_group(self.address)
-        for scene_number in scene_numbers:
-            scene_label = self.protocol.query_scene_label_for_group(self.address, scene_number, generic_if_none=True)
-            self.scenes.append({
-                "number": scene_number,
-                "label": scene_label,
-            })
+        self._scene_labels = self.protocol.query_scenes_for_group(self.address, generic_if_none=True)
         return True
     def supports_colour(self, colour: ZenColourType|ZenColour) -> bool:
         if type(colour) == ZenColour:
@@ -617,6 +617,17 @@ class ZenGroup(ZenLight):
             if light.supports_colour(colour):
                 return True
         return False
+    def get_scene_number_from_label(self, label: str) -> Optional[int]:
+        # return list index of label in self._scene_labels
+        return next((i for i, s in enumerate(self._scene_labels) if s == label), None)
+    def get_scene_label_from_number(self, number: int) -> Optional[str]:
+        # return label at index number in self._scene_labels
+        return self._scene_labels[number]
+    def get_scene_labels(self, exclude_none: bool = False) -> list[Optional[str]]:
+        if exclude_none:
+            return [label for label in self._scene_labels if label is not None]
+        else:
+            return self._scene_labels
     # -----------------------------------------------------------------------------------------
     # REMINDER: None of the following methods should update the internal object state directly.
     #   These methods send commands to the controller. The controller sends events back.
@@ -640,12 +651,12 @@ class ZenGroup(ZenLight):
         # This is called when members of the group are no longer in a uniform state
         self.level = None
         self.colour = None
-        self._scene = None
+        self.scene = None
         if callable(_callbacks.group_change):
             _callbacks.group_change(group=self,
                                     level=self.level,
                                     colour=self.colour,
-                                    scene=self._scene,
+                                    scene=self.scene,
                                     discoordinated=True)
     def contains_dimmable_lights(self) -> bool:
         # Is there at least one ZenLight in self.lights that supports dimming?
