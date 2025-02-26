@@ -58,3 +58,9 @@ for address in addresses:
     status = tpi.dali_query_control_gear_status(address)
     print(f"    status: {status}")
 
+    scenes = tpi.query_colour_scene_membership_by_address(address)
+    print(f"    scenes: {scenes}")
+
+    scene_data = tpi.query_scene_colours_by_address(address)
+    print(f"    scene data: {scene_data}")
+

@@ -199,10 +199,10 @@ class ZenColour:
             return None
         if bytes[0] == ZenColourType.RGBWAF.value and len(bytes) == 7:
             return cls(type=ZenColourType.RGBWAF, r=bytes[1], g=bytes[2], b=bytes[3], w=bytes[4], a=bytes[5], f=bytes[6])
-        if bytes[0] == ZenColourType.TC.value and len(bytes) == 3:
+        if bytes[0] == ZenColourType.TC.value and (len(bytes) == 3 or len(bytes) == 7):
             kelvin = (bytes[1] << 8) | bytes[2]
             return cls(type=ZenColourType.TC, kelvin=kelvin)
-        if bytes[0] == ZenColourType.XY.value and len(bytes) == 5:
+        if bytes[0] == ZenColourType.XY.value and (len(bytes) == 5 or len(bytes) == 7):
             x = (bytes[1] << 8) | bytes[2]
             y = (bytes[3] << 8) | bytes[4]
             return ZenColour(type=ZenColourType.XY, x=x, y=y)
@@ -381,6 +381,9 @@ class ZenProtocol:
         "DALI_SCENE": 0xA1,                         # Call a DALI Scene on a address
         "DALI_QUERY_LAST_SCENE": 0xAD,              # Query Last heard DALI Scene
         "DALI_QUERY_LAST_SCENE_IS_CURRENT": 0xAE,   # Query if last heard Scene is current scene
+        "QUERY_COLOUR_SCENE_MEMBERSHIP_BY_ADDR": 0x44, # Query a list of scenes with colour change data for an address
+        "QUERY_COLOUR_SCENE_0_7_DATA_FOR_ADDR": 0x45, # Query the colour control data for scenes 0-7
+        "QUERY_COLOUR_SCENE_8_11_DATA_FOR_ADDR": 0x46, # Query the colour control data for scenes 8-11
 
         # Implemented but not tested
         "OVERRIDE_DALI_BUTTON_LED_STATE": 0x29,     # Override a button LED state
@@ -1152,6 +1155,31 @@ class ZenProtocol:
             return [None if x == 255 else x for x in response]
         return None
     
+    def query_colour_scene_membership_by_address(self, address: ZenAddress) -> list[int]:
+        """Query a DALI address (ECG) for which scenes have colour change data. Returns a list of scene numbers."""
+        response = self._send_basic(address.controller, self.CMD["QUERY_COLOUR_SCENE_MEMBERSHIP_BY_ADDR"], address.ecg(), return_type='list')
+        if response:
+            return response
+        return None
+
+    def query_scene_colours_by_address(self, address: ZenAddress) -> Optional[list[int]]:
+        """Query a DALI address (ECG) for its colour scene data. Returns a list of 16 scene level values (0-254, or None if not part of scene)."""
+        response = self._send_basic(address.controller, self.CMD["QUERY_COLOUR_SCENE_0_7_DATA_FOR_ADDR"], address.ecg())
+        if response is None:
+            return None
+        response += self._send_basic(address.controller, self.CMD["QUERY_COLOUR_SCENE_8_11_DATA_FOR_ADDR"], address.ecg())
+        # Combined result should always be exactly 7*12 = 84 bytes
+        if len(response) != 84:
+            print(f"Warning: QUERY_COLOUR_SCENE_***_DATA_FOR_ADDR returned {len(response)} bytes, expected 84")
+            return None
+        # Create a list of 12 ZenColour instances
+        output: list[Optional[ZenColour]] = [None] * Const.MAX_SCENE
+        # Data is in 7 byte segments
+        for i in range(0, Const.MAX_SCENE):
+            offset = i*7
+            output[i] = ZenColour.from_bytes(response[offset:offset+7])
+        return output
+            
     def query_group_membership_by_address(self, address: ZenAddress) -> list[ZenAddress]:
         """Query an address (ECG) for which DALI groups it belongs to. Returns a list of ZenAddress group instances."""
         response = self._send_basic(address.controller, self.CMD["QUERY_GROUP_MEMBERSHIP_BY_ADDRESS"], address.ecg())
@@ -1205,7 +1233,7 @@ class ZenProtocol:
     
     def query_scene_numbers_for_group(self, address: ZenAddress) -> list[int]:
         """Query which DALI scenes are associated with a given group number. Returns list of scene numbers."""
-        response = self._send_basic(address.controller, self.CMD["QUERY_SCENE_NUMBERS_FOR_GROUP"], address.group())
+        response = self._send_basic(address.controller, self.CMD["QUERY_SCENE_NUMBERS_FOR_GROUP"], address.group(), cacheable=True)
         if response and len(response) == 2:
             scenes = []
             # Process high byte (scenes 8-15)
@@ -1226,6 +1254,14 @@ class ZenProtocol:
         if label is None and generic_if_none:
             return f"Scene {scene}"
         return label
+    
+    def query_scenes_for_group(self, address: ZenAddress, generic_if_none: bool=False) -> list[Optional[str]]:
+        """Compound command to query the labels for all scenes for a group. Returns list of scene labels, where None indicates no label is set."""
+        scenes: list[Optional[str]] = [None] * Const.MAX_SCENE
+        numbers = self.query_scene_numbers_for_group(address)
+        for scene in numbers:
+            scenes[scene] = self.query_scene_label_for_group(address, scene, generic_if_none=generic_if_none)
+        return scenes
     
     def query_controller_version_number(self, controller: ZenController) -> Optional[str]:
         """Query the controller's version number. Returns string, or None if query fail s."""
