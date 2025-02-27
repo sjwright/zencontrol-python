@@ -819,10 +819,9 @@ class ZenMQTTBridge:
                 self.system_variables.append(zsv)
 
         for zsv in self.system_variables:
-            ctrl: ZenController = zsv.controller
             if zsv.client_data.get("switch", None):
-                client_data = self._client_data_for_object(zsv, zsv.client_data["switch"]['component'])
-                mqtt_topic = zsv.client_data["switch"]["mqtt_topic"]
+                client_data = zsv.client_data["switch"]
+                mqtt_topic = client_data["mqtt_topic"]
                 config_dict = self.global_config | client_data.get("attributes",{}) | {
                     "component": "switch",
                     "state_topic": f"{mqtt_topic}/state",
@@ -832,8 +831,8 @@ class ZenMQTTBridge:
                     "retain": False,
                 }
             elif zsv.client_data.get("sensor", None):
-                client_data = self._client_data_for_object(zsv, zsv.client_data["sensor"]['component'])
-                mqtt_topic = zsv.client_data["sensor"]["mqtt_topic"]
+                client_data = zsv.client_data["sensor"]
+                mqtt_topic = client_data["mqtt_topic"]
                 config_dict = self.global_config | client_data.get("attributes",{}) | {
                     "component": "sensor",
                     "state_topic": f"{mqtt_topic}/state",
@@ -842,7 +841,7 @@ class ZenMQTTBridge:
             else:
                 continue
 
-            self._publish_config(client_data['mqtt_topic'], config_dict, object=zsv)
+            self._publish_config(mqtt_topic, config_dict, object=zsv)
             self._publish_state(mqtt_topic, zsv.value)
         
     def _mqtt_system_variable_change(self, sysvar: ZenSystemVariable, payload: str) -> None:
