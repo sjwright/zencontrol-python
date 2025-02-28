@@ -1148,12 +1148,12 @@ class ZenProtocol:
         """Query a DALI address (ECG) for associated scenes. Returns a list of scene numbers where levels have been set."""
         return self._send_basic(address.controller, self.CMD["QUERY_SCENE_NUMBERS_BY_ADDRESS"], address.ecg(), return_type='list')
 
-    def query_scene_levels_by_address(self, address: ZenAddress) -> Optional[list[int]]:
+    def query_scene_levels_by_address(self, address: ZenAddress) -> list[Optional[int]]:
         """Query a DALI address (ECG) for its DALI scene levels. Returns a list of 16 scene level values (0-254, or None if not part of scene)."""
         response = self._send_basic(address.controller, self.CMD["QUERY_SCENE_LEVELS_BY_ADDRESS"], address.ecg(), return_type='list')
         if response:
             return [None if x == 255 else x for x in response]
-        return None
+        return [None] * Const.MAX_SCENE
     
     def query_colour_scene_membership_by_address(self, address: ZenAddress) -> list[int]:
         """Query a DALI address (ECG) for which scenes have colour change data. Returns a list of scene numbers."""
@@ -1162,18 +1162,19 @@ class ZenProtocol:
             return response
         return None
 
-    def query_scene_colours_by_address(self, address: ZenAddress) -> Optional[list[int]]:
+    def query_scene_colours_by_address(self, address: ZenAddress) -> list[Optional[ZenColour]]:
         """Query a DALI address (ECG) for its colour scene data. Returns a list of 16 scene level values (0-254, or None if not part of scene)."""
+        # Create a list of 12 ZenColour instances
+        output: list[Optional[ZenColour]] = [None] * Const.MAX_SCENE
+        # Queries
         response = self._send_basic(address.controller, self.CMD["QUERY_COLOUR_SCENE_0_7_DATA_FOR_ADDR"], address.ecg())
         if response is None:
-            return None
+            return output
         response += self._send_basic(address.controller, self.CMD["QUERY_COLOUR_SCENE_8_11_DATA_FOR_ADDR"], address.ecg())
         # Combined result should always be exactly 7*12 = 84 bytes
         if len(response) != 84:
             print(f"Warning: QUERY_COLOUR_SCENE_***_DATA_FOR_ADDR returned {len(response)} bytes, expected 84")
-            return None
-        # Create a list of 12 ZenColour instances
-        output: list[Optional[ZenColour]] = [None] * Const.MAX_SCENE
+            return output
         # Data is in 7 byte segments
         for i in range(0, Const.MAX_SCENE):
             offset = i*7
