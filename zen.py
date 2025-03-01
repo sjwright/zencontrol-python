@@ -857,6 +857,9 @@ class ZenProtocol:
                                 address = ZenAddress(controller=controller, type=ZenAddressType.ECG, number=target)
                             elif 64 <= target <= 79:
                                 address = ZenAddress(controller=controller, type=ZenAddressType.GROUP, number=target-64)
+                            elif 127 <= target <= 143:
+                                address = ZenAddress(controller=controller, type=ZenAddressType.GROUP, number=target-128)
+                                self.logger.warning(f"Colour change callback received with target={target}. Assumed to be group {target-128}.")
                             else:
                                 self.logger.error(f"Invalid colour change event target: {target}")
                                 continue
