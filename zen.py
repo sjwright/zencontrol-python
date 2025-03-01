@@ -719,6 +719,7 @@ class ZenProtocol:
 
     def _event_listener(self):
         """Internal method to handle multicast event listening"""
+        last_time_received = time.time()
         try:
             self.event_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
             self.event_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -734,12 +735,14 @@ class ZenProtocol:
 
             while not self.stop_event.is_set():
                 data, ip_address = self.event_socket.recvfrom(1024)
+                time_since_last_received = time.time() - last_time_received 
+                last_time_received = time.time()
                 
                 # Logging string
                 typecast = "unicast" if self.unicast else "multicast"
 
                 self.logger.debug(f"Received {typecast} from {ip_address}: [{', '.join(f'0x{b:02x}' for b in data)}]")
-                if self.narration: print(Fore.MAGENTA + f"{typecast.upper()} FROM: {ip_address}" + Fore.CYAN + f"  RECV: [{', '.join(f'0x{b:02x}' for b in data)}]" + Style.RESET_ALL)
+                if self.narration: print(Fore.MAGENTA + f"{typecast.upper()} FROM: {ip_address}" + Fore.CYAN + f"  RECV: [{', '.join(f'0x{b:02x}' for b in data)}]" + Style.DIM + f"  TIME: {time_since_last_received*1000} ms" + Style.RESET_ALL)
                 
                 # Drop packet if it doesn't match the expected structure
                 if len(data) < 2 or data[0:2] != bytes([0x5a, 0x43]):
@@ -756,8 +759,21 @@ class ZenProtocol:
                 payload = data[12:-1]
                 received_checksum = data[-1]
 
-                self.logger.debug(f" ... IP: {ip_address} - MAC: {mac_address} - EVENT: {event_code} - TARGET: {target} - PAYLOAD: {payload}")
-                if self.narration: print(Fore.CYAN + Style.DIM + f"         IP: {ip_address} - MAC: {mac_address} - EVENT: {event_code} - TARGET: {target} - PAYLOAD: {payload}" + Style.RESET_ALL)
+                event_names = [
+                    "Button Press",
+                    "Button Hold",
+                    "Absolute Input",
+                    "Level Change",
+                    "Group Level Change",
+                    "Scene Change",
+                    "Is Occupied",
+                    "System Variable Change",
+                    "Colour Change",
+                    "Profile Change",
+                ]
+
+                self.logger.debug(f" ... IP: {ip_address} - MAC: {mac_address} - EVENT: {event_code} {event_names[event_code]} - TARGET: {target} - PAYLOAD: {payload}")
+                if self.narration: print(Fore.CYAN + Style.DIM + f"         IP: {ip_address} - MAC: {mac_address} - EVENT: {event_code} {event_names[event_code]} - TARGET: {target} - PAYLOAD: {payload}" + Style.RESET_ALL)
                 
                 # Find controller where macbytes matches mac_address
                 controller = next((c for c in self.controllers if c.mac_bytes == macbytes), None)
