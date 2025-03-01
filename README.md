@@ -1,17 +1,15 @@
 # zencontrol-python
 
-This is an implementation of the **Zencontrol TPI Advanced** protocol, written in Python. The TPI Advanced protocol is implemented as **ZenProtocol** in *zen.py*, featuring class methods for most API commands and callbacks for event packets (multicast or unicast). It does work, however this isn't production quality code yet, having only been tested in my development environment, using one zc-controller-pro connected to a small number of lights, sensors, and wall switches.
+This is an implementation of the **Zencontrol TPI Advanced** protocol, written in Python. The TPI Advanced protocol is implemented as **ZenProtocol** in *zen.py*, featuring class methods for most API commands and callbacks for event packets (multicast or unicast). This code is relatively mature and stable.
 
-An opinionated abstraction layer is implemented as **ZenInterface** in *zen_interface.py*, built on top of ZenProtocol. It’s designed to simplify integrations with smart building control software by abstracting the raw protocol into a uniform set of methods, objects, and callbacks for managing lights, groups, profiles, buttons, motion sensors, and Zen system variables.
+An opinionated abstraction layer is implemented as **ZenInterface** in *zen_interface.py*, built on top of ZenProtocol. It abstracts the raw protocol into a cohesive interface suitable for smart building control software. It currently provides methods, objects, and callbacks for managing lights, groups, profiles, buttons, motion sensors, and Zen system variables. This code is feature complete but still undergoing significant refinement.
 
-To test ZenInterface, I have written **mqtt.py**, built on top of ZenInterface, to interface with Home Assistant via an MQTT broker. Currently, it runs as a headless process that reads settings from *config.json* and (currently) spams your console with lots of debug messages. To run this, ensure you have Python 3.11 (or later) installed, along with the following Python packages: `paho-mqtt`, `yaml`, and `colorama`. To run, modify **config.yaml** as needed for your environment, then execute **mqtt.py**.
+Built on top of ZenInterface is **mqtt.py**, a bridge to Home Assistant via MQTT. It reads settings from *config.json* and (currently) spams your console with lots of debug messages. To run this, ensure you have Python 3.11 (or later) installed, along with the following Python packages: `paho-mqtt`, `yaml`, and `colorama`. To run, modify **config.yaml** as needed for your environment, then execute **mqtt.py**.
 
 ## Requirements
 
 * Python 3.11 (or later)
 * Controller firmware 2.1.35 (or later)
-
-_Note: A sufficiently new version of Zencontrol firmware may not be publicly available yet. If it's not available from within Zen cloud interface, you might be able to request it by raising a support ticket._
 
 ## Quick start
 
@@ -55,14 +53,14 @@ No support planned:
 
 The following TPI Advanced commands/events are incomplete:
 
-* QUERY_DALI_COLOUR — This command is supposed to be able to return a light's current colour temperature, but it only returns correct values under some instances. If the temperature is changed by way of scene recall, this query returns wrong information.
-* COLOUR_CHANGE_EVENT — This event is supposed to fire when a light's colour temperature changes, but it only does so under some circumstances. If the temperature is changed by way of scene recall, the event does not fire.
+* QUERY_DALI_COLOUR — This command is supposed to be able to return a light's current colour temperature, but it only returns correct values under some instances. If the temperature is changed by way of scene recall, this query returns wrong information. _(A fix is anticipated soon)_
+* COLOUR_CHANGE_EVENT — This event is supposed to fire when a light's colour temperature changes, but it only does so under some circumstances. If the temperature is changed by way of scene recall, the event does not fire. _(A fix is anticipated soon)_
 
 ## TPI Advanced wishlist
 
 High priority:
 
-* Command to fetch colour temperatures as entered in the "colour scene assignment" section of the Zen cloud grid view. This would be similar to QUERY_SCENE_LEVELS_BY_ADDRESS but for colour temperatures.
+* Command to fetch colour temperatures as entered in the "colour scene assignment" section of the Zen cloud grid view. _(This has been added in firmware version 2.1.38)_
 
 Low priority:
 
@@ -74,4 +72,3 @@ Low priority:
 ## Links
 
 * [About TPI Advanced](https://support.zencontrol.com/hc/en-us/articles/360000337175-What-is-the-Third-Party-Interface-TPI)
-* [TPI Advanced documentation (PDF)](https://support.zencontrol.com/hc/en-us/article_attachments/10831057855503)
