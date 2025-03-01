@@ -158,7 +158,7 @@ class ZenInterface:
             button_hold_callback = self.button_hold_event,
             absolute_input_callback = self.absolute_input_event,
             level_change_callback = self.level_change_event,
-            group_level_change_callback = self.group_level_change_event,
+            group_level_change_callback = self.level_change_event,
             scene_change_callback = self.scene_change_event,
             is_occupied_callback = self.is_occupied_event,
             system_variable_change_callback = self.system_variable_change_event,
@@ -187,26 +187,47 @@ class ZenInterface:
     def absolute_input_event(self, instance: ZenInstance, payload: bytes) -> None:
         pass
 
-    def level_change_event(self, address: ZenAddress, arc_level: int, payload: bytes) -> None:
-        ZenLight(protocol=self.protocol, address=address)._event_received(level=arc_level)
+    def is_occupied_event(self, instance: ZenInstance, payload: bytes) -> None:
+        ZenMotionSensor(protocol=self.protocol, instance=instance)._event_received()
 
-    def group_level_change_event(self, address: ZenAddress, arc_level: int, payload: bytes) -> None:
-        ZenGroup(protocol=self.protocol, address=address)._event_received(level=arc_level)
+    def level_change_event(self, address: ZenAddress, arc_level: int, payload: bytes) -> None:
+        if address.type == ZenAddressType.ECG:
+            # Delay the light event to allow group updates to arrive and propogate
+            ecg = ZenLight(protocol=self.protocol, address=address)
+            timer = Timer(0.2, ecg._event_received, kwargs={"level": arc_level})
+            timer.start()
+        elif address.type == ZenAddressType.GROUP:
+            group = ZenGroup(protocol=self.protocol, address=address)
+            group._event_received(level=arc_level)
+            for light in group.lights:
+                light._event_received(level=arc_level, cascaded_from=group)
+
+    def colour_change_event(self, address: ZenAddress, colour: bytes, payload: bytes) -> None:
+        if address.type == ZenAddressType.ECG:
+            # Delay the light event to allow group updates to arrive and propogate
+            ecg = ZenLight(protocol=self.protocol, address=address)
+            timer = Timer(0.2, ecg._event_received, kwargs={"colour": colour})
+            timer.start()
+        elif address.type == ZenAddressType.GROUP:
+            group = ZenGroup(protocol=self.protocol, address=address)
+            group._event_received(colour=colour)
+            for light in group.lights:
+                light._event_received(colour=colour, cascaded_from=group)
 
     def scene_change_event(self, address: ZenAddress, scene: int, payload: bytes) -> None:
         if address.type == ZenAddressType.ECG:
-            ZenLight(protocol=self.protocol, address=address)._event_received(scene=scene)
+            # Delay the light event to allow group updates to arrive and propogate
+            ecg = ZenLight(protocol=self.protocol, address=address)
+            timer = Timer(0.1, ecg._event_received, kwargs={"scene": scene})
+            timer.start()
         elif address.type == ZenAddressType.GROUP:
-            ZenGroup(protocol=self.protocol, address=address)._event_received(scene=scene)
-
-    def is_occupied_event(self, instance: ZenInstance, payload: bytes) -> None:
-        ZenMotionSensor(protocol=self.protocol, instance=instance)._event_received()
+            group = ZenGroup(protocol=self.protocol, address=address)
+            group._event_received(scene=scene)
+            for light in group.lights:
+                light._event_received(scene=scene, cascaded_from=group)
     
     def system_variable_change_event(self, controller: ZenController, target: int, value: int, payload: bytes) -> None:
         ZenSystemVariable(protocol=self.protocol, controller=controller, id=target)._event_received(value)
-
-    def colour_change_event(self, address: ZenAddress, colour: bytes, payload: bytes) -> None:
-        ZenLight(protocol=self.protocol, address=address)._event_received(colour=colour)
 
     def profile_change_event(self, controller: ZenController, profile: int, payload: bytes) -> None:
         controller._event_received(profile=profile)
