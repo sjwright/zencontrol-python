@@ -465,7 +465,6 @@ class ZenMQTTBridge:
             mqtt_target = f"sv{sysvar.id}"
         else:
             raise ValueError(f"Unknown object type: {type(object)}")
-
         object.client_data[component] = object.client_data.get(component, {}) | {
             "component": component,
             "attributes": attributes | {
@@ -495,7 +494,7 @@ class ZenMQTTBridge:
         self.logger.debug(f"MQTT sent - {topic}/config: {config_json}")
         print(Fore.LIGHTRED_EX + f"MQTT sent - {topic}/config: " + Style.DIM + f"{config_json}" + Style.RESET_ALL)
     
-    def _publish_state(self, topic: str, state: str|dict, retain: bool = False) -> None:
+    def _publish_state(self, topic: str, state: str|dict|None, retain: bool = False) -> None:
         if isinstance(state, dict): state = json.dumps(state)
         self.mqttc.publish(f"{topic}/state", state, retain=retain)
         self.logger.debug(f"MQTT sent - {topic}/state: {state}")
@@ -704,7 +703,7 @@ class ZenMQTTBridge:
     # mqtt group light change calls _mqtt_light_change
         
     def _zen_group_change(self, group: ZenGroup, level: Optional[int] = None, colour: Optional[ZenColour] = None, scene: Optional[int] = None, discoordinated: bool = False) -> None:
-        print(f"Zen to HA: group {group} level {level} colour {colour} scene {scene}")
+        print(f"Zen to HA: group {group} level {level} colour {colour} scene {scene} discoordinated {discoordinated}")
         
         select_mqtt_topic = group.client_data.get("select", {}).get('mqtt_topic', None)
 
@@ -714,10 +713,12 @@ class ZenMQTTBridge:
             if scene_label:
                 self._publish_state(select_mqtt_topic, scene_label)
             else:
+                self._publish_state(select_mqtt_topic, "None")
                 self.logger.warning(f"Group {group} has no scene with ID {scene}")
         
         # If discoordinated, set the group-light's state to null and return
         if discoordinated:
+            self._publish_state(select_mqtt_topic, "None")
             light_mqtt_topic = group.client_data.get("light", {}).get('mqtt_topic', None)
             self._publish_state(light_mqtt_topic, {"state": None})
             return

@@ -447,9 +447,6 @@ class ZenLight:
         self.level: Optional[int] = None
         self.colour: Optional[ZenColour] = None
         self.scene: Optional[int] = None # Current scene number
-        self.scene_level: Optional[int] = None # Level for current scene
-        self.scene_colour: Optional[ZenColour] = None # Colour for current scene
-        self.scene_active: bool = False # Whether the current scene is active
         self.client_data: dict = {}
     def interview(self) -> bool:
         cgstatus = self.protocol.dali_query_control_gear_status(self.address)
@@ -516,21 +513,21 @@ class ZenLight:
         if scene is not None:
             self.scene = scene
             scene_changed = True
-            self.scene_level = self._scene_levels[scene]
-            self.scene_colour = self._scene_colours[scene]
-            if self.scene_level is None:
+            scene_level = self._scene_levels[scene]
+            scene_colour = self._scene_colours[scene]
+            if scene_level is None:
                 pass # The scene has no effect on this light's level
-            elif self.level == self.scene_level:
+            elif self.level == scene_level:
                 pass # The level didn't change
             else:
-                self.level = self.scene_level
+                self.level = scene_level
                 level_changed = True
-            if self.scene_colour is None:
+            if scene_colour is None:
                 pass # The scene has no effect on this light's colour
-            elif self.colour == self.scene_colour:
+            elif self.colour == scene_colour:
                 pass # The colour didn't change
             else:
-                self.colour = self.scene_colour
+                self.colour = scene_colour
                 colour_changed = True
             if type(self) is ZenGroup:
                 # print(f"                              Group {self.address.number} changed to scene {self.scene}")
@@ -582,7 +579,6 @@ class ZenLight:
                                     colour=self.colour if colour_changed else None,
                                     scene=self.scene if scene_changed else None)
     def supports_colour(self, colour: ZenColourType|ZenColour) -> bool:
-        # colour_type = colour if type(colour) == ZenColourType else colour.type
         if type(colour) == ZenColour:
             colour_type = colour.type
         elif type(colour) == ZenColourType:
@@ -595,21 +591,6 @@ class ZenLight:
             (colour_type == ZenColourType.RGBWAF and self.features["RGBWW"]):
             return True
         return False
-    # def scene_is_current(self) -> bool:
-    #     if type(self) is ZenGroup:
-    #         # A group's scene is current if all lights share the same scene
-    #         for light in self.lights:
-    #             if light.scene != self.scene:
-    #                 return False
-    #     elif type(self) is ZenLight:
-    #         # A light's scene is current if the level/colour matches
-    #         if self.scene_level is not None:
-    #             if self.level != self.scene_level:
-    #                 return False
-    #         if self.scene_colour is not None:
-    #             if self.colour != self.scene_colour:
-    #                 return False
-    #     return True
     # -----------------------------------------------------------------------------------------
     # REMINDER: None of the following methods should update the internal object state directly.
     #   These methods send commands to the controller. The controller sends events back.
@@ -623,15 +604,11 @@ class ZenLight:
         else: return self.protocol.dali_off(self.address)
     def set_scene(self, scene: int|str|dict, fade: bool = True) -> bool:
         if type(scene) == str:
-            return next((i for i, s in enumerate(self._scene_labels) if s == scene), False)
-        elif type(scene) == dict:
-            scene = scene["number"]
-        elif type(scene) == int:
-            pass
-        else:
-            return False
-        if not fade: self.protocol.dali_enable_dapc_sequence(self.address)
-        return self.protocol.dali_scene(self.address, scene)
+            scene = next((i for i, s in enumerate(self._scene_labels) if s == scene), False)
+        if type(scene) == int:
+            if not fade: self.protocol.dali_enable_dapc_sequence(self.address)
+            return self.protocol.dali_scene(self.address, scene)
+        return False
     def set(self, level: int = 255, colour: Optional[ZenColour] = None, fade: bool = True) -> bool:
         if (self.supports_colour(colour)):
             if not fade: self.protocol.dali_enable_dapc_sequence(self.address)
@@ -688,12 +665,7 @@ class ZenGroup(ZenLight):
         self._scene_labels = self.protocol.query_scenes_for_group(self.address, generic_if_none=True)
         return True
     def supports_colour(self, colour: ZenColourType|ZenColour) -> bool:
-        if type(colour) == ZenColour:
-            colour_type = colour.type
-        elif type(colour) == ZenColourType:
-            colour_type = colour
-        else:
-            return False;
+        # If at least one light in the group supports this colour, return True
         for light in self.lights:
             if light.supports_colour(colour):
                 return True
@@ -714,31 +686,6 @@ class ZenGroup(ZenLight):
     #   These methods send commands to the controller. The controller sends events back.
     #   The events update the internal state.
     # -----------------------------------------------------------------------------------------
-    # def assess_coordination(self) -> bool:
-    #     # If every light is in sync with the same scene, return true without further checks
-    #     scene = None
-    #     consistency = True
-    #     for light in self.lights:
-    #         if scene is None:
-    #             scene = light.scene
-    #         elif scene != light.scene or light.scene_active is False:
-    #             consistency = False
-    #             break # Give up testing for scene consistency, instead look for level/colour consistency
-    #     if consistency:
-    #         return True
-    #     # Is every ZenLight in self.lights group set to the same level and colour?
-    #     level = None
-    #     colour = None
-    #     for light in self.lights:
-    #         if level is None:
-    #             level = light.level
-    #         elif level != light.level:
-    #             return False
-    #         if colour is None:
-    #             colour = light.colour
-    #         elif colour != light.colour:
-    #             return False
-    #     return True
     def declare_discoordination(self):
         # Only do something if the group claims to be coordinated
         if self.level is None and self.colour is None and self.scene is None:
