@@ -708,7 +708,7 @@ class ZenMQTTBridge:
         select_mqtt_topic = group.client_data.get("select", {}).get('mqtt_topic', None)
 
         # Get the scene label for the ID from the group
-        if select_mqtt_topic and scene:
+        if select_mqtt_topic and scene is not None:
             scene_label = group.get_scene_label_from_number(scene)
             if scene_label:
                 self._publish_state(select_mqtt_topic, scene_label)
@@ -797,7 +797,6 @@ class ZenMQTTBridge:
         if not mqtt_topic:
             self.logger.error(f"Sensor {sensor} has no MQTT topic")
             return
-
         self._publish_state(mqtt_topic, "ON" if occupied else "OFF")
 
     # ================================
