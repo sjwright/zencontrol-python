@@ -237,40 +237,40 @@ class ZenInterface:
     # Abstraction layer commands
     # ============================ 
 
-    def get_profiles(self, controller: Optional[ZenController] = None) -> list[ZenProfile]:
-        """Return a list of all profiles."""
-        profiles = []
+    def get_profiles(self, controller: Optional[ZenController] = None) -> set[ZenProfile]:
+        """Return a set of all profiles."""
+        profiles = set()
         controllers = [controller] if controller else self.controllers
         for controller in controllers:
             numbers = self.protocol.query_profile_numbers(controller=controller)
             for number in numbers:
                 profile = ZenProfile(protocol=self.protocol, controller=controller, number=number)
-                profiles.append(profile)
+                profiles.add(profile)
         return profiles
 
-    def get_groups(self) -> list[ZenGroup]:
-        """Return a list of all groups."""
-        groups = []
+    def get_groups(self) -> set[ZenGroup]:
+        """Return a set of all groups."""
+        groups = set()
         for controller in self.controllers:
             addresses = self.protocol.query_group_numbers(controller=controller)
             for address in addresses:
                 group = ZenGroup(protocol=self.protocol, address=address)
-                groups.append(group)
+                groups.add(group)
         return groups
     
-    def get_lights(self) -> list[ZenLight]:
-        """Return a list of all lights available."""
-        lights = []
+    def get_lights(self) -> set[ZenLight]:
+        """Return a set of all lights available."""
+        lights = set()
         for controller in self.controllers:
             addresses = self.protocol.query_control_gear_dali_addresses(controller=controller)
             for address in addresses:
                 light = ZenLight(protocol=self.protocol, address=address)
-                lights.append(light)
+                lights.add(light)
         return lights
     
-    def get_buttons(self) -> list[ZenButton]:
-        """Return a list of all buttons available."""
-        buttons = []
+    def get_buttons(self) -> set[ZenButton]:
+        """Return a set of all buttons available."""
+        buttons = set()
         for controller in self.controllers:
             addresses = self.protocol.query_dali_addresses_with_instances(controller=controller)
             for address in addresses:
@@ -278,12 +278,12 @@ class ZenInterface:
                 for instance in instances:
                     if instance.type == ZenInstanceType.PUSH_BUTTON:
                         button = ZenButton(protocol=self.protocol, instance=instance)
-                        buttons.append(button)
+                        buttons.add(button)
         return buttons
     
-    def get_motion_sensors(self) -> list[ZenMotionSensor]:
-        """Return a list of all motion sensors available."""
-        motion_sensors = []
+    def get_motion_sensors(self) -> set[ZenMotionSensor]:
+        """Return a set of all motion sensors available."""
+        motion_sensors = set()
         for controller in self.controllers:
             addresses = self.protocol.query_dali_addresses_with_instances(controller=controller)
             for address in addresses:
@@ -291,12 +291,12 @@ class ZenInterface:
                 for instance in instances:
                     if instance.type == ZenInstanceType.OCCUPANCY_SENSOR:
                         motion_sensor = ZenMotionSensor(protocol=self.protocol, instance=instance)
-                        motion_sensors.append(motion_sensor)
+                        motion_sensors.add(motion_sensor)
         return motion_sensors
 
-    def get_system_variables(self, give_up_after: int = 10) -> list[ZenSystemVariable]:
-        """Return a list of all system variables. Variables must have a label. Searching will give_up_after [x] sequential IDs without a label."""
-        sysvars = []
+    def get_system_variables(self, give_up_after: int = 10) -> set[ZenSystemVariable]:
+        """Return a set of all system variables. Variables must have a label. Searching will give_up_after [x] sequential IDs without a label."""
+        sysvars = set()
         failed_attempts = 0
         for controller in self.controllers:
             for variable in range(Const.MAX_SYSVAR):
@@ -305,7 +305,7 @@ class ZenInterface:
                     failed_attempts = 0
                     sysvar = ZenSystemVariable(protocol=self.protocol, controller=controller, id=variable)
                     sysvar.label = label
-                    sysvars.append(sysvar)
+                    sysvars.add(sysvar)
                 else:
                     failed_attempts += 1
                     if failed_attempts >= give_up_after:
@@ -342,6 +342,11 @@ class ZenController(SuperZenController):
         self.version: Optional[int] = None
         self.profile: Optional[ZenProfile] = None
         self.profiles: set[ZenProfile] = set()
+        self.lights: set[ZenLight] = set()
+        self.groups: set[ZenGroup] = set()
+        self.buttons: set[ZenButton] = set()
+        self.motion_sensors: set[ZenMotionSensor] = set()
+        self.sysvars: set[ZenSystemVariable] = set()
         self.client_data: dict = {}
     def interview(self) -> bool:
         if self.label is None: self.label = self.protocol.query_controller_label(self)
@@ -489,6 +494,9 @@ class ZenLight:
                 group.lights.add(self) # Add to group's set of lights
                 self.groups.add(group) # Add to light's set of groups
             
+            # Add to controller's set of lights
+            self.address.controller.lights.add(self)
+
             return True
         else:
             self._reset()
@@ -663,6 +671,8 @@ class ZenGroup(ZenLight):
     def interview(self) -> bool:
         self.label = self.protocol.query_group_label(self.address, generic_if_none=True)
         self._scene_labels = self.protocol.query_scenes_for_group(self.address, generic_if_none=True)
+        # Add to controller's set of groups
+        self.address.controller.groups.add(self)
         return True
     def supports_colour(self, colour: ZenColourType|ZenColour) -> bool:
         # If at least one light in the group supports this colour, return True
@@ -735,11 +745,14 @@ class ZenButton:
     def interview(self) -> bool:
         inst = self.instance
         addr = inst.address
+        ctrl = addr.controller
         if addr.label is None: addr.label = self.protocol.query_dali_device_label(addr, generic_if_none=True)
         if addr.serial is None: addr.serial = self.protocol.query_dali_serial(addr)
         self.label = addr.label
         self.serial = addr.serial
         self.instance_label = self.protocol.query_dali_instance_label(inst, generic_if_none=True)
+        # Add to controller's set of buttons
+        ctrl.buttons.add(self)
         return True
     def _event_received(self, held: bool = False):
         if not held:
@@ -790,6 +803,7 @@ class ZenMotionSensor:
     def interview(self) -> bool:
         inst = self.instance
         addr = inst.address
+        ctrl = addr.controller
         occupancy_timers = self.protocol.query_occupancy_instance_timers(inst)
         if occupancy_timers is not None:
             self.serial = self.protocol.query_dali_serial(addr)
@@ -798,10 +812,12 @@ class ZenMotionSensor:
             self.deadtime = occupancy_timers["deadtime"]
             self.last_detect = time.time() - occupancy_timers["last_detect"]
             self._occupied = None
-            return True
         else:
             self._reset()
             return False
+        # Add to controller's set of motion sensors
+        ctrl.motion_sensors.add(self)
+        return True
     def _event_received(self):
         self.occupied = True
     def timeout_callback(self):
@@ -867,10 +883,13 @@ class ZenSystemVariable:
         self._future_value: Optional[int] = None
         self.client_data: dict = {}
     def interview(self) -> bool:
+        ctrl = self.controller
         if self.label is None:
-            self.label = self.protocol.query_system_variable_name(self.controller, self.id)
+            self.label = self.protocol.query_system_variable_name(ctrl, self.id)
         if self._value is None:
-            self._value = self.protocol.query_system_variable(self.controller, self.id)
+            self._value = self.protocol.query_system_variable(ctrl, self.id)
+        # Add to controller's set of system variables
+        ctrl.sysvars.add(self)
         return True
     def _event_received(self, new_value):
         changed = (new_value != self._value)
