@@ -810,7 +810,7 @@ class ZenProtocol:
                     case 0x02: # Absolute Input - Absolute input has changed
                         if self.absolute_input_callback:
                             address = ZenAddress(controller=controller, type=ZenAddressType.ECD, number=target-64)
-                            instance = ZenInstance(address=address, type=ZenInstanceType.PUSH_BUTTON, number=payload[0])
+                            instance = ZenInstance(address=address, type=ZenInstanceType.ABSOLUTE_INPUT, number=payload[0])
                             self.absolute_input_callback(instance=instance, payload=payload)
 
                     case 0x03: # Level Change - Arc Level on an Address target has changed
