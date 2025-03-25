@@ -209,17 +209,30 @@ class ZenColour:
         return None
     def __post_init__(self):
         if self.type == ZenColourType.TC:
-            if not Const.MIN_KELVIN <= self.kelvin <= Const.MAX_KELVIN: raise ValueError(f"Kelvin must be between {Const.MIN_KELVIN} and {Const.MAX_KELVIN}")
+            if not Const.MIN_KELVIN <= self.kelvin <= Const.MAX_KELVIN:
+                #raise ValueError(f"Kelvin must be between {Const.MIN_KELVIN} and {Const.MAX_KELVIN}, received {self.kelvin}")
+                print(f"Kelvin must be between {Const.MIN_KELVIN} and {Const.MAX_KELVIN}, received {self.kelvin}")
+                # set to the nearest valid value
+                self.kelvin = max(Const.MIN_KELVIN, min(Const.MAX_KELVIN, self.kelvin))
+                print(f"Setting to {self.kelvin} instead")
         if self.type == ZenColourType.RGBWAF:
-            if not 0 <= self.r <= 255: raise ValueError("R must be between 0 and 255")
-            if not 0 <= self.g <= 255: raise ValueError("G must be between 0 and 255")
-            if not 0 <= self.b <= 255: raise ValueError("B must be between 0 and 255")
-            if self.w is not None and not 0 <= self.w <= 255: raise ValueError("W must be between 0 and 255")
-            if self.a is not None and not 0 <= self.a <= 255: raise ValueError("A must be between 0 and 255")
-            if self.f is not None and not 0 <= self.f <= 255: raise ValueError("F must be between 0 and 255")
+            if not 0 <= self.r <= 255:
+                raise ValueError(f"R must be between 0 and 255, received {self.r}")
+            if not 0 <= self.g <= 255:
+                raise ValueError(f"G must be between 0 and 255, received {self.g}")
+            if not 0 <= self.b <= 255:
+                raise ValueError(f"B must be between 0 and 255, received {self.b}")
+            if self.w is not None and not 0 <= self.w <= 255:
+                raise ValueError(f"W must be between 0 and 255, received {self.w}")
+            if self.a is not None and not 0 <= self.a <= 255:
+                raise ValueError(f"A must be between 0 and 255, received {self.a}")
+            if self.f is not None and not 0 <= self.f <= 255:
+                raise ValueError(f"F must be between 0 and 255, received {self.f}")
         if self.type == ZenColourType.XY:
-            if not 0 <= self.x <= 65535: raise ValueError("X must be between 0 and 65535")
-            if not 0 <= self.y <= 65535: raise ValueError("Y must be between 0 and 65535")
+            if not 0 <= self.x <= 65535:
+                raise ValueError(f"X must be between 0 and 65535, received {self.x}")
+            if not 0 <= self.y <= 65535:
+                raise ValueError(f"Y must be between 0 and 65535, received {self.y}")
     def __repr__(self) -> str:
         if self.type == ZenColourType.TC:
             return f"ZenColour(kelvin={self.kelvin})"
@@ -241,7 +254,7 @@ class ZenColour:
             return struct.pack('>BBHH', level, 0x10, self.x, self.y)
         return b''
 
-@dataclass()
+@dataclass
 class ZenEventMask:
     button_press: bool = False
     button_hold: bool = False
@@ -406,14 +419,15 @@ class ZenProtocol:
     }
 
     def __init__(self,
-                 logger: logging.Logger=None,
+                 logger: Optional[logging.Logger] = None,
                  narration: bool = False,
                  unicast: bool = False,
                  listen_ip: Optional[str] = None,
                  listen_port: Optional[int] = None,
-                 cache: dict = {}
-                 ):
-        self.logger = logger
+                 cache: dict = {}):
+        self.logger = logger or logging.getLogger('null')
+        if logger is None:
+            self.logger.addHandler(logging.NullHandler())
         self.narration = narration
         self.unicast = unicast
         self.listen_ip = (listen_ip if listen_ip else "0.0.0.0") if unicast else None
@@ -424,11 +438,6 @@ class ZenProtocol:
         
         # If unicast, and we're binding to 0.0.0.0, we still need to know our actual IP address
         self.local_ip = (socket.gethostbyname(socket.gethostname()) if self.listen_ip == "0.0.0.0" else self.listen_ip) if self.unicast else None
-
-        # Log to null if no logger provided
-        if not self.logger:
-            self.logger = logging.getLogger('null')
-            self.logger.addHandler(logging.NullHandler())
 
         # Setup socket for sending/receiving commands
         self.command_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -450,6 +459,9 @@ class ZenProtocol:
         self.colour_change_callback: Optional[Callable] = None
         self.profile_change_callback: Optional[Callable] = None
         self.system_variable_change_callback: Optional[Callable] = None
+        
+        # Controllers will be assigned later
+        self.controllers = []
 
     def __del__(self):
         """Cleanup when object is destroyed"""
@@ -565,7 +577,6 @@ class ZenProtocol:
     
     def _send_packet_retry_and_cache(self, controller: ZenController, command: int, data: list[int], cacheable: bool = False) -> tuple[Optional[bytes], int]:
         cache_key = bytes([controller.id, command] + data)
-        
         if cacheable:
             if cache_key in self.cache:
                 c = self.cache[cache_key]
@@ -578,18 +589,13 @@ class ZenProtocol:
                     return c.get('d', None), c.get('c', None)
                 else:
                     del self.cache[cache_key]
-        
-        for _ in range(3):
-            if _ > 0:
-                self.logger.error(f"Trying again...")
+        for attempt in range(3):
+            if attempt > 0:
+                self.logger.error("Trying again...")
             try:
                 response_data, response_code = self._send_packet(controller, command, data)
                 if cacheable:
-                    self.cache[cache_key] = {
-                        'd': response_data,
-                        'c': response_code,
-                        't': time.time()
-                    }
+                    self.cache[cache_key] = {'d': response_data, 'c': response_code, 't': time.time()}
                 return response_data, response_code
             except ZenTimeoutError:
                 pass
