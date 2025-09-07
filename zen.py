@@ -1,3 +1,4 @@
+import asyncio
 import socket
 import struct
 import time
@@ -8,6 +9,7 @@ from enum import Enum
 from threading import Thread, Event
 from colorama import Fore, Back, Style
 from dataclasses import dataclass, field
+from zen_protocol import ZenUdpClient, Request, Response, ResponseType
 
 class ZenProtocol:
     pass
@@ -174,7 +176,7 @@ class ZenInstance:
     active: Optional[bool] = None
     error: Optional[bool] = None
     def __post_init__(self):
-        if not 0 <= self.number < Const.MAX_INSTANCE: raise ValueError("Instance number must be between 0 and 31")
+        if not 0 <= self.number < Const.MAX_INSTANCE: raise ValueError(f"Instance number must be between 0 and {Const.MAX_INSTANCE-1}, received {self.number}")
 
 class ZenColourType(Enum):
     XY = 0x10
@@ -754,7 +756,8 @@ class ZenProtocol:
                 if len(data) < 2 or data[0:2] != bytes([0x5a, 0x43]):
                     self.logger.debug(f"Received {typecast} invalid packet: {ip_address} - {', '.join(f'0x{b:02x}' for b in data)}")
                     if self.narration: print(f"Received {typecast} invalid packet: {ip_address} - {', '.join(f'0x{b:02x}' for b in data)}")
-                    return
+                    # Wait for next packet
+                    continue
 
                 # Extract packet fields
                 macbytes = bytes.fromhex(data[2:8].hex())
@@ -776,6 +779,7 @@ class ZenProtocol:
                     "System Variable Change",
                     "Colour Change",
                     "Profile Change",
+                    "Group Occupied",
                 ]
 
                 self.logger.debug(f" ... IP: {ip_address} - MAC: {mac_address} - EVENT: {event_code} {event_names[event_code]} - TARGET: {target} - PAYLOAD: {payload}")
@@ -877,11 +881,17 @@ class ZenProtocol:
                             payload_int = int.from_bytes(payload, byteorder='big')
                             self.profile_change_callback(controller=controller, profile=payload_int, payload=payload)
                 
+        except ValueError as e:
+            if self.narration: print(f"Event listener value error: {e}")
+            self.logger.error(f"Event listener value error: {e}")
+            # Don't fail, just log it
         except Exception as e:
             if self.narration: print(f"Event listener error: {e}")
+            self.logger.error(f"Event listener error: {e}")
             raise
         finally:
-            print(f"Event listener no longer listening!")
+            if self.narration: print(f"Event listener no longer listening!")
+            self.logger.warning(f"Event listener no longer listening!")
             if self.event_socket:
                 self.event_socket.close()
 
@@ -997,7 +1007,7 @@ class ZenProtocol:
     def tpi_event_emit(self, controller: ZenController, mode: ZenEventMode = ZenEventMode(enabled=True, filtering=False, unicast=False, multicast=True)) -> bool:
         """Enable or disable TPI Event emission. Returns True if successful, else False."""
         mask = mode.bitmask()
-        response = self._send_basic(controller, self.CMD["ENABLE_TPI_EVENT_EMIT"], 0x00) # disable first to clear any existing state... I think this is a bug?
+        # response = self._send_basic(controller, self.CMD["ENABLE_TPI_EVENT_EMIT"], 0x00) # disable first to clear any existing state... I think this is a bug?
         response = self._send_basic(controller, self.CMD["ENABLE_TPI_EVENT_EMIT"], mask)
         if response:
             if response[0] == mask:
@@ -1012,19 +1022,17 @@ class ZenProtocol:
             if not 0 <= port <= 65535: raise ValueError("Port must be between 0 and 65535")
 
             # Split port into upper and lower bytes
-            port_upper = (port >> 8) & 0xFF 
-            port_lower = port & 0xFF
+            data[0] = (port >> 8) & 0xFF
+            data[1] = port & 0xFF
             
             # Convert IP string to bytes
             try:
                 ip_bytes = [int(x) for x in ipaddr.split('.')]
                 if len(ip_bytes) != 4 or not all(0 <= x <= 255 for x in ip_bytes):
                     raise ValueError
+                data[2:6] = ip_bytes
             except ValueError:
                 raise ValueError("Invalid IP address format")
-                
-            # Construct data payload: [port_upper, port_lower, ip1, ip2, ip3, ip4]
-            data = [port_upper, port_lower] + ip_bytes
         
         return self._send_dynamic(controller, self.CMD["SET_TPI_EVENT_UNICAST_ADDRESS"], data)
 
@@ -1118,7 +1126,7 @@ class ZenProtocol:
                 - int: Deadtime in seconds (0-255)
                 - int: Hold time in seconds (0-255)
                 - int: Report time in seconds (0-255)
-                - int: Seconds since last occupied status (0-255)
+                - int: Seconds since last occupied status (0-65535)
         """
         response = self._send_basic(instance.address.controller, self.CMD["QUERY_OCCUPANCY_INSTANCE_TIMERS"], instance.address.ecd(), [0x00, 0x00, instance.number])
         if response and len(response) >= 5:

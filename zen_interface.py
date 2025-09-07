@@ -501,7 +501,7 @@ class ZenLight:
         else:
             self._reset()
             return False
-    def sync_from_controller(self) -> bool:
+    def sync_from_controller(self):
         print(f"Syncing light {self}")
         current_level = self.protocol.dali_query_level(self.address)
         current_colour = None

@@ -15,7 +15,7 @@ import pickle
 
 class Const:
 
-    STARTUP_POLL_DELAY = 5
+    STARTUP_POLL_DELAY = 10
 
     # MQTT settings
     MQTT_RECONNECT_MIN_DELAY = 1
@@ -754,7 +754,7 @@ class ZenMQTTBridge:
         
     def _zen_button_press(self, button: ZenButton) -> None:
         print(f"Zen to HA: button press {button}")
-        mqtt_topic = button.client_data.get("button", {}).get("device_automation", {}).get("mqtt_topic", None)
+        mqtt_topic = button.client_data.get("device_automation", {}).get("mqtt_topic", None)
         if not mqtt_topic:
             self.logger.error(f"Button {button} has no MQTT topic")
             return
@@ -762,7 +762,7 @@ class ZenMQTTBridge:
         
     def _zen_button_long_press(self, button: ZenButton) -> None:
         print(f"Zen to HA: button long press {button}")
-        mqtt_topic = button.client_data.get("button", {}).get("device_automation", {}).get("mqtt_topic", None)
+        mqtt_topic = button.client_data.get("device_automation", {}).get("mqtt_topic", None)
         if not mqtt_topic:
             self.logger.error(f"Button {button} has no MQTT topic")
             return

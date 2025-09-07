@@ -12,3 +12,4 @@ pyvenv.cfg
 *.pkl
 *.log.*
 config.yaml
+/docs
