@@ -15,7 +15,7 @@ Built on top of this is an example application **mqtt_bridge.py**, which is a br
 
 ## Quick start
 
-The following are the minimum steps necessary to run the MQTT bridge on a Raspberry Pi running the lastest release of Raspberry Pi OS.
+The following are the minimum steps necessary to run the MQTT bridge on a machine running a sufficiently modern version of Debian (including Ubuntu and Raspberry Pi OS):
 
 ```
 # Update/Install packages:
@@ -30,10 +30,12 @@ git clone https://github.com/sjwright/zencontrol-python
 cd zencontrol-python
 
 # Edit config.yaml to suit your environment
-nano config.yaml
+cp examples/config-example.yaml examples/config.yaml
+nano examples/config.yaml
 
 # Run the MQTT bridge
-python3 mqtt.py
+cd examples
+python3 mqtt_bridge.py
 ```
 
 Be aware that many Linux distributions ship with old versions of python and it could require non-trivial steps to install a newer version. You can check your current python version by running `python3 -V`
