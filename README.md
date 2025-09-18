@@ -2,16 +2,16 @@
 
 This is an implementation of the **Zencontrol TPI Advanced** protocol, written in Python. This library has been written with three levels of abstraction:
 
-# zencontrol.io: Implementation of the raw TPI Advanced UDP packet specifications;
-# zencontrol.api: Implementation of most TPI Advanced API commands and events;
-# zencontrol.interface: An opinionated abstraction layer suitable for integration into smart building control software. It provides methods, objects, and callbacks for managing lights, groups, profiles, buttons, motion sensors, and system variables. This code is still undergoing significant refinement.
+- zencontrol.io: Implementation of the raw TPI Advanced UDP packet specification;
+- zencontrol.api: Implementation of most TPI Advanced API commands and events;
+- zencontrol.interface: An opinionated abstraction layer suitable for integration into smart building control software. It provides methods, objects, and callbacks for managing lights, groups, profiles, buttons, motion sensors, and system variables. This code is still undergoing significant refinement.
 
 Built on top of this is an example application **mqtt_bridge.py**, which is a bridge to Home Assistant via MQTT. It reads settings from *config.json* and spams your console with lots of debug messages. To run this, ensure you have Python 3.11 (or later) installed, along with the following Python packages: `aiomqtt`, `yaml`, and `colorama`. Modify **config.yaml** as needed for your environment, then execute **mqtt_bridge.py**.
 
 ## Requirements
 
 * Python 3.11 (or later)
-* Controller firmware 2.1.35 (or later)
+* Controller firmware 2.2.11 (or later)
 
 ## Quick start
 
