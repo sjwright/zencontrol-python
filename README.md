@@ -1,10 +1,12 @@
 # zencontrol-python
 
-This is an implementation of the **Zencontrol TPI Advanced** protocol, written in Python. The TPI Advanced protocol is implemented as **ZenProtocol** in *zen.py*, featuring class methods for most API commands and callbacks for event packets (multicast or unicast). This code is relatively mature and stable.
+This is an implementation of the **Zencontrol TPI Advanced** protocol, written in Python. This library has been written with three levels of abstraction:
 
-An opinionated abstraction layer is implemented as **ZenInterface** in *zen_interface.py*, built on top of ZenProtocol. It abstracts the raw protocol into a cohesive interface suitable for smart building control software. It currently provides methods, objects, and callbacks for managing lights, groups, profiles, buttons, motion sensors, and Zen system variables. This code is feature complete but still undergoing significant refinement.
+# zencontrol.io: Implementation of the raw TPI Advanced UDP packet specifications;
+# zencontrol.api: Implementation of most TPI Advanced API commands and events;
+# zencontrol.interface: An opinionated abstraction layer suitable for integration into smart building control software. It provides methods, objects, and callbacks for managing lights, groups, profiles, buttons, motion sensors, and system variables. This code is still undergoing significant refinement.
 
-Built on top of ZenInterface is **mqtt.py**, a bridge to Home Assistant via MQTT. It reads settings from *config.json* and (currently) spams your console with lots of debug messages. To run this, ensure you have Python 3.11 (or later) installed, along with the following Python packages: `paho-mqtt`, `yaml`, and `colorama`. To run, modify **config.yaml** as needed for your environment, then execute **mqtt.py**.
+Built on top of this is an example application **mqtt_bridge.py**, which is a bridge to Home Assistant via MQTT. It reads settings from *config.json* and spams your console with lots of debug messages. To run this, ensure you have Python 3.11 (or later) installed, along with the following Python packages: `aiomqtt`, `yaml`, and `colorama`. Modify **config.yaml** as needed for your environment, then execute **mqtt_bridge.py**.
 
 ## Requirements
 
@@ -19,7 +21,8 @@ The following are the minimum steps necessary to run the MQTT bridge on a Raspbe
 # Update/Install packages:
 sudo apt update
 sudo apt upgrade -y
-sudo apt install -y git python3-yaml python3-colorama python3-paho-mqtt
+sudo apt install -y git python3-yaml python3-colorama python3-pip
+pip3 install aiomqtt
 
 # Download this code:
 cd ~/Documents
@@ -33,21 +36,21 @@ nano config.yaml
 python3 mqtt.py
 ```
 
-Be aware that other distributions may ship with an older version of python and could require non-trivial steps to install a newer version. You can check your python version by running `python3 -V`
+Be aware that many Linux distributions ship with old versions of python and it could require non-trivial steps to install a newer version. You can check your current python version by running `python3 -V`
 
 ## Limitations
 
 Implemented but untested:
   
-* Dealing with multiple controllers
+* Dealing with multiple controllers (I only have one controller)
 * RGB+ and XY colour commands (I don't have any compatible lights)
-* Numerical (absolute) instances (I don't have any such devices)
+* Numerical (absolute) instances (I don't have any such ECDs)
 * Event filtering (I haven't tested it)
 
-No support planned:
+Not implemented:
 
 * Any commands involving DMX, Control4, or virtual instances (I don't have licenses for any of these so I couldn't test them even if I wanted to, but the scaffolding is there if anyone wishes to add support)
-* Any commands described in the documentation as "legacy" (they don't serve any purpose)
+* Any commands described in the documentation as "legacy" (they aren't useful)
 
 ## TPI Advanced errata
 
@@ -57,12 +60,6 @@ The following TPI Advanced commands/events are incomplete:
 * COLOUR_CHANGE_EVENT — This event is supposed to fire when a light's colour temperature changes, but it only does so under some circumstances. If the temperature is changed by way of scene recall, the event does not fire. _(A fix is anticipated soon)_
 
 ## TPI Advanced wishlist
-
-High priority:
-
-* Command to fetch colour temperatures as entered in the "colour scene assignment" section of the Zen cloud grid view. _(This has been added in firmware version 2.1.38)_
-
-Low priority:
 
 * Command to return a controller's MAC address used for multicast packets _(There are other ways to get or infer the MAC access, but being able to query it directly would be ideal.)_
 * Command to list active system variables _(As a workaround, you can query every number for its label. This assumes no system variables of interest are unlabelled.)_

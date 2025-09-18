@@ -1,0 +1,48 @@
+# Rename file to config.yaml
+
+homeassistant:
+  discovery_prefix: homeassistant
+
+mqtt:
+  host: 10.0.0.0
+  port: 1883
+  user: mqttuser
+  password: mqttpassword
+  keepalive: 60
+
+logging:
+  file: 'mqtt.log'
+  max_bytes: 5242880  # 5MB
+  backup_count: 5
+
+zencontrol:
+  - name: zen1
+    label: Zencontrol 1
+    mac: 00:00:00:00:00:01
+    host: 10.0.0.1
+    port: 5108
+  - name: zen2
+    label: Zencontrol 2
+    mac: 00:00:00:00:00:02
+    host: 10.0.0.2
+    port: 5108
+#     unicast_ip: 172.22.2.21
+#     unicast_port: 5109
+#     filtering: False
+#     system_variables:
+#       - id: 2
+#         component: sensor # integer, read only, -32768 to 32767
+#         object_id: entity_id_for_home_assistant
+#         attributes:
+#           name: "Sensor Label for Home Assistant"
+#           device_class: illuminance
+#       - id: 0
+#         component: switch # boolean, read/write, 1 or 0
+#         object_id: entity_id_for_home_assistant
+#         attributes:
+#           name: "Switch Label for Home Assistant"
+#           icon: mdi:home-export-outline
+#     buttons:
+#       - match_instance_label: "Button Label in Zen Cloud"
+#         name: entity_id_for_home_assistant
+#         label: "Button Label for Home Assistant"
