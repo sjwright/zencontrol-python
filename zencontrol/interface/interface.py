@@ -36,14 +36,14 @@ ZenInstance = Represents a DALI ECD instance.
 class ZenControl:
     def __init__(self,
                  logger: logging.Logger=None,
-                 print_spam: bool = False,
+                 print_traffic: bool = False,
                  unicast: bool = False,
                  listen_ip: Optional[str] = None,
                  listen_port: Optional[int] = None,
                  cache: dict = {}
                  ):
         self.logger = logger or logging.getLogger(__name__)
-        self.protocol: ZenProtocol = ZenProtocol(logger=self.logger, print_spam=print_spam, unicast=unicast, listen_ip=listen_ip, listen_port=listen_port, cache=cache)
+        self.protocol: ZenProtocol = ZenProtocol(logger=self.logger, print_traffic=print_traffic, unicast=unicast, listen_ip=listen_ip, listen_port=listen_port, cache=cache)
         self.controllers: list[ZenController] = []
 
     @property
@@ -166,8 +166,6 @@ class ZenControl:
             light = ZenLight(protocol=self.protocol, address=address)
             await light._event_received(level=arc_level)
 
-            self.logger.info(f"ZEN: light {light.address.number} to {arc_level}")
-
             # Delay the light event to allow group updates to arrive and propogate
             # async def delayed_event():
             #     await asyncio.sleep(0.1)
@@ -177,10 +175,8 @@ class ZenControl:
             group = ZenGroup(protocol=self.protocol, address=address)
             await group._event_received(level=arc_level)
 
-            self.logger.info(f"ZEN: group {group.address.number} to {arc_level}")
-
+            # Don't cascade groups. Group change events are untrustworthy.
             # for light in group.lights:
-            #     self.logger.info(f"ZEN: .......... {arc_level} cascaded to light {light.address.number}")
             #     await light._event_received(level=arc_level, cascaded_from=group)
 
     async def colour_change_event(self, address: ZenAddress, colour: bytes, payload: bytes) -> None:
@@ -197,21 +193,18 @@ class ZenControl:
             for light in group.lights:
                 await light._event_received(colour=colour, cascaded_from=group)
 
-    async def scene_change_event(self, address: ZenAddress, scene: int, payload: bytes) -> None:
-        print(f"Scene Change Event       - {address} scene {scene}")
+    async def scene_change_event(self, address: ZenAddress, scene: int, active: bool, payload: bytes) -> None:
         if address.type == ZenAddressType.ECG:
-            self.logger.info(f"ZEN: light {address.number} to scene {scene}")
             # Delay the light event to allow group updates to arrive and propogate
             ecg = ZenLight(protocol=self.protocol, address=address)
             # Option 3: Inline async function with shorter name
             async def delayed_scene_event():
                 await asyncio.sleep(0.0)
-                await ecg._event_received(scene=scene)
+                await ecg._event_received(scene=scene, active=active)
             asyncio.create_task(delayed_scene_event())
         elif address.type == ZenAddressType.GROUP:
-            self.logger.info(f"ZEN: group {address.number} to scene {scene}")
             group = ZenGroup(protocol=self.protocol, address=address)
-            await group._event_received(scene=scene)
+            await group._event_received(scene=scene, active=active)
             for light in group.lights:
                 await light._event_received(scene=scene, cascaded_from=group)
     
@@ -463,6 +456,8 @@ class ZenLight:
         self.colour: Optional["ZenColour"] = None
         self.scene: Optional[int] = None # Current scene number
         self.client_data: dict = {}
+        # Timer for refresh_state_from_controller after property changes
+        self._refresh_timer: Optional[asyncio.Task] = None
     async def interview(self) -> bool:
         cgstatus = await self.protocol.dali_query_control_gear_status(self.address)
         if cgstatus:
@@ -512,24 +507,60 @@ class ZenLight:
         else:
             self._reset()
             return False
-    async def sync_from_controller(self):
-        print(f"Syncing light {self}")
-        current_level = await self.protocol.dali_query_level(self.address)
-        current_colour = None
-        current_scene = None
+    async def refresh_state_from_controller(self, verifying: bool = False):
+        
+        existing_level = self.level
+        existing_colour = self.colour
+        existing_scene = self.scene
+
+        refreshed_level = await self.protocol.dali_query_level(self.address)
+        refreshed_colour = None
+        refreshed_scene = None
         if await self.protocol.dali_query_last_scene_is_current(self.address):
-            current_scene = await self.protocol.dali_query_last_scene(self.address)
+            refreshed_scene = await self.protocol.dali_query_last_scene(self.address)
         if self.features["temperature"] or self.features["RGB"] or self.features["RGBW"] or self.features["RGBWW"]:
-            current_colour = await self.protocol.query_dali_colour(self.address)
+            refreshed_colour = await self.protocol.query_dali_colour(self.address)
+        
+        if verifying:
+            if self.level != refreshed_level:
+                self.logger.error(f"Light {self.address.number} level mismatch! We had {self.level}, actual level is {refreshed_level}")
+            if self.colour != refreshed_colour:
+                self.logger.error(f"Light {self.address.number} colour mismatch! We had {self.colour}, actual colour is {refreshed_colour}")
+            if self.scene != refreshed_scene:
+                self.logger.error(f"Light {self.address.number} scene mismatch! We had {self.scene}, actual scene is {refreshed_scene}")
+        
         # Mimic an incoming event
-        print(f"Syncing light {self} - level: {current_level}, colour: {current_colour}, scene: {current_scene}")
-        await self._event_received(level=current_level, colour=current_colour, scene=current_scene)
-    async def _event_received(self, level: int = 255, colour: Optional["ZenColour"] = None, scene: Optional[int] = None, cascaded_from: Optional["ZenGroup"] = None):
+        await self._event_received(level=refreshed_level, colour=refreshed_colour, scene=refreshed_scene, verifying=verifying)
+
+    def _start_refresh_timer(self):
+        """Start a 2-second timer to refresh from controller after API user changes state."""
+        # Cancel any existing timer
+        if self._refresh_timer and not self._refresh_timer.done():
+            self._refresh_timer.cancel()
+        
+        # Start new timer (which quietly dies if cancelled)
+        async def delayed_refresh():
+            try:
+                await asyncio.sleep(2.0)
+                await self.refresh_state_from_controller(verifying=True)
+            except asyncio.CancelledError:
+                pass
+        
+        self._refresh_timer = asyncio.create_task(delayed_refresh())
+
+    async def _event_received(self,
+            level: int|None = 255,
+            colour: Optional["ZenColour"] = None,
+            scene: Optional[int] = None,
+            active: Optional[bool] = None,
+            cascaded_from: Optional["ZenGroup"] = None,
+            verifying: bool = False
+        ):
         # Called by ZenProtocol when a query command is issued or an event is received
         level_changed = False
         colour_changed = False
         scene_changed = False
-        if scene is not None:
+        if scene is not None and active is True:
             self.scene = scene
             scene_changed = True
             scene_level = self._scene_levels[scene]
@@ -579,8 +610,6 @@ class ZenLight:
                 # print(f"                              Light {self.address.number} changed to {self.level} {self.colour}" + f" cascaded from group {cascaded_from.address.number}" if cascaded_from else "")
                 for group in self.groups:
                     if (level_changed and group.level != self.level) or (colour_changed and self.colour is not None and group.colour != self.colour):
-                        # print(f"                              Group {group.address.number} discoordinated after level set" + f" cascaded from group {cascaded_from.address.number}" if cascaded_from else "")
-                        # print(f"                                   {group.level}  {self.level}  {group.colour}  {self.colour}")
                         await group.declare_discoordination()
         # Send callbacks to the application
         if type(self) is ZenGroup:
@@ -616,12 +645,15 @@ class ZenLight:
     #   The events update the internal state.
     # -----------------------------------------------------------------------------------------
     async def on(self, fade: bool = True) -> bool:
+        self._start_refresh_timer()
         if not fade: await self.protocol.dali_enable_dapc_sequence(self.address)
         return await self.protocol.dali_go_to_last_active_level(self.address)
     async def off(self, fade: bool = True) -> bool:
+        self._start_refresh_timer()
         if fade: return await self.protocol.dali_arc_level(self.address, 0)
         else: return await self.protocol.dali_off(self.address)
     async def set_scene(self, scene: int|str|dict, fade: bool = True) -> bool:
+        self._start_refresh_timer()
         if type(scene) == str:
             scene = next((i for i, s in enumerate(self._scene_labels) if s == scene), False)
         if type(scene) == int:
@@ -629,6 +661,7 @@ class ZenLight:
             return await self.protocol.dali_scene(self.address, scene)
         return False
     async def set(self, level: int = 255, colour: Optional["ZenColour"] = None, fade: bool = True) -> bool:
+        self._start_refresh_timer()
         if (self.supports_colour(colour)):
             if not fade: await self.protocol.dali_enable_dapc_sequence(self.address)
             return await self.protocol.dali_colour(self.address, colour, level)
@@ -637,30 +670,40 @@ class ZenLight:
                 return await self.protocol.dali_arc_level(self.address, level)
             else:
                 return await self.protocol.dali_custom_fade(self.address, level, 0)
-    async def dali_inhibit(self, inhibit: bool = True) -> bool:
-        return await self.protocol.dali_inhibit(self.address, inhibit)
     async def dali_on_step_up(self) -> bool:
+        self._start_refresh_timer()
         return await self.protocol.dali_on_step_up(self.address)
     async def dali_step_down_off(self) -> bool:
+        self._start_refresh_timer()
         return await self.protocol.dali_step_down_off(self.address)
     async def dali_up(self) -> bool:
+        self._start_refresh_timer()
         return await self.protocol.dali_up(self.address)
     async def dali_down(self) -> bool:
+        self._start_refresh_timer()
         return await self.protocol.dali_down(self.address)
     async def dali_recall_max(self) -> bool:
+        self._start_refresh_timer()
         return await self.protocol.dali_recall_max(self.address)
     async def dali_recall_min(self) -> bool:
+        self._start_refresh_timer()
         return await self.protocol.dali_recall_min(self.address)
     async def dali_go_to_last_active_level(self) -> bool:
+        self._start_refresh_timer()
         return await self.protocol.dali_go_to_last_active_level(self.address)
     async def dali_off(self) -> bool:
+        self._start_refresh_timer()
         return await self.protocol.dali_off(self.address)
-    async def dali_enable_dapc_sequence(self) -> bool:
-        return await self.protocol.dali_enable_dapc_sequence(self.address)
     async def dali_custom_fade(self, level: int, duration: int) -> bool:
+        self._start_refresh_timer()
         return await self.protocol.dali_custom_fade(self.address, level, duration)
     async def dali_stop_fade(self) -> bool:
+        self._start_refresh_timer()
         return await self.protocol.dali_stop_fade(self.address)
+    async def dali_enable_dapc_sequence(self) -> bool:
+        return await self.protocol.dali_enable_dapc_sequence(self.address)
+    async def dali_inhibit(self, inhibit: bool = True) -> bool:
+        return await self.protocol.dali_inhibit(self.address, inhibit)
         
 
 class ZenGroup(ZenLight):

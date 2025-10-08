@@ -39,7 +39,7 @@ from .interface import ZenLight, ZenGroup, ZenButton, ZenMotionSensor, ZenSystem
 from .io import ZenClient, ZenListener, ZenEvent, Request, Response, ResponseType, RequestType
 
 # Shared types and exceptions
-from .api.types import ZenAddressType, ZenInstanceType, ZenColourType, ZenEventMask, ZenEventMode
+from .api.types import ZenAddressType, ZenInstanceType, ZenColourType, ZenEventCode, ZenEventMask, ZenEventMode
 from .exceptions import ZenError, ZenTimeoutError, ZenResponseError
 
 # Utilities
@@ -86,6 +86,7 @@ __all__ = [
     "ZenAddressType",
     "ZenInstanceType",
     "ZenColourType",
+    "ZenEventCode",
     "ZenEventMask",
     "ZenEventMode",
     

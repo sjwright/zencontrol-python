@@ -10,9 +10,13 @@ This module contains models that belong to the zen_api layer:
 import struct
 import time
 from dataclasses import dataclass, field
-from typing import Optional, Self
+from typing import Optional, Self, TYPE_CHECKING
 
-from .types import ZenAddressType, ZenInstanceType, ZenColourType, ZenErrorCode, Const
+if TYPE_CHECKING:
+    from .protocol import ZenProtocol
+
+from ..io import ZenClient
+from .types import ZenAddressType, ZenInstanceType, ZenColourType, Const
 
 
 @dataclass
@@ -24,13 +28,13 @@ class ZenController:
     host: str
     port: int
     mac: str
-    protocol: Optional['ZenProtocol'] = None
+    protocol: Optional["ZenProtocol"] = None
     version: Optional[str] = None
     startup_complete: bool = False
     dali_ready: bool = False
     filtering: bool = False
     last_seen: float = field(default_factory=time.time)
-    client: Optional['ZenClient'] = None
+    client: Optional[ZenClient] = None
 
 
 @dataclass
@@ -104,7 +108,6 @@ class ZenInstance:
     number: int
     active: Optional[bool] = None
     error: Optional[bool] = None
-    
     def __post_init__(self):
         if not 0 <= self.number < Const.MAX_INSTANCE: 
             raise ValueError(f"Instance number must be between 0 and {Const.MAX_INSTANCE-1}, received {self.number}")

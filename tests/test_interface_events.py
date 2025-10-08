@@ -6,7 +6,7 @@ from typing import Optional
 
 async def main():
     config = yaml.safe_load(open("tests/config.yaml"))
-    zi = ZenControl(print_spam=False)
+    zi = ZenControl(print_traffic=False)
     zi.add_controller(**config.get('zencontrol')[0])
 
     # Handlers

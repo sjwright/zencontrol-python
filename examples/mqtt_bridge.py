@@ -6,7 +6,7 @@ import yaml
 import re
 from typing import Optional, Any
 import zencontrol
-from zencontrol import ZenController, ZenColour, ZenColourType, ZenProfile, ZenLight, ZenGroup, ZenButton, ZenMotionSensor, ZenSystemVariable, ZenTimeoutError, ZenAddressType
+from zencontrol import ZenController, ZenProtocol, ZenClient, ZenColour, ZenColourType, ZenProfile, ZenLight, ZenGroup, ZenButton, ZenMotionSensor, ZenSystemVariable, ZenTimeoutError, ZenAddressType
 import aiomqtt
 from colorama import Fore, Back, Style
 import logging
@@ -173,6 +173,34 @@ class ZenMQTTBridge:
         with open("examples/cache.pkl", "wb") as f:
             pickle.dump(self.zen.cache, f)
         
+        clist = []
+        for c in sorted(self.control, key=lambda x: x.id):
+            c: ZenController
+            glist = []
+            llist = []
+            for g in sorted(c.groups, key=lambda x: x.address.number):
+                g: ZenGroup
+                glist.append({
+                    "id": g.address.number,
+                    "label": g.label,
+                })
+            for l in sorted(c.lights, key=lambda x: x.address.number):
+                l: ZenLight
+                llist.append({
+                    "ecg": l.address.number,
+                    "label": l.label,
+                })
+            clist.append({
+                "id": c.id,
+                "name": c.name,
+                "label": c.label,
+                "groups": glist,
+                "lights": llist
+            })
+        # Dump to yaml file
+        with open("examples/dump.yaml", "w") as f:
+            yaml.dump(clist, f, sort_keys=False)
+
         while True:
             await asyncio.sleep(1)
 
@@ -275,7 +303,7 @@ class ZenMQTTBridge:
         console_handler = logging.StreamHandler()
         console_handler.setLevel(logging.INFO)
         console_handler.setFormatter(logging.Formatter(
-            '%(levelname)s: %(message)s'
+            '%(asctime)s.%(msecs)03d %(levelname)s: %(message)s', datefmt='%H:%M:%S'
         ))
         self.logger.addHandler(console_handler)
 
@@ -290,7 +318,7 @@ class ZenMQTTBridge:
                     cache = pickle.load(infile)
             except FileNotFoundError:
                 cache = {}
-            self.zen: zencontrol.ZenControl = zencontrol.ZenControl(logger=self.logger, print_spam=True, cache=cache)
+            self.zen: zencontrol.ZenControl = zencontrol.ZenControl(logger=self.logger, print_traffic=True, cache=cache)
             self.zen.on_connect = self._zen_on_connect
             self.zen.on_disconnect = self._zen_on_disconnect
             self.zen.profile_change = self._zen_profile_change
@@ -605,8 +633,9 @@ class ZenMQTTBridge:
     #           PROFILES
     # ================================
 
-    async def setup_profiles(self) -> None:
+    async def setup_profiles(self) -> set[ZenProfile]:
         """Initialize all profiles for Home Assistant auto-discovery."""
+        all_profiles = set()
         for ctrl in self.control:
             client_data = self._client_data_for_object(ctrl, "select")
             mqtt_topic = client_data['mqtt_topic']
@@ -621,6 +650,8 @@ class ZenMQTTBridge:
             }
             await self._publish_config(mqtt_topic, config_dict, object=ctrl)
             await self._publish_state(mqtt_topic, ctrl.profile.label)
+            all_profiles.update(profiles)
+        return all_profiles
 
     async def _mqtt_profile_change(self, ctrl: ZenController, payload: str) -> None:
         print(f"HA asking to change profile of {ctrl.name} to {payload}")
@@ -641,7 +672,7 @@ class ZenMQTTBridge:
     #            LIGHTS
     # ================================
 
-    async def setup_lights(self) -> None:
+    async def setup_lights(self) -> set[ZenLight]:
         """Initialize all lights for Home Assistant auto-discovery."""
         lights = await self.zen.get_lights()
         
@@ -680,8 +711,11 @@ class ZenMQTTBridge:
             await self._publish_config(mqtt_topic, config_dict, object=light)
 
         # Then, sync all lights with rate limiting to prevent server overload
-        sync_coros = [light.sync_from_controller() for light in lights]
+        sync_coros = [light.refresh_state_from_controller() for light in lights]
         await self.rate_limiter.execute_batch(sync_coros)
+
+        # Return all lights
+        return lights
 
     async def _mqtt_light_change(self, light: ZenLight|ZenGroup, payload: dict[str, Any]) -> None:
         addr = light.address
@@ -690,31 +724,30 @@ class ZenMQTTBridge:
         brightness: Optional[int] = payload.get("brightness", None)
         mireds: Optional[int] = payload.get("color_temp", None)
 
-        self.logger.debug(f"HA: light {light.address.number} state {state} brightness {brightness} mireds {mireds}")
-
         # If brightness or temperature is set
         if brightness or mireds:
             args = {}
             if brightness: args["level"] = self.brightness_to_arc(brightness)
             if mireds: args["colour"] = ZenColour(type=ZenColourType.TC, kelvin=self.mireds_to_kelvin(mireds))
-            self.logger.info(f"HA: {ctrl.name} setting gear {addr.number} to {args}")
+            self.logger.info(f"♥️💡 Command from HA: {ctrl.name} setting gear {addr.number} to {args}")
             await light.set(**args)
             return
         
         # If switched on/off in HA
         if state == "OFF":
-            self.logger.info(f"HA: {ctrl.name} turning gear {addr.number} OFF")
+            self.logger.info(f"♥️💡 Command from HA: {ctrl.name} turning gear {addr.number} OFF")
             await light.off(fade=True)
         elif state == "ON":
-            self.logger.info(f"HA: {ctrl.name} turning gear {addr.number} ON")
+            self.logger.info(f"♥️💡 Command from HA: {ctrl.name} turning gear {addr.number} ON")
             await light.on()
 
     async def _zen_light_change(self, light: ZenLight, level: Optional[int] = None, colour: Optional[ZenColour] = None, scene: Optional[int] = None) -> None:
         typestr = "group" if light.address.type == ZenAddressType.GROUP else "light"
-        self.logger.debug(f"ZEN: {typestr} {light.address.number} level {level} colour {colour} scene {scene}")
+        emoji = "👥" if light.address.type == ZenAddressType.GROUP else "💡"
+        self.logger.info(f"🩵{emoji} Event from Zen: {typestr} {light.address.number}  level {level if level is not None else '--'}  colour {colour if colour is not None else '--'}  scene {scene if scene is not None else '--'}")
         
         # log traceback
-        self.logger.debug(f"   stack trace: {traceback.format_stack()}")
+        # self.logger.debug(f"   stack trace: {traceback.format_stack()}")
 
         mqtt_topic = light.client_data.get("light", {}).get('mqtt_topic', None)
         if not mqtt_topic:
@@ -733,14 +766,13 @@ class ZenMQTTBridge:
             if light.colour.kelvin is not None:
                 new_state["color_temp"] = self.kelvin_to_mireds(light.colour.kelvin)
 
-        self.logger.info(f"MQTT: {typestr} {light.address.number} to {light.level}")
         await self._publish_state(mqtt_topic, new_state)
 
     # ================================
     #           GROUPS
     # ================================
 
-    async def setup_groups(self) -> None:
+    async def setup_groups(self) -> set[ZenGroup]:
         """Initialize all groups for Home Assistant auto-discovery."""
         groups = await self.zen.get_groups()
         # Group-lights
@@ -776,10 +808,10 @@ class ZenMQTTBridge:
                     config_dict = config_dict | {
                         "supported_color_modes": ["onoff"],
                     }
-                
                 await self._publish_config(mqtt_topic, config_dict, object=group)
                 # Get the latest state from the controller and trigger an event, which then sends a state update
-                await group.sync_from_controller()
+                await group.refresh_state_from_controller()
+
         # Group-scenes
         for group in groups:
             if group.lights:
@@ -793,17 +825,17 @@ class ZenMQTTBridge:
                 }
                 await self._publish_config(mqtt_topic, config_dict, object=group)
                 await self._publish_state(mqtt_topic, group.scene)
+
+        # Return all groups
+        return groups
             
     async def _mqtt_groupscene_change(self, group: ZenGroup, payload: str) -> None:
-        self.logger.debug(f"HA: group {group.address.number} scene set to {payload}")
+        self.logger.info(f"♥️👥 Command from HA: group {group.address.number} to scene {payload}")
         await group.set_scene(payload)
     
     # mqtt group light change calls _mqtt_light_change
         
-    async def _zen_group_change(self, group: ZenGroup, level: Optional[int] = None, colour: Optional[ZenColour] = None, scene: Optional[int] = None, discoordinated: bool = False) -> None:
-        # print(f"Zen to HA: group {group} level {level} colour {colour} scene {scene} discoordinated {discoordinated}")
-        self.logger.debug(f"ZEN: group {group.address.number} level {level} colour {colour} scene {scene} discoordinated {discoordinated}")
-
+    async def _zen_group_change(self, group: ZenGroup, level: Optional[int] = None, colour: Optional[ZenColour] = None, scene: Optional[int] = None, discoordinated: Optional[bool] = None) -> None:
         select_mqtt_topic = group.client_data.get("select", {}).get('mqtt_topic', None)
 
         # Get the scene label for the ID from the group
@@ -811,17 +843,16 @@ class ZenMQTTBridge:
             scene_label = group.get_scene_label_from_number(scene)
             if scene_label:
                 await self._publish_state(select_mqtt_topic, scene_label)
-                self.logger.info(f"MQTT: group {group.address.number} to {scene_label}")
             else:
                 await self._publish_state(select_mqtt_topic, "None")
                 self.logger.warning(f"Group {group} has no scene with ID {scene}")
         
         # If discoordinated, set the group-light's state to null and return
         if discoordinated:
+            self.logger.info(f"🩵👥 Event from Zen: group {group.address.number}  discoordinated")
             await self._publish_state(select_mqtt_topic, "None")
             light_mqtt_topic = group.client_data.get("light", {}).get('mqtt_topic', None)
             await self._publish_state(light_mqtt_topic, {"state": None})
-            self.logger.info(f"MQTT: group {group.address.number} to None (discoordinated)")
             return
         
         # Do light stuff
@@ -831,7 +862,7 @@ class ZenMQTTBridge:
     #           BUTTONS
     # ================================
 
-    async def setup_buttons(self) -> None:
+    async def setup_buttons(self) -> set[ZenButton]:
         """Initialize all buttons found on the DALI bus for Home Assistant auto-discovery."""
         buttons = await self.zen.get_buttons()
         for button in buttons:
@@ -853,8 +884,11 @@ class ZenMQTTBridge:
             }
             await self._publish_config(mqtt_topic + "_long_press", config_dict, object=button)
         
+        # Return all buttons
+        return buttons
+        
     async def _zen_button_press(self, button: ZenButton) -> None:
-        self.logger.debug(f"ZEN: button press {button}")
+        self.logger.debug(f"🩵👆 Event from Zen: button press {button}")
         mqtt_topic = button.client_data.get("device_automation", {}).get("mqtt_topic", None)
         if not mqtt_topic:
             self.logger.error(f"Button {button} has no MQTT topic")
@@ -862,7 +896,7 @@ class ZenMQTTBridge:
         await self._publish_event(mqtt_topic, "button_short_press")
         
     async def _zen_button_long_press(self, button: ZenButton) -> None:
-        self.logger.debug(f"ZEN: button long press {button}")
+        self.logger.debug(f"🩵👆 Event from Zen: button LONG press {button}")
         mqtt_topic = button.client_data.get("device_automation", {}).get("mqtt_topic", None)
         if not mqtt_topic:
             self.logger.error(f"Button {button} has no MQTT topic")
@@ -873,7 +907,7 @@ class ZenMQTTBridge:
     #         MOTION SENSORS
     # ================================
 
-    async def setup_motion_sensors(self) -> None:
+    async def setup_motion_sensors(self) -> set[ZenMotionSensor]:
         """Initialize all motion sensors found on the DALI bus for Home Assistant auto-discovery."""
         sensors = await self.zen.get_motion_sensors()
         for sensor in sensors:
@@ -891,9 +925,12 @@ class ZenMQTTBridge:
             }
             await self._publish_config(mqtt_topic, config_dict, object=sensor)
             await self._publish_state(mqtt_topic, "ON" if sensor.occupied else "OFF")
+
+        # Return all motion sensors
+        return sensors
     
     async def _zen_motion_event(self, sensor: ZenMotionSensor, occupied: bool) -> None:
-        self.logger.debug(f"ZEN: sensor {sensor} occupied: {occupied}")
+        self.logger.debug(f"🩵👀 Event from Zen: sensor {sensor} occupied: {occupied}")
         mqtt_topic = sensor.client_data.get("binary_sensor", {}).get("mqtt_topic", None)
         if not mqtt_topic:
             self.logger.error(f"Sensor {sensor} has no MQTT topic")
@@ -904,7 +941,7 @@ class ZenMQTTBridge:
     #        SYSTEM VARIABLES
     # ================================
 
-    async def setup_system_variables(self) -> None:
+    async def setup_system_variables(self) -> set[ZenSystemVariable]:
         """Initialize system variables in config.yaml for Home Assistant auto-discovery."""
         
         # On first run, prep system variables with client_data
@@ -944,16 +981,19 @@ class ZenMQTTBridge:
 
             await self._publish_config(mqtt_topic, config_dict, object=zsv)
             await self._publish_state(mqtt_topic, await zsv.get_value())
-        
+
+        # Return all system variables
+        return self.system_variables
+    
     async def _mqtt_system_variable_change(self, sysvar: ZenSystemVariable, payload: str) -> None:
-        self.logger.debug(f"HA: {sysvar.controller.name} system variable {sysvar.id} set to {payload}")
+        self.logger.debug(f"♥️⚡️ Command from HA: {sysvar.controller.name} system variable {sysvar.id} set to {payload}")
         if sysvar.client_data.get("switch", None):
             await sysvar.set_value(1 if payload == "ON" else 0)
         elif sysvar.client_data.get("sensor", None):
             return # Read only
 
     async def _zen_system_variable_change(self, system_variable: ZenSystemVariable, value:int, changed: bool, by_me: bool) -> None:
-        # self.logger.debug(f"ZEN: {system_variable.controller.name} system variable {system_variable.id} set to {value}")
+        self.logger.debug(f"🩵⚡️ Event from Zen: {system_variable.controller.name} system variable {system_variable.id} set to {value}")
         # print(f"System Variable Change Event - controller {system_variable.controller.name} system_variable {system_variable.id} value {value} changed {changed} by_me {by_me}")
         if system_variable.client_data.get("switch", None):
             mqtt_topic = system_variable.client_data["switch"]["mqtt_topic"]

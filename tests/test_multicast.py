@@ -8,7 +8,7 @@ async def main():
     config = yaml.safe_load(open("tests/config.yaml"))
     
     # Create protocol and controller
-    async with ZenProtocol(print_spam=True, unicast=False) as tpi:
+    async with ZenProtocol(print_traffic=True, unicast=False) as tpi:
         ctrl = ZenController(protocol=tpi, **config.get('zencontrol')[0])
         tpi.set_controllers([ctrl])
         

@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 
 from ..io import ZenClient, ZenListener, ZenEvent, Request, Response, ResponseType, RequestType, EventConst, ClientConst
 from .models import ZenController, ZenAddress, ZenInstance, ZenColour, ZenProfile
-from .types import ZenAddressType, ZenInstanceType, ZenColourType, ZenEventMask, ZenEventMode, ZenErrorCode, Const
+from .types import ZenAddressType, ZenInstanceType, ZenColourType, ZenEventCode, ZenEventMask, ZenEventMode, ZenErrorCode, Const
 from ..exceptions import ZenError, ZenTimeoutError, ZenResponseError
 
 """
@@ -126,7 +126,7 @@ class ZenProtocol:
 
     def __init__(self,
                  logger: Optional[logging.Logger] = None,
-                 print_spam: bool = False,
+                 print_traffic: bool = False,
                  unicast: bool = False,
                  listen_ip: Optional[str] = None,
                  listen_port: Optional[int] = None,
@@ -134,7 +134,7 @@ class ZenProtocol:
         self.logger = logger or logging.getLogger('null')
         if logger is None:
             self.logger.addHandler(logging.NullHandler())
-        self.print_spam = print_spam
+        self.print_traffic = print_traffic
         self.unicast = unicast
         self.listen_ip = (listen_ip if listen_ip else "0.0.0.0") if unicast else None
         self.listen_port = (listen_port if listen_port else 0) if unicast else None
@@ -244,17 +244,17 @@ class ZenProtocol:
                 if response_data:
                     error_code = ZenErrorCode(response_data[0]) if response_data[0] in ZenErrorCode._value2member_map_ else None
                     error_label = error_code.name if error_code else f"Unknown error code: {hex(response_data[0])}"
-                    if self.print_spam: print(f"Command error code: {error_label}")
+                    self.logger.error(f"Command error code: {error_label}")
                 else:
-                    if self.print_spam: print("Command error (no error code)")
+                    self.logger.error("Command error (no error code)")
             case 0xAE: # TIMEOUT
-                if self.print_spam: print("Command timed out")
+                self.logger.error("Command timed out")
                 return None
             case 0xAF: # INVALID
-                if self.print_spam: print("Invalid response code")
+                self.logger.error("Invalid response code")
                 return None
             case _:
-                if self.print_spam: print(f"Unknown response code: {response_code}")
+                self.logger.error(f"Unknown response code: {response_code}")
         return None
         
     async def _send_colour(self, controller: ZenController, command: int, address: int, colour: ZenColour, level: int = 255) -> Optional[bool]:
@@ -280,18 +280,18 @@ class ZenProtocol:
                 pass  # Answer is in data bytes
             case 0xA2: # NO_ANSWER
                 if response_data > 0:
-                    if self.print_spam: print(f"No answer with code: {response_data}")
+                    self.logger.error(f"No answer with code: {response_data}")
                 return None
             case 0xA3: # ERROR
                 if response_data:
                     error_code = ZenErrorCode(response_data[0]) if response_data[0] in ZenErrorCode else None
                     error_label = error_code.name if error_code else f"Unknown error code: {hex(response_data[0])}"
-                    if self.print_spam: print(f"Command error code: {error_label}")
+                    self.logger.error(f"Command error code: {error_label}")
                 else:
-                    if self.print_spam: print("Command error (no error code)")
+                    self.logger.error("Command error (no error code)")
                 return None
             case _:
-                if self.print_spam: print(f"Unknown response type: {response_code}")
+                self.logger.error(f"Unknown response type: {response_code}")
                 return None
         if response_data:
             return response_data
@@ -308,10 +308,10 @@ class ZenProtocol:
                 cached_response_type = c.get('c', None) # response_type
                 cached_packet = bytes([cached_response_type & 0xFF, len(cached_data) & 0xFF]) + cached_data
                 if cached_timestamp is not None and time.time() - cached_timestamp < Const.CACHE_TIMEOUT:
-                    if self.print_spam:
-                        print(Fore.MAGENTA + f"FOUND:   [----, {', '.join(f'0x{b:02X}' for b in cache_key)}, ----]  "
+                    if self.print_traffic:
+                        print(Fore.MAGENTA + f"FOUND:   [----, {' '.join(f'0x{b:02X}' for b in cache_key)}, ----]  "
                             + Fore.RED + Style.DIM + f" CACHE HIT"
-                            + Style.BRIGHT + Fore.CYAN + f"  [{', '.join(f'0x{b:02X}' for b in cached_packet)}, ----]"
+                            + Style.BRIGHT + Fore.CYAN + f"  [{' '.join(f'0x{b:02X}' for b in cached_packet)}, ----]"
                             + Style.RESET_ALL)
                     return cached_data, cached_response_type
                 else:
@@ -332,16 +332,16 @@ class ZenProtocol:
         # Work out how many msec we waited for
         wait_time_ms = (time.time() - request.timestamp) * 1000
         if response.response_type == ResponseType.TIMEOUT:
-            raw_sent_str = f"[{', '.join(f'0x{b:02X}' for b in response.request.raw_sent)}]" if response.request.raw_sent else "[]"
+            raw_sent_str = f"[{' '.join(f'0x{b:02X}' for b in response.request.raw_sent)}]" if response.request.raw_sent else "[]"
             self.logger.error(f"UDP packet response from {controller.host}:{controller.port} not received after {wait_time_ms:.0f}ms, probably offline {raw_sent_str}")
             raise ZenTimeoutError(f"No response from {controller.host}:{controller.port} after {wait_time_ms:.0f}ms")
         
-        # print_spam
-        if self.print_spam and response.request.raw_sent and response.raw_rcvd:
+        # print_traffic
+        if self.print_traffic and response.request.raw_sent and response.raw_rcvd:
             rtt_ms = (response.timestamp - response.request.timestamp) * 1000
-            print(Fore.MAGENTA + f"REQUEST: [{', '.join(f'0x{b:02X}' for b in response.request.raw_sent)}]  "
+            print(Fore.MAGENTA + f"REQUEST: [{' '.join(f'0x{b:02X}' for b in response.request.raw_sent)}]  "
                 + Fore.WHITE + Style.DIM + f"RTT: {rtt_ms:.0f}ms".ljust(10)
-                + Style.BRIGHT + Fore.CYAN + f"  RESPONSE: [{', '.join(f'0x{b:02X}' for b in response.raw_rcvd)}]"
+                + Style.RESET_ALL + Fore.CYAN + f"  RESPONSE: [{' '.join(f'0x{b:02X}' for b in response.raw_rcvd)}]"
                 + Style.RESET_ALL)
         
         return response.data, response.response_type.value
@@ -375,7 +375,7 @@ class ZenProtocol:
         
     async def start_event_monitoring(self):
         if self.event_task and not self.event_task.done():
-            if self.print_spam: print("Event monitoring already running")
+            # Event monitoring already running
             return
         
         # For the sake of our sanity, all controllers must send event packets in the same way: either multicast or unicast (on one port)
@@ -403,8 +403,7 @@ class ZenProtocol:
                     
         except Exception as e:
             self.logger.error(f"Async event listener error: {e}")
-            # log the stack trace
-            self.logger.error(traceback.format_exc())
+            self.logger.error(f"Stack trace: {traceback.format_stack()}")
         finally:
             if self.event_listener:
                 await self.event_listener.close()
@@ -421,23 +420,8 @@ class ZenProtocol:
                 controller = ctrl
                 break
         if not controller:
-            self.logger.warning(f"Received {typecast} from unknown controller: {event.ip_address}: [{', '.join(f'0x{b:02X}' for b in event.raw_data)}]")
+            self.logger.warning(f"Received {typecast} from unknown controller: {event.ip_address}: [{' '.join(f'0x{b:02X}' for b in event.raw_data)}]")
             return
-        
-        event_names = [
-            "Button Press",
-            "Button Hold",
-            "Absolute Input",
-            "Level Change",
-            "Group Level Change",
-            "Scene Change",
-            "Is Occupied",
-            "System Variable Change",
-            "Colour Change",
-            "Profile Change",
-            "Group Occupied",
-            "Level Change V2",
-        ]
 
         # mac_string = ':'.join(f'{b:02X}' for b in event.mac_address)
         ip_address = event.ip_address
@@ -445,55 +429,64 @@ class ZenProtocol:
         target = event.target
         payload = event.payload
         event_code = event.event_code
-        # event_name = event_names[event_code] if event_code < len(event_names) else f"Unknown({event_code})"
-        
-        # Deprecated events
-        match event_code:
-            case 0x03:
-                return
-            case 0x04:
-                return
+        event_enum = ZenEventCode(event_code)
+        # Get event name from ZenEventCode, with fallback to unknown, underscores replaced with spaces, and first letter capitalized
+        event_name = event_enum.name.replace("_", " ").title()
 
-        # Log the event
-        # self.logger.debug(f"Received {typecast} from {ip_address}:{ip_port}: [{', '.join(f'0x{b:02X}' for b in event.raw_data)}]")
-        if self.print_spam: 
-            print(Fore.MAGENTA + f"{typecast.upper()} FROM: {ip_address}:{ip_port}" + 
-                  Fore.CYAN + f"  RECV: [{', '.join(f'0x{b:02X}' for b in event.raw_data)}]" + 
-                  Style.RESET_ALL)
+        # Print the raw packet
+        # if self.print_traffic: 
+        #     print(Fore.MAGENTA + f"{typecast.upper()} {ip_address}:" + 
+        #           Fore.CYAN + f" [{' '.join(f'0x{b:02X}' for b in event.raw_data)}]" + 
+        #           Style.RESET_ALL)
         
-
-        # self.logger.debug(f" ... EVENT: {event_code} {event_name} - TARGET: {target} - PAYLOAD: {payload}")
-        if self.print_spam: 
-            print(Fore.CYAN + Style.DIM + f"         EVENT: {event_code} {event_names[event_code]} - TARGET: {target} - PAYLOAD: {payload}" + Style.RESET_ALL)
-        
-        
-
-        match event_code:
-            case 0x00: # Button Press
+        match event_enum:
+            case ZenEventCode.BUTTON_PRESS:
+                if self.print_traffic: 
+                    print(Fore.MAGENTA + f"{typecast.upper()} {ip_address}:" +
+                        Fore.CYAN + f" Button {target-64}.{payload[0]} pressed" +
+                        Style.RESET_ALL)
                 if self.button_press_callback:
                     address = ZenAddress(controller=controller, type=ZenAddressType.ECD, number=target-64)
                     instance = ZenInstance(address=address, type=ZenInstanceType.PUSH_BUTTON, number=payload[0])
                     await self.button_press_callback(instance=instance, payload=payload)
 
-            case 0x01: # Button Hold
+            case ZenEventCode.BUTTON_HOLD:
+                if self.print_traffic: 
+                    print(Fore.MAGENTA + f"{typecast.upper()} {ip_address}:" +
+                        Fore.CYAN + f" Button {target-64}.{payload[0]} held" +
+                        Style.RESET_ALL)
                 if self.button_hold_callback:
                     address = ZenAddress(controller=controller, type=ZenAddressType.ECD, number=target-64)
                     instance = ZenInstance(address=address, type=ZenInstanceType.PUSH_BUTTON, number=payload[0])
                     await self.button_hold_callback(instance=instance, payload=payload)
 
-            case 0x02: # Absolute Input
+            case ZenEventCode.ABSOLUTE_INPUT:
+                if self.print_traffic: 
+                    print(Fore.MAGENTA + f"{typecast.upper()} {ip_address}:" +
+                        Fore.CYAN + f" Absolute {target-64}" +
+                        Style.DIM + f" [{' '.join(f'0x{b:02X}' for b in payload)}]" +
+                        Style.RESET_ALL)
                 if self.absolute_input_callback:
                     address = ZenAddress(controller=controller, type=ZenAddressType.ECD, number=target-64)
                     instance = ZenInstance(address=address, type=ZenInstanceType.ABSOLUTE_INPUT, number=payload[0])
                     await self.absolute_input_callback(instance=instance, payload=payload)
 
-            case 0x03: # Level Change
+            case ZenEventCode.LEVEL_CHANGE:
+                # if self.print_traffic: 
+                #     print(Style.DIM + Fore.MAGENTA + f"{typecast.upper()} {ip_address}:" +
+                #         Fore.CYAN + f" Level change {target} to {payload[0]}" +
+                #         Fore.WHITE + " (deprecated)" +
+                #         Style.RESET_ALL)
                 pass # Deprecated
                 if self.level_change_callback:
                     address = ZenAddress(controller=controller, type=ZenAddressType.ECG, number=target)
                     await self.level_change_callback(address=address, arc_level=payload[0], payload=payload)
 
-            case 0x0B: # Level Change V2
+            case ZenEventCode.LEVEL_CHANGE_V2:
+                if self.print_traffic: 
+                    print(Fore.MAGENTA + f"{typecast.upper()} {ip_address}:" +
+                        Fore.CYAN + f" Level change {'' if target <= 63 else 'group '}{target if target <= 63 else target-64} to {payload[1]}" +
+                        Style.RESET_ALL)
                 if self.level_change_callback:
                     if target <= 63:
                         address = ZenAddress(controller=controller, type=ZenAddressType.ECG, number=target)
@@ -505,13 +498,26 @@ class ZenProtocol:
                         self.logger.error(f"Invalid level change V2 event target: {target}")
                         return
 
-            case 0x04: # Group Level Change
+            case ZenEventCode.GROUP_LEVEL_CHANGE:
+                # if self.print_traffic: 
+                #     print(Style.DIM + Fore.MAGENTA + f"{typecast.upper()} {ip_address}:" +
+                #         Fore.CYAN + f" Level change group {target} to {payload[0]}" +
+                #         Fore.WHITE + " (deprecated)" +
+                #         Style.RESET_ALL)
                 pass # Deprecated
                 if self.group_level_change_callback:
                     address = ZenAddress(controller=controller, type=ZenAddressType.GROUP, number=target)
                     await self.group_level_change_callback(address=address, arc_level=payload[0], payload=payload)
 
-            case 0x05: # Scene Change
+            case ZenEventCode.SCENE_CHANGE:
+                # Ignore event if it doesn't contain the "at scene" flag
+                if len(payload) < 2:
+                    return
+                if self.print_traffic: 
+                    print(Fore.MAGENTA + f"{typecast.upper()} {ip_address}:" +
+                        Fore.CYAN + f" Scene change {'' if target <= 63 else 'group '}{target if target <= 63 else target-64}" +
+                        f" to {'' if payload[1] == 1 else 'inactive-'}{payload[0]}" +
+                        Style.RESET_ALL)
                 if self.scene_change_callback:
                     if target <= 63:
                         address = ZenAddress(controller=controller, type=ZenAddressType.ECG, number=target)
@@ -520,47 +526,62 @@ class ZenProtocol:
                     else:
                         self.logger.error(f"Invalid scene change event target: {target}")
                         return
-                    await self.scene_change_callback(address=address, scene=payload[0], payload=payload)
+                    await self.scene_change_callback(address=address, scene=payload[0], active=payload[1], payload=payload)
                 
-            case 0x06: # Is Occupied
+            case ZenEventCode.IS_OCCUPIED:
+                if self.print_traffic: 
+                    print(Fore.MAGENTA + f"{typecast.upper()} {ip_address}:" +
+                        Fore.CYAN + f" Motion sensor {target-64}.{payload[0]}" +
+                        Style.DIM + f" [{' '.join(f'0x{b:02X}' for b in payload)}]" +
+                        Style.RESET_ALL)
                 if self.is_occupied_callback:
                     address = ZenAddress(controller=controller, type=ZenAddressType.ECD, number=target-64)
                     instance = ZenInstance(address=address, type=ZenInstanceType.OCCUPANCY_SENSOR, number=payload[0])
                     await self.is_occupied_callback(instance=instance, payload=payload)
                 
-            case 0x07: # System Variable Change
+            case ZenEventCode.SYSTEM_VARIABLE_CHANGE:
                 if not 0 <= target < Const.MAX_SYSVAR:
                     self.logger.error(f"Variable number must be between 0 and {Const.MAX_SYSVAR}, received {target}")
                     return
+                raw_value = int.from_bytes(payload[0:4], byteorder='big', signed=True)
+                magnitude = int.from_bytes([payload[4]], byteorder='big', signed=True)
+                value = raw_value * (10 ** magnitude)
+                if self.print_traffic: 
+                    print(Fore.MAGENTA + f"{typecast.upper()} {ip_address}:" +
+                        Fore.CYAN + f" System Variable {target} set to {value}" +
+                        Style.RESET_ALL)
                 if self.system_variable_change_callback:
-                    raw_value = int.from_bytes(payload[0:4], byteorder='big', signed=True)
-                    magnitude = int.from_bytes([payload[4]], byteorder='big', signed=True)
-                    value = raw_value * (10 ** magnitude)
                     await self.system_variable_change_callback(controller=controller, target=target, value=value, payload=payload)
 
-            case 0x08: # Colour Change
+            case ZenEventCode.COLOUR_CHANGE:
+                if self.print_traffic: 
+                    print(Fore.MAGENTA + f"{typecast.upper()} {ip_address}:" +
+                        Fore.CYAN + f" Colour change {'' if target <= 63 else 'group '}{target if target <= 63 else target-64}" +
+                        Style.DIM + f" [{' '.join(f'0x{b:02X}' for b in payload)}]" +
+                        Style.RESET_ALL)
                 if self.colour_change_callback:
                     if target < 64:
                         address = ZenAddress(controller=controller, type=ZenAddressType.ECG, number=target)
                     elif 64 <= target <= 79:
                         address = ZenAddress(controller=controller, type=ZenAddressType.GROUP, number=target-64)
-                    elif 127 <= target <= 143:
-                        address = ZenAddress(controller=controller, type=ZenAddressType.GROUP, number=target-128)
-                        self.logger.error(f"Colour change callback received with target={target}. Assumed to be group {target-128}.")
                     else:
                         self.logger.error(f"Invalid colour change event target: {target}")
                         return
                     colour = ZenColour.from_bytes(payload)
                     await self.colour_change_callback(address=address, colour=colour, payload=payload)
+
+            case ZenEventCode.PROFILE_CHANGE:
+                payload_int = int.from_bytes(payload, byteorder='big')
+                if self.print_traffic: 
+                    print(Fore.MAGENTA + f"{typecast.upper()} {ip_address}:" +
+                        Fore.CYAN + f" Profile change {payload_int}" +
+                        Style.RESET_ALL)
+                if self.profile_change_callback:
+                    await self.profile_change_callback(controller=controller, profile=payload_int, payload=payload)
             
-            case 0x0A: # Group Occupied
+            case ZenEventCode.GROUP_OCCUPIED:
                 # Do nothing
                 pass
-
-            case 0x09: # Profile Change
-                if self.profile_change_callback:
-                    payload_int = int.from_bytes(payload, byteorder='big')
-                    await self.profile_change_callback(controller=controller, profile=payload_int, payload=payload)
 
 
     async def stop_event_monitoring(self):
@@ -821,7 +842,7 @@ class ZenProtocol:
 
     async def query_instances_by_address(self, address: ZenAddress) -> list[ZenInstance]:
         """Query a DALI address (ECD) for associated instances. Returns a list of ZenInstance, or an empty list if nothing found."""
-        response = await self._send_basic(address.controller, self.CMD["QUERY_INSTANCES_BY_ADDRESS"], address.ecd())
+        response = await self._send_basic(address.controller, self.CMD["QUERY_INSTANCES_BY_ADDRESS"], address.ecd(), cacheable=True)
         if response and len(response) >= 4:
             instances = []
             # Process groups of 4 bytes for each instance
@@ -839,7 +860,7 @@ class ZenProtocol:
 
     async def query_operating_mode_by_address(self, address: ZenAddress) -> Optional[int]:
         """Query a DALI address (ECG or ECD) for its operating mode. Returns an int containing the operating mode value, or None if the query fails."""
-        response = await self._send_basic(address.controller, self.CMD["QUERY_OPERATING_MODE_BY_ADDRESS"], address.ecg_or_ecd())
+        response = await self._send_basic(address.controller, self.CMD["QUERY_OPERATING_MODE_BY_ADDRESS"], address.ecg_or_ecd(), cacheable=True)
         if response and len(response) == 1:
             return response[0]  # Operating mode is in first byte
         return None
@@ -864,14 +885,14 @@ class ZenProtocol:
 
     async def query_scene_levels_by_address(self, address: ZenAddress) -> list[Optional[int]]:
         """Query a DALI address (ECG) for its DALI scene levels. Returns a list of 16 scene level values (0-254, or None if not part of scene)."""
-        response = await self._send_basic(address.controller, self.CMD["QUERY_SCENE_LEVELS_BY_ADDRESS"], address.ecg(), return_type='list')
+        response = await self._send_basic(address.controller, self.CMD["QUERY_SCENE_LEVELS_BY_ADDRESS"], address.ecg(), return_type='list', cacheable=True)
         if response:
             return [None if x == 255 else x for x in response]
         return [None] * Const.MAX_SCENE
     
     async def query_colour_scene_membership_by_address(self, address: ZenAddress) -> list[int]:
         """Query a DALI address (ECG) for which scenes have colour change data. Returns a list of scene numbers."""
-        response = await self._send_basic(address.controller, self.CMD["QUERY_COLOUR_SCENE_MEMBERSHIP_BY_ADDR"], address.ecg(), return_type='list')
+        response = await self._send_basic(address.controller, self.CMD["QUERY_COLOUR_SCENE_MEMBERSHIP_BY_ADDR"], address.ecg(), return_type='list', cacheable=True)
         if response:
             return response
         return None
@@ -881,10 +902,10 @@ class ZenProtocol:
         # Create a list of 12 ZenColour instances
         output: list[Optional[ZenColour]] = [None] * Const.MAX_SCENE
         # Queries
-        response = await self._send_basic(address.controller, self.CMD["QUERY_COLOUR_SCENE_0_7_DATA_FOR_ADDR"], address.ecg())
+        response = await self._send_basic(address.controller, self.CMD["QUERY_COLOUR_SCENE_0_7_DATA_FOR_ADDR"], address.ecg(), cacheable=True)
         if response is None:
             return output
-        response += await self._send_basic(address.controller, self.CMD["QUERY_COLOUR_SCENE_8_11_DATA_FOR_ADDR"], address.ecg())
+        response += await self._send_basic(address.controller, self.CMD["QUERY_COLOUR_SCENE_8_11_DATA_FOR_ADDR"], address.ecg(), cacheable=True)
         # Combined result should always be exactly 7*12 = 84 bytes
         if len(response) != 84:
             print(f"Warning: QUERY_COLOUR_SCENE_***_DATA_FOR_ADDR returned {len(response)} bytes, expected 84")
@@ -897,7 +918,7 @@ class ZenProtocol:
             
     async def query_group_membership_by_address(self, address: ZenAddress) -> list[ZenAddress]:
         """Query an address (ECG) for which DALI groups it belongs to. Returns a list of ZenAddress group instances."""
-        response = await self._send_basic(address.controller, self.CMD["QUERY_GROUP_MEMBERSHIP_BY_ADDRESS"], address.ecg())
+        response = await self._send_basic(address.controller, self.CMD["QUERY_GROUP_MEMBERSHIP_BY_ADDRESS"], address.ecg(), cacheable=True)
         if response and len(response) == 2:
             groups = []
             # Process high byte (groups 8-15)
@@ -1060,7 +1081,7 @@ class ZenProtocol:
     
     async def dali_query_control_gear_status(self, address: ZenAddress) -> Optional[dict]:
         """Query the Status for a DALI address (ECG or group or broadcast). Returns a dictionary of status flags."""
-        response = await self._send_basic(address.controller, self.CMD["DALI_QUERY_CONTROL_GEAR_STATUS"], address.ecg_or_group_or_broadcast())
+        response = await self._send_basic(address.controller, self.CMD["DALI_QUERY_CONTROL_GEAR_STATUS"], address.ecg_or_group_or_broadcast(), cacheable=True)
         if response and len(response) == 1:
             return {
                 "cg_failure": bool(response[0] & 0x01),
@@ -1082,7 +1103,7 @@ class ZenProtocol:
                                 Returns empty list if device doesn't exist.
                                 Returns None if query fails.
         """
-        response = await self._send_basic(address.controller, self.CMD["DALI_QUERY_CG_TYPE"], address.ecg())
+        response = await self._send_basic(address.controller, self.CMD["DALI_QUERY_CG_TYPE"], address.ecg(), cacheable=True)
         if response and len(response) == 4:
             device_types = []
             # Process each byte which represents 8 device types
@@ -1151,7 +1172,7 @@ class ZenProtocol:
     
     async def query_dali_serial(self, address: ZenAddress) -> Optional[int]:
         """Query a DALI address (ECG or ECD) for its Serial Number. Returns an integer if successful, None if query fails."""
-        response = await self._send_basic(address.controller, self.CMD["QUERY_DALI_SERIAL"], address.ecg_or_ecd())
+        response = await self._send_basic(address.controller, self.CMD["QUERY_DALI_SERIAL"], address.ecg_or_ecd(), cacheable=True)
         if response and len(response) == 8:
             # Convert 8 bytes to decimal integer
             serial = 0

@@ -28,7 +28,7 @@ def group_level_change_event(address: ZenAddress, arc_level: int, payload: bytes
     ms()
     print(f"Level Change Event Group - {address.type} {address.number} arc_level {arc_level}")
 
-def scene_change_event(address: ZenAddress, scene: int, payload: bytes) -> None:
+def scene_change_event(address: ZenAddress, scene: int, active: bool, payload: bytes) -> None:
     ms()
     print(f"Scene Change Event       - {address.type} {address.number} scene {scene}")
 
@@ -42,7 +42,7 @@ async def main():
     config = yaml.safe_load(open("tests/config.yaml"))
     
     # Create protocol and controller
-    async with ZenProtocol(print_spam=True, unicast=False) as tpi:
+    async with ZenProtocol(print_traffic=True, unicast=False) as tpi:
         ctrl = ZenController(protocol=tpi, **config.get('zencontrol')[0])
         tpi.set_controllers([ctrl])
         
