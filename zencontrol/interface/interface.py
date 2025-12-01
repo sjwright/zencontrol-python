@@ -312,7 +312,6 @@ class ZenController(SuperZenController):
             inst.mac = mac
             inst.filtering = filtering
             inst.connected = False
-            inst.mac_bytes = bytes.fromhex(inst.mac.replace(':', '')) # Convert MAC address to bytes once
             inst.client = None  # Will be initialized when first used
             inst._reset()
             # Don't call interview() here - it will be called async later
@@ -523,11 +522,11 @@ class ZenLight:
         
         if verifying:
             if self.level != refreshed_level:
-                self.logger.error(f"Light {self.address.number} level mismatch! We had {self.level}, actual level is {refreshed_level}")
+                self.protocol.logger.error(f"Light {self.address.number} level mismatch! We had {self.level}, actual level is {refreshed_level}")
             if self.colour != refreshed_colour:
-                self.logger.error(f"Light {self.address.number} colour mismatch! We had {self.colour}, actual colour is {refreshed_colour}")
+                self.protocol.logger.error(f"Light {self.address.number} colour mismatch! We had {self.colour}, actual colour is {refreshed_colour}")
             if self.scene != refreshed_scene:
-                self.logger.error(f"Light {self.address.number} scene mismatch! We had {self.scene}, actual scene is {refreshed_scene}")
+                self.protocol.logger.error(f"Light {self.address.number} scene mismatch! We had {self.scene}, actual scene is {refreshed_scene}")
         
         # Mimic an incoming event
         await self._event_received(level=refreshed_level, colour=refreshed_colour, scene=refreshed_scene, verifying=verifying)

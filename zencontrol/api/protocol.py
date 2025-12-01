@@ -319,7 +319,7 @@ class ZenProtocol:
 
         # Ensure client is properly initialized and not closed
         if controller.client is None or not controller.client.is_connected():
-            controller.client = await ZenClient.create((controller.host, controller.port), logger=self.logger)
+            controller.client = await ZenClient.create((controller.ip, controller.port), logger=self.logger)
         
         # Send request with timeout and retries
         response: Response = await controller.client.send_request(request)
@@ -409,21 +409,28 @@ class ZenProtocol:
                 await self.event_listener.close()
                 self.event_listener = None
     
+    def get_controller_by_ip_mac(self, ip: Optional[str] = None, mac: Optional[bytes] = None):
+        """Find a controller by IP address or MAC address"""
+        if ip is not None:
+            for ctrl in self.controllers:
+                if ctrl.ip == ip:
+                    return ctrl
+        if mac is not None:
+            for ctrl in self.controllers:
+                if ctrl.mac_bytes == mac:
+                    return ctrl
+        return None
+    
     async def _process_zen_event(self, event: ZenEvent):
         """Process received ZenEvent from ZenListener"""
         typecast = "unicast" if self.unicast else "multicast"
         
         # Find the controller that sent this event
-        controller = None
-        for ctrl in self.controllers:
-            if ctrl.host == event.ip_address:
-                controller = ctrl
-                break
+        controller = self.get_controller_by_ip_mac(event.ip_address, event.mac_address)
         if not controller:
-            self.logger.warning(f"Received {typecast} from unknown controller: {event.ip_address}: [{' '.join(f'0x{b:02X}' for b in event.raw_data)}]")
+            self.logger.warning(f"Received {typecast} packet from unknown controller: {event.ip_address}: [{' '.join(f'0x{b:02X}' for b in event.raw_data)}]")
             return
 
-        # mac_string = ':'.join(f'{b:02X}' for b in event.mac_address)
         ip_address = event.ip_address
         ip_port = event.ip_port
         target = event.target

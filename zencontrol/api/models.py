@@ -7,6 +7,7 @@ This module contains models that belong to the zen_api layer:
 - These are the core objects used by the TPI protocol
 """
 
+import socket
 import struct
 import time
 from dataclasses import dataclass, field
@@ -21,13 +22,18 @@ from .types import ZenAddressType, ZenInstanceType, ZenColourType, Const
 
 @dataclass
 class ZenController:
-    """Represents a ZenControl controller"""
+    """Represents a ZenControl controller
+    
+    The 'host' field can be any resolvable hostname or IP address.
+    The 'ip' property will resolve the hostname to an IP address and cache it.
+    """
     id: str
     name: str
     label: str
     host: str
     port: int
-    mac: str
+    mac: Optional[str] = None
+    mac_bytes: Optional[bytes] = field(init=False, default=None)
     protocol: Optional["ZenProtocol"] = None
     version: Optional[str] = None
     startup_complete: bool = False
@@ -35,6 +41,47 @@ class ZenController:
     filtering: bool = False
     last_seen: float = field(default_factory=time.time)
     client: Optional[ZenClient] = None
+    _mac: Optional[str] = field(init=False, repr=False, default=None)
+    _ip: Optional[str] = field(init=False, repr=False, default=None)
+
+    def __post_init__(self):
+        # Use the property setter to initialize mac_bytes
+        self.mac = self.mac
+
+    @property
+    def mac(self) -> Optional[str]:
+        """Get MAC address as string."""
+        return self._mac
+
+    @mac.setter
+    def mac(self, value: Optional[str]):
+        """Set MAC address from string, updating both string and bytes representation."""
+        self._mac = value
+        if value is not None:
+            self.mac_bytes = bytes.fromhex(value.replace(':', '').replace('-', ''))
+        else:
+            self.mac_bytes = None
+    
+    @property
+    def ip(self) -> str:
+        """Get the resolved IP address from the host field.
+        
+        Resolves DNS names to IP addresses and caches the result.
+        If resolution fails, returns the original host value.
+        """
+        if self._ip is None:
+            try:
+                # Try to resolve the hostname to an IP address
+                self._ip = socket.gethostbyname(self.host)
+            except (socket.gaierror, socket.herror):
+                # If resolution fails, use the host value as-is (might already be an IP)
+                self._ip = self.host
+        return self._ip
+    
+    def refresh_ip(self) -> str:
+        """Force a fresh DNS lookup and return the resolved IP address."""
+        self._ip = None
+        return self.ip
 
 
 @dataclass
