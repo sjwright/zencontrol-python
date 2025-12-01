@@ -578,20 +578,23 @@ class ZenMQTTBridge:
             mqtt_target = f"sv{sysvar.id}"
         else:
             raise ValueError(f"Unknown object type: {type(object)}")
+        # Build default attributes - passed attributes can override default_entity_id
+        default_attrs = {
+            "component": component,
+            "default_entity_id": f"{component}.{ctrl.name}_{mqtt_target}",
+            "unique_id": f"{ctrl.name}_{mqtt_target}_{serial}",
+            "device": {
+                "manufacturer": "Zencontrol",
+                "identifiers": f"zencontrol-{ctrl.name}",
+                "sw_version": ctrl.version,
+                "name": ctrl.label,
+            },
+            "availability_topic": f"{Const.MQTT_SERVICE_PREFIX}/{ctrl.name}/availability",
+        }
+        # Merge: attributes take precedence over default_attrs
         object.client_data[component] = object.client_data.get(component, {}) | {
             "component": component,
-            "attributes": attributes | {
-                "component": component,
-                "object_id": f"{ctrl.name}_{mqtt_target}",
-                "unique_id": f"{ctrl.name}_{mqtt_target}_{serial}",
-                "device": {
-                    "manufacturer": "Zencontrol",
-                    "identifiers": f"zencontrol-{ctrl.name}",
-                    "sw_version": ctrl.version,
-                    "name": ctrl.label,
-                },
-                "availability_topic": f"{Const.MQTT_SERVICE_PREFIX}/{ctrl.name}/availability",
-            },
+            "attributes": default_attrs | attributes,
             "mqtt_target": mqtt_target,
             "mqtt_topic": f"{self.discovery_prefix}/{component}/{ctrl.name}/{mqtt_target}",
         }
@@ -950,7 +953,7 @@ class ZenMQTTBridge:
                 ctrl: ZenController = sv['controller']
                 zsv = ctrl.get_sysvar(sv['id'])
                 attr = sv['attributes'] | {
-                    "object_id": sv['object_id'],
+                    "default_entity_id": f"{sv['component']}.{sv['object_id']}",
                     "unique_id": f"{ctrl.name}_{sv['object_id']}"
                 }
                 self._client_data_for_object(zsv, sv['component'], attributes=attr)
