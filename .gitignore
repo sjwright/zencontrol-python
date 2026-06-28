@@ -13,3 +13,4 @@ pyvenv.cfg
 *.log.*
 config.yaml
 /docs
+.DS_Store

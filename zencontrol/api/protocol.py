@@ -130,7 +130,7 @@ class ZenProtocol:
                  unicast: bool = False,
                  listen_ip: Optional[str] = None,
                  listen_port: Optional[int] = None,
-                 cache: dict = {}):
+                 cache: dict | None = None):
         self.logger = logger or logging.getLogger('null')
         if logger is None:
             self.logger.addHandler(logging.NullHandler())
@@ -140,7 +140,7 @@ class ZenProtocol:
         self.listen_port = (listen_port if listen_port else 0) if unicast else None
 
         # Cache object
-        self.cache: dict = cache
+        self.cache: dict = cache if cache is not None else {}
         
         # If unicast, and we're binding to 0.0.0.0, we still need to know our actual IP address
         self.local_ip = (socket.gethostbyname(socket.gethostname()) if self.listen_ip == "0.0.0.0" else self.listen_ip) if self.unicast else None
@@ -202,11 +202,11 @@ class ZenProtocol:
                    controller: ZenController,
                    command: int,
                    address: int = 0x00,
-                   data: list[int] = [], 
+                   data: list[int] | None = None, 
                    return_type: str = 'bytes',
                    cacheable: bool = False
                    ) -> Optional[bytes | str | list[int] | int | bool]:
-        request: Request = Request(command=command, data=[address] + data, request_type=RequestType.BASIC)
+        request: Request = Request(command=command, data=[address] + (data or []), request_type=RequestType.BASIC)
         response_data, response_code = await self._send_packet(controller, request, cacheable=cacheable)
         if response_data is None and response_code is None:
             return None
@@ -259,7 +259,8 @@ class ZenProtocol:
         
     async def _send_colour(self, controller: ZenController, command: int, address: int, colour: ZenColour, level: int = 255) -> Optional[bool]:
         """Send a DALI colour command."""
-        request: Request = Request(command=command, data=[address] + list(colour.to_bytes(level)), request_type=RequestType.DALI_COLOUR)
+        data = [address, level & 0xFF] + list(colour.command_payload())
+        request: Request = Request(command=command, data=data, request_type=RequestType.DALI_COLOUR)
         response_data, response_code = await self._send_packet(controller, request)
         match response_code:
             case 0xA0: # OK
@@ -279,12 +280,12 @@ class ZenProtocol:
             case 0xA1: # ANSWER
                 pass  # Answer is in data bytes
             case 0xA2: # NO_ANSWER
-                if response_data > 0:
+                if response_data is not None and len(response_data) > 0:
                     self.logger.error(f"No answer with code: {response_data}")
                 return None
             case 0xA3: # ERROR
                 if response_data:
-                    error_code = ZenErrorCode(response_data[0]) if response_data[0] in ZenErrorCode else None
+                    error_code = ZenErrorCode(response_data[0]) if response_data[0] in ZenErrorCode._value2member_map_ else None
                     error_label = error_code.name if error_code else f"Unknown error code: {hex(response_data[0])}"
                     self.logger.error(f"Command error code: {error_label}")
                 else:
@@ -298,6 +299,7 @@ class ZenProtocol:
         return None
     
     async def _send_packet(self, controller: ZenController, request: Request, cacheable: bool = False) -> tuple[Optional[bytes], int]:
+        cache_key: Optional[bytes] = None
         # Read from cache?
         if cacheable:
             cache_key = bytes([controller.id, request.command]) + request.data
@@ -306,9 +308,15 @@ class ZenProtocol:
                 cached_timestamp = c.get('t', None) # timestamp
                 cached_data = c.get('d', None) # data
                 cached_response_type = c.get('c', None) # response_type
-                cached_packet = bytes([cached_response_type & 0xFF, len(cached_data) & 0xFF]) + cached_data
-                if cached_timestamp is not None and time.time() - cached_timestamp < Const.CACHE_TIMEOUT:
+                cache_valid = (
+                    cached_timestamp is not None
+                    and time.time() - cached_timestamp < Const.CACHE_TIMEOUT
+                    and cached_response_type == ResponseType.ANSWER
+                    and cached_data is not None
+                )
+                if cache_valid:
                     if self.print_traffic:
+                        cached_packet = bytes([cached_response_type & 0xFF, len(cached_data) & 0xFF]) + cached_data
                         print(Fore.MAGENTA + f"FOUND:   [----, {' '.join(f'0x{b:02X}' for b in cache_key)}, ----]  "
                             + Fore.RED + Style.DIM + f" CACHE HIT"
                             + Style.BRIGHT + Fore.CYAN + f"  [{' '.join(f'0x{b:02X}' for b in cached_packet)}, ----]"
@@ -323,10 +331,6 @@ class ZenProtocol:
         
         # Send request with timeout and retries
         response: Response = await controller.client.send_request(request)
-        
-        # Write to cache?
-        if cacheable:
-            self.cache[cache_key] = {'d': response.data, 'c': response.response_type.value, 't': time.time()}
 
         # Timeout?
         # Work out how many msec we waited for
@@ -335,6 +339,11 @@ class ZenProtocol:
             raw_sent_str = f"[{' '.join(f'0x{b:02X}' for b in response.request.raw_sent)}]" if response.request.raw_sent else "[]"
             self.logger.error(f"UDP packet response from {controller.host}:{controller.port} not received after {wait_time_ms:.0f}ms, probably offline {raw_sent_str}")
             raise ZenTimeoutError(f"No response from {controller.host}:{controller.port} after {wait_time_ms:.0f}ms")
+
+        # Write to cache?
+        if cacheable and cache_key is not None:
+            if response.response_type == ResponseType.ANSWER and response.data is not None:
+                self.cache[cache_key] = {'d': response.data, 'c': response.response_type.value, 't': time.time()}
         
         # print_traffic
         if self.print_traffic and response.request.raw_sent and response.raw_rcvd:
@@ -378,18 +387,20 @@ class ZenProtocol:
             # Event monitoring already running
             return
         
-        # For the sake of our sanity, all controllers must send event packets in the same way: either multicast or unicast (on one port)
-        for controller in self.controllers:
-            await self.set_tpi_event_unicast_address(controller, ipaddr=self.local_ip if self.unicast else None, port=self.listen_port if self.unicast else None)
-            await self.tpi_event_emit(controller, ZenEventMode(enabled=True, filtering=controller.filtering, unicast=self.unicast, multicast=not self.unicast))
-        
-        # Create and start the ZenListener
+        # Bind listener first so unicast mode uses the actual assigned port (not 0)
         self.event_listener = await ZenListener.create(
             unicast=self.unicast,
             listen_ip=self.listen_ip or "0.0.0.0",
             listen_port=self.listen_port if self.unicast else EventConst.MULTICAST_PORT,
             logger=self.logger
         )
+        if self.unicast:
+            self.listen_port = self.event_listener.listen_port
+        
+        # For the sake of our sanity, all controllers must send event packets in the same way: either multicast or unicast (on one port)
+        for controller in self.controllers:
+            await self.set_tpi_event_unicast_address(controller, ipaddr=self.local_ip if self.unicast else None, port=self.listen_port if self.unicast else None)
+            await self.tpi_event_emit(controller, ZenEventMode(enabled=True, filtering=controller.filtering, unicast=self.unicast, multicast=not self.unicast))
         
         self.event_task = asyncio.create_task(self._async_event_listener())
     
@@ -436,7 +447,28 @@ class ZenProtocol:
         target = event.target
         payload = event.payload
         event_code = event.event_code
-        event_enum = ZenEventCode(event_code)
+        try:
+            event_enum = ZenEventCode(event_code)
+        except ValueError:
+            self.logger.warning(f"Unknown event code {event_code} from {ip_address}")
+            return
+
+        min_payload = {
+            ZenEventCode.BUTTON_PRESS: 1,
+            ZenEventCode.BUTTON_HOLD: 1,
+            ZenEventCode.ABSOLUTE_INPUT: 1,
+            ZenEventCode.LEVEL_CHANGE: 1,
+            ZenEventCode.LEVEL_CHANGE_V2: 2,
+            ZenEventCode.GROUP_LEVEL_CHANGE: 1,
+            ZenEventCode.SCENE_CHANGE: 2,
+            ZenEventCode.IS_OCCUPIED: 1,
+            ZenEventCode.SYSTEM_VARIABLE_CHANGE: 5,
+            ZenEventCode.COLOUR_CHANGE: 1,
+            ZenEventCode.PROFILE_CHANGE: 1,
+        }.get(event_enum, 0)
+        if len(payload) < min_payload:
+            self.logger.warning(f"Event {event_enum.name} payload too short: {len(payload)} < {min_payload}")
+            return
         # Get event name from ZenEventCode, with fallback to unknown, underscores replaced with spaces, and first letter capitalized
         event_name = event_enum.name.replace("_", " ").title()
 
@@ -500,7 +532,8 @@ class ZenProtocol:
                         await self.level_change_callback(address=address, arc_level=payload[1], payload=payload)
                     elif 64 <= target <= 79:
                         address = ZenAddress(controller=controller, type=ZenAddressType.GROUP, number=target-64)
-                        await self.group_level_change_callback(address=address, arc_level=payload[1], payload=payload)
+                        if self.group_level_change_callback:
+                            await self.group_level_change_callback(address=address, arc_level=payload[1], payload=payload)
                     else:
                         self.logger.error(f"Invalid level change V2 event target: {target}")
                         return
@@ -641,7 +674,9 @@ class ZenProtocol:
     async def query_tpi_event_emit_state(self, controller: ZenController) -> Optional[bool]:
         """Get the current TPI Event multicast emitter state for a controller. Returns True if enabled, False if disabled, None if query fails."""
         response = await self._send_basic(controller, self.CMD["QUERY_TPI_EVENT_EMIT_STATE"])
-        return ZenEventMode.from_byte(response[0])
+        if not response:
+            return None
+        return ZenEventMode.from_byte(response[0]).enabled
     
     async def dali_add_tpi_event_filter(self, address: ZenAddress|ZenInstance, filter: ZenEventMask = ZenEventMask.all_events()) -> bool:
         """Stop specific events from an address/instance from being sent. Events in mask will be muted. Returns true if filter was added successfully."""
@@ -702,7 +737,8 @@ class ZenProtocol:
                     }
                     results.append(result)
                 
-                if len(results) < 60: # 15 results * 4 bytes = 60 bytes. If we received fewer than 15 results, then there are no more.
+                page_results = (len(response) - 1) // 4
+                if page_results < 15: # fewer than 15 results in this page — no more pages
                     break
             
             else:
@@ -788,6 +824,8 @@ class ZenProtocol:
     async def query_profile_information(self, controller: ZenController) -> Optional[tuple[dict, dict]]:
         """Query a controller for profile information. Returns a tuple of two dicts, or None if query fails."""
         response = await self._send_basic(controller, self.CMD["QUERY_PROFILE_INFORMATION"], cacheable=True)
+        if not response or len(response) < 12:
+            return None
         # Initial 12 bytes:
         # 0-1 0x00 Current Active Profile Number
         # 2-3 0x00 Last Scheduled Profile Number
@@ -805,8 +843,8 @@ class ZenProtocol:
         for i in range(12, len(response), 3):
             profile_number = struct.unpack('>H', response[i:i+2])[0]
             profile_behaviour = response[i+2]
-            # bit 0: enabled: 0 = disabled, 1 = enabled
-            # bit 1-2: priority: two bit int where 0 = scheduled, 1 = medium, 2 = high, 3 = emergency
+            # bit 0: disabled flag — 1 = disabled, 0 = enabled
+            # bit 1-2: priority — 0 = scheduled, 1 = medium, 2 = high, 3 = emergency
             enabled = not bool(profile_behaviour & 0x01)
             priority = (profile_behaviour >> 1) & 0x03
             priority_label = ["Scheduled", "Medium", "High", "Emergency"][priority]
@@ -912,7 +950,10 @@ class ZenProtocol:
         response = await self._send_basic(address.controller, self.CMD["QUERY_COLOUR_SCENE_0_7_DATA_FOR_ADDR"], address.ecg(), cacheable=True)
         if response is None:
             return output
-        response += await self._send_basic(address.controller, self.CMD["QUERY_COLOUR_SCENE_8_11_DATA_FOR_ADDR"], address.ecg(), cacheable=True)
+        response2 = await self._send_basic(address.controller, self.CMD["QUERY_COLOUR_SCENE_8_11_DATA_FOR_ADDR"], address.ecg(), cacheable=True)
+        if response2 is None:
+            return output
+        response += response2
         # Combined result should always be exactly 7*12 = 84 bytes
         if len(response) != 84:
             print(f"Warning: QUERY_COLOUR_SCENE_***_DATA_FOR_ADDR returned {len(response)} bytes, expected 84")
@@ -1190,8 +1231,8 @@ class ZenProtocol:
     
     async def dali_custom_fade(self, address: ZenAddress, level: int, seconds: int) -> bool:
         """Fade a DALI address (ECG or group) to a level (0-254) with a custom fade time in seconds (0-65535). Returns True if successful, else False."""
-        if not 0 <= level < Const.MAX_LEVEL:
-            raise ValueError("Target level must be between 0 and 254")
+        if not 0 <= level <= Const.MAX_LEVEL:
+            raise ValueError(f"Target level must be between 0 and {Const.MAX_LEVEL}, got {level}")
         if not 0 <= seconds <= 65535:
             raise ValueError("Fade time must be between 0 and 65535 seconds")
 
@@ -1227,7 +1268,7 @@ class ZenProtocol:
     
     async def return_to_scheduled_profile(self, controller: ZenController) -> bool:
         """Return to the scheduled profile. Returns True if successful, else False."""
-        return self.change_profile_number(controller, 0xFFFF) # See docs page 91, 0xFFFF returns to scheduled profile
+        return await self.change_profile_number(controller, 0xFFFF) # See docs page 91, 0xFFFF returns to scheduled profile
 
     async def query_instance_groups(self, instance: ZenInstance) -> Optional[tuple[int, int, int]]: # TODO: replace Tuple with dict
         """Query the group targets associated with a DALI instance.
@@ -1278,8 +1319,8 @@ class ZenProtocol:
         """Query whether the DALI line is ready or has a fault. Returns True if DALI line is ready, False if there is a fault."""
         return await self._send_basic(controller, self.CMD["QUERY_IS_DALI_READY"], return_type='ok')
     
-    async def query_controller_startup_complete(self, controller: ZenController) -> bool:
-        """Query whether the controller has finished its startup sequence. Returns True if startup is complete, False if still in progress.
+    async def query_controller_startup_complete(self, controller: ZenController) -> Optional[bool]:
+        """Query whether the controller has finished its startup sequence. Returns True if startup is complete, False if still in progress, None if the query fails.
 
         The startup sequence performs DALI queries such as device type, current arc-level, GTIN, 
         serial number, etc. The more devices on a DALI line, the longer startup will take to complete.
@@ -1315,7 +1356,7 @@ class ZenProtocol:
         return None
 
     async def dali_stop_fade(self, address: ZenAddress) -> bool:
-        """Tell a DALI address (ECG or ECD) to stop running a fade. Returns True if command succeeded, else False.
+        """Tell a DALI address (ECG, ECD, broadcast) to stop running a fade. Returns True if command succeeded, else False.
 
         Caution: this literally stops the fade. It doesn't jump to the target level.
 

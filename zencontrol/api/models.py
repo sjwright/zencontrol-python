@@ -231,13 +231,18 @@ class ZenColour:
             return False
     
     def to_bytes(self, level: int = 255) -> bytes:
+        """Encode colour data as returned by QUERY_DALI_COLOUR (no address or arc level)."""
         if self.type == ZenColourType.TC:
-            return struct.pack('>BBH', level, 0x20, self.kelvin)
+            return struct.pack('>BH', 0x20, self.kelvin)
         if self.type == ZenColourType.RGBWAF:
-            return struct.pack('BBBBBBBB', level, 0x80, self.r, self.g, self.b, self.w if self.w is not None else 0, self.a if self.a is not None else 0, self.f if self.f is not None else 0)
+            return struct.pack('BBBBBBB', 0x80, self.r, self.g, self.b, self.w if self.w is not None else 0, self.a if self.a is not None else 0, self.f if self.f is not None else 0)
         if self.type == ZenColourType.XY:
-            return struct.pack('>BBHH', level, 0x10, self.x, self.y)
+            return struct.pack('>BHH', 0x10, self.x, self.y)
         return b''
+
+    def command_payload(self) -> bytes:
+        """Colour type and channel bytes for DALI_COLOUR (follows address and arc level)."""
+        return self.to_bytes()
 
 
 @dataclass

@@ -4,9 +4,11 @@ import time
 import json
 import yaml
 import re
+from pathlib import Path
 from typing import Optional, Any
 import zencontrol
 from zencontrol import ZenController, ZenProtocol, ZenClient, ZenColour, ZenColourType, ZenProfile, ZenLight, ZenGroup, ZenButton, ZenMotionSensor, ZenSystemVariable, ZenTimeoutError, ZenAddressType
+from zencontrol.api.types import Const as ApiConst
 import aiomqtt
 from colorama import Fore, Back, Style
 import logging
@@ -90,20 +92,21 @@ class ZenMQTTBridge:
     #          INIT & RUN
     # ================================
     
-    def __init__(self, config_path: str = "examples/config.yaml") -> None:
+    def __init__(self, config_path: str | None = None) -> None:
+        self.example_dir = Path(__file__).resolve().parent
+        config_path = config_path or str(self.example_dir / "config.yaml")
         self.config: dict[str, Any]
         with open(config_path) as f:
             self.config = yaml.safe_load(f)
         
         self.logger: logging.Logger
         self.discovery_prefix: str
-        self.control: list[ZenController]
+        self.control: list[ZenController] = []
         self.zen: zencontrol.ZenControl
         self.mqttc: aiomqtt.Client
         self.setup_started: bool = False
         self.setup_complete: bool = False
         self.system_variables: list[ZenSystemVariable] = []
-        self.control: list[ZenController] = []
         self.sv_config: list[dict] = []
 
         self.config_topics_to_delete: list[str] = [] # List of topics to delete after completing setup
@@ -121,8 +124,8 @@ class ZenMQTTBridge:
         }
 
     async def run(self) -> None:
-        self.setup_config()
         self.setup_logging()
+        self.setup_config()
         self.logger.info("==================================== Starting ZenMQTTBridge ====================================")
         await self.setup_zen()
         await self.setup_mqtt()
@@ -133,18 +136,22 @@ class ZenMQTTBridge:
             self.logger.info(f"Connecting to Zen controller {ctrl.name} on {ctrl.host}:{ctrl.port}...")
 
             try:
-                # ctrl.is_controller_ready() returns True when ready, False when starting, None when connection failed
-                
-                while not await ctrl.is_controller_ready():
+                while True:
+                    ready = await ctrl.is_controller_ready()
+                    if ready is None:
+                        self.logger.critical(f"Aborting - cannot query startup state for Zen controller {ctrl.name}.")
+                        return
+                    if ready:
+                        break
                     print(f"Controller {ctrl.label} still starting up...")
                     await asyncio.sleep(Const.STARTUP_POLL_DELAY)
             
             except ZenTimeoutError as e:
-                self.logger.fatal(f"Aborting - Zen controller {ctrl.name} cannot be reached.")
+                self.logger.critical(f"Aborting - Zen controller {ctrl.name} cannot be reached.")
                 return # Don't reach the run loop
                 
             except Exception as e:
-                self.logger.fatal(f"Aborting - Error connecting to Zen controller {ctrl.name}: {e}")
+                self.logger.critical(f"Aborting - Error connecting to Zen controller {ctrl.name}: {e}")
                 return # Don't reach the run loop
 
             # It's ready, interview it.
@@ -170,8 +177,39 @@ class ZenMQTTBridge:
         # Begin listening for zen events
         await self.zen.start()
 
-        with open("examples/cache.pkl", "wb") as f:
+        with open(self.example_dir / "cache.pkl", "wb") as f:
             pickle.dump(self.zen.cache, f)
+
+
+
+        """
+        controllers:
+          - id: 1
+            name: zen1
+            label: Zencontrol 1
+            groups:
+              - id: 0
+                name: All Lights
+                hide_group: True
+                hide_members: True
+              - id: 1
+                name: Ground
+            lights:
+              - ecg: 14
+                name: Lounge NW
+                room: Downstairs
+                groups:
+                  - 15
+              - ecg: 21
+                name: Guest NE
+                room: Guest Bedroom
+                groups:
+                  - 15
+              - ecg: 42
+                name: Garage
+                override_name: Garage Downlights
+                room: Garage
+        """
         
         clist = []
         for c in sorted(self.control, key=lambda x: x.id):
@@ -198,7 +236,7 @@ class ZenMQTTBridge:
                 "lights": llist
             })
         # Dump to yaml file
-        with open("examples/dump.yaml", "w") as f:
+        with open(self.example_dir / "dump.yaml", "w") as f:
             yaml.dump(clist, f, sort_keys=False)
 
         while True:
@@ -311,13 +349,46 @@ class ZenMQTTBridge:
     #              ZEN
     # ================================
 
+    def _load_cache(self) -> dict:
+        """Load and validate persisted protocol query cache, or return empty dict."""
+        cache_path = self.example_dir / "cache.pkl"
+        try:
+            with open(cache_path, "rb") as infile:
+                raw = pickle.load(infile)
+        except FileNotFoundError:
+            return {}
+        except (OSError, pickle.UnpicklingError, EOFError, AttributeError) as e:
+            self.logger.warning(f"Ignoring corrupt cache {cache_path}: {e}")
+            return {}
+
+        if not isinstance(raw, dict):
+            self.logger.warning(f"Ignoring invalid cache {cache_path}: expected dict, got {type(raw).__name__}")
+            return {}
+
+        cache: dict = {}
+        now = time.time()
+        for key, entry in raw.items():
+            if not isinstance(key, bytes) or not isinstance(entry, dict):
+                continue
+            data = entry.get("d")
+            resp_type = entry.get("c")
+            timestamp = entry.get("t")
+            if not isinstance(data, bytes) or not isinstance(resp_type, int) or not isinstance(timestamp, (int, float)):
+                continue
+            if now - timestamp >= ApiConst.CACHE_TIMEOUT:
+                continue
+            cache[key] = {"d": data, "c": resp_type, "t": timestamp}
+
+        skipped = len(raw) - len(cache)
+        if skipped:
+            self.logger.info(f"Loaded {len(cache)} cache entries from {cache_path} ({skipped} invalid or expired)")
+        elif cache:
+            self.logger.info(f"Loaded {len(cache)} cache entries from {cache_path}")
+        return cache
+
     async def setup_zen(self) -> None:
         try:
-            try:
-                with open("examples/cache.pkl", "rb") as infile:
-                    cache = pickle.load(infile)
-            except FileNotFoundError:
-                cache = {}
+            cache = self._load_cache()
             self.zen: zencontrol.ZenControl = zencontrol.ZenControl(logger=self.logger, print_traffic=True, cache=cache)
             self.zen.on_connect = self._zen_on_connect
             self.zen.on_disconnect = self._zen_on_disconnect
@@ -728,10 +799,10 @@ class ZenMQTTBridge:
         mireds: Optional[int] = payload.get("color_temp", None)
 
         # If brightness or temperature is set
-        if brightness or mireds:
+        if brightness is not None or mireds is not None:
             args = {}
-            if brightness: args["level"] = self.brightness_to_arc(brightness)
-            if mireds: args["colour"] = ZenColour(type=ZenColourType.TC, kelvin=self.mireds_to_kelvin(mireds))
+            if brightness is not None: args["level"] = self.brightness_to_arc(brightness)
+            if mireds is not None: args["colour"] = ZenColour(type=ZenColourType.TC, kelvin=self.mireds_to_kelvin(mireds))
             self.logger.info(f"♥️💡 Command from HA: {ctrl.name} setting gear {addr.number} to {args}")
             await light.set(**args)
             return
@@ -761,7 +832,7 @@ class ZenMQTTBridge:
             "state": "OFF" if light.level == 0 else "ON"
         }
 
-        if light.level and light.level > 0:
+        if light.level is not None and light.level > 0:
             new_state["brightness"] = self.arc_to_brightness(light.level)
 
         if light.colour and light.colour.type == ZenColourType.TC:
@@ -827,7 +898,8 @@ class ZenMQTTBridge:
                     "options": group.get_scene_labels(exclude_none=True),
                 }
                 await self._publish_config(mqtt_topic, config_dict, object=group)
-                await self._publish_state(mqtt_topic, group.scene)
+                scene_label = group.get_scene_label_from_number(group.scene) if group.scene is not None else None
+                await self._publish_state(mqtt_topic, scene_label if scene_label is not None else "None")
 
         # Return all groups
         return groups
@@ -844,7 +916,7 @@ class ZenMQTTBridge:
         # Get the scene label for the ID from the group
         if select_mqtt_topic and scene is not None:
             scene_label = group.get_scene_label_from_number(scene)
-            if scene_label:
+            if scene_label is not None:
                 await self._publish_state(select_mqtt_topic, scene_label)
             else:
                 await self._publish_state(select_mqtt_topic, "None")
@@ -915,7 +987,6 @@ class ZenMQTTBridge:
         sensors = await self.zen.get_motion_sensors()
         for sensor in sensors:
             client_data = self._client_data_for_object(sensor, "binary_sensor")
-            sensor.hold_time = Const.DEFAULT_HOLD_TIME
             mqtt_topic = client_data['mqtt_topic']
             config_dict = self.global_config | client_data.get("attributes",{}) | {
                 "name": sensor.instance_label,

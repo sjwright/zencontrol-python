@@ -51,7 +51,7 @@ Repository = "https://github.com/sjwright/zencontrol-python"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["zencontrol*"]
+include = ["zencontrol*", "examples*"]
 
 [tool.setuptools.package-data]
 zencontrol = ["py.typed"]

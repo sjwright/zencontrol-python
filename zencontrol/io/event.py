@@ -39,9 +39,6 @@ class ZenEvent:
     ip_port: int
     timestamp: float = field(default_factory=time.time)
 
-    def __post_init__(self):
-        self.timestamp = time.time()
-
 # Constants
 class EventConst:
     """Constants for event handling"""
@@ -56,7 +53,18 @@ class ZenEventProtocol(asyncio.DatagramProtocol):
     def connection_made(self, transport):
         self.transport = transport
     def datagram_received(self, data, addr):
-        asyncio.create_task(self.event_handler(data, addr))
+        self._run_handler(self.event_handler(data, addr))
+
+    def _run_handler(self, coro):
+        task = asyncio.create_task(coro)
+        task.add_done_callback(self._handler_done)
+
+    def _handler_done(self, task: asyncio.Task):
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc:
+            self.logger.error(f"Event handler failed: {exc}", exc_info=exc)
     def error_received(self, exc):
         self.logger.error(f"Event protocol error: {exc}")
     def connection_lost(self, exc):
@@ -142,6 +150,9 @@ class ZenListener:
                 local_addr=(self.listen_ip, self.listen_port),
                 reuse_port=True
             )
+            sockname = self.transport.get_extra_info('sockname')
+            if sockname:
+                self.listen_port = sockname[1]
             self.logger.info(f"Listening for unicast events on {self.listen_ip}:{self.listen_port}")
         else:  
             # Multicast mode
@@ -159,10 +170,10 @@ class ZenListener:
                     # Set socket options for multicast
                     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                     group = socket.inet_aton(EventConst.MULTICAST_GROUP)
-                    mreq = struct.pack('4sl', group, socket.INADDR_ANY)
+                    mreq = struct.pack('=4sI', group, socket.INADDR_ANY)
                     sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
             except Exception as e:
-                self.logger.fatal(f"Failed to create multicast endpoint: {e}")
+                self.logger.critical(f"Failed to create multicast endpoint: {e}")
                 raise
 
     async def _receive_event(self, data: bytes, addr: Tuple[str, int]):
@@ -170,14 +181,12 @@ class ZenListener:
         typecast = "unicast" if self.unicast else "multicast"
         
         # Drop packet if it doesn't match the expected structure
-        if len(data) < 2 or data[0:2] != bytes([0x5a, 0x43]):
+        if len(data) < 13 or data[0:2] != bytes([0x5a, 0x43]):
             self.logger.debug(f"Received {typecast} invalid packet: {addr} - {', '.join(f'0x{b:02x}' for b in data)}")
             return
 
         # Extract values
         mac_address = data[2:8]
-        # mac_bytes = bytes.fromhex(mac_address.hex())
-        # mac_string = ':'.join(f'{b:02x}' for b in mac_address)
         target = int.from_bytes(data[8:10], byteorder='big')
         event_code = data[10]
         payload_len = data[11]
@@ -185,7 +194,7 @@ class ZenListener:
         received_checksum = data[-1]
 
         # Verify checksum
-        calculated_checksum = self._checksum(list(data[:-1]))
+        calculated_checksum = self._checksum(data[:-1])
         if received_checksum != calculated_checksum:
             self.logger.error(f"{typecast.capitalize()} packet has invalid checksum: {calculated_checksum} != {received_checksum}")
             return
@@ -231,7 +240,9 @@ class ZenListener:
     async def get_event(self, timeout: Optional[float] = None) -> Optional[ZenEvent]:
         """Get next event from queue"""
         try:
-            return await asyncio.wait_for(self._event_queue.get(), timeout=timeout)
+            event = await asyncio.wait_for(self._event_queue.get(), timeout=timeout)
+            self._event_queue.task_done()
+            return event
         except asyncio.TimeoutError:
             return None
     

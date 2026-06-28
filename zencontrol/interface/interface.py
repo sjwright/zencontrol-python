@@ -40,10 +40,10 @@ class ZenControl:
                  unicast: bool = False,
                  listen_ip: Optional[str] = None,
                  listen_port: Optional[int] = None,
-                 cache: dict = {}
+                 cache: dict | None = None
                  ):
         self.logger = logger or logging.getLogger(__name__)
-        self.protocol: ZenProtocol = ZenProtocol(logger=self.logger, print_traffic=print_traffic, unicast=unicast, listen_ip=listen_ip, listen_port=listen_port, cache=cache)
+        self.protocol: ZenProtocol = ZenProtocol(logger=self.logger, print_traffic=print_traffic, unicast=unicast, listen_ip=listen_ip, listen_port=listen_port, cache=cache if cache is not None else {})
         self.controllers: list[ZenController] = []
 
     @property
@@ -302,20 +302,21 @@ class ZenController(SuperZenController):
         # Singleton based on controller name
         if name not in cls._instances:
             inst = super().__new__(cls)
-            cls._instances[id] = inst
-            inst.protocol = protocol
-            inst.id = id
-            inst.name = name
-            inst.label = label
-            inst.host = host
-            inst.port = port
-            inst.mac = mac
-            inst.filtering = filtering
+            cls._instances[name] = inst
             inst.connected = False
             inst.client = None  # Will be initialized when first used
             inst._reset()
             # Don't call interview() here - it will be called async later
-        return cls._instances[id]
+        inst = cls._instances[name]
+        inst.protocol = protocol
+        inst.id = id
+        inst.name = name
+        inst.label = label
+        inst.host = host
+        inst.port = port
+        inst.mac = mac
+        inst.filtering = filtering
+        return inst
     
     @classmethod
     async def create(cls, protocol: ZenProtocol, id: int, name: str, label: str, host: str, port: int = 5108, mac: Optional[str] = None, filtering: bool = False):
@@ -326,7 +327,7 @@ class ZenController(SuperZenController):
     def __repr__(self) -> str:
         return f"ZenController<{self.name}>"
     def _reset(self) -> None:
-        self.label: Optional[str] = None
+        # label is set from config in __new__ or from interview(); not runtime state
         self.version: Optional[int] = None
         self.profile: Optional[ZenProfile] = None
         self.profiles: set[ZenProfile] = set()
@@ -350,7 +351,7 @@ class ZenController(SuperZenController):
                 await _callbacks.profile_change(profile=self.profile)
     def get_sysvar(self, id: int) -> "ZenSystemVariable":
         return ZenSystemVariable(protocol=self.protocol, controller=self, id=id)
-    async def is_controller_ready(self) -> bool:
+    async def is_controller_ready(self) -> Optional[bool]:
         return await self.protocol.query_controller_startup_complete(self)
     async def is_dali_ready(self) -> bool:
         return await self.protocol.query_is_dali_ready(self)
@@ -462,7 +463,7 @@ class ZenLight:
         if cgstatus:
             self.label = await self.protocol.query_dali_device_label(self.address, generic_if_none=True)
             self.serial = await self.protocol.query_dali_serial(self.address)
-            self.cgtype = await self.protocol.dali_query_cg_type(self.address)
+            self.cgtype = await self.protocol.dali_query_cg_type(self.address) or []
             
             # If cgtype contains 6, it supports brightness
             if 6 in self.cgtype:
@@ -471,19 +472,20 @@ class ZenLight:
             # If cgtype contains 8, it supports some kind of colour
             if 8 in self.cgtype:
                 cgtype = await self.protocol.query_dali_colour_features(self.address)
-                if cgtype.get("supports_tunable", False) is True:
+                if cgtype and cgtype.get("supports_tunable", False) is True:
                     self.features["brightness"] = True
                     self.features["temperature"] = True
                     colour_temp_limits = await self.protocol.query_dali_colour_temp_limits(self.address)
-                    self.properties["min_kelvin"] = colour_temp_limits.get("soft_warmest", Const.DEFAULT_WARMEST_TEMP)
-                    self.properties["max_kelvin"] = colour_temp_limits.get("soft_coolest", Const.DEFAULT_COOLEST_TEMP)
-                elif cgtype.get("rgbwaf_channels", 0) == Const.RGB_CHANNELS:
+                    if colour_temp_limits:
+                        self.properties["min_kelvin"] = colour_temp_limits.get("soft_warmest", Const.DEFAULT_WARMEST_TEMP)
+                        self.properties["max_kelvin"] = colour_temp_limits.get("soft_coolest", Const.DEFAULT_COOLEST_TEMP)
+                elif cgtype and cgtype.get("rgbwaf_channels", 0) == Const.RGB_CHANNELS:
                     self.features["brightness"] = True
                     self.features["RGB"] = True
-                elif cgtype.get("rgbwaf_channels", 0) == Const.RGBW_CHANNELS:
+                elif cgtype and cgtype.get("rgbwaf_channels", 0) == Const.RGBW_CHANNELS:
                     self.features["brightness"] = True
                     self.features["RGBW"] = True
-                elif cgtype.get("rgbwaf_channels", 0) == Const.RGBWW_CHANNELS:
+                elif cgtype and cgtype.get("rgbwaf_channels", 0) == Const.RGBWW_CHANNELS:
                     self.features["brightness"] = True
                     self.features["RGBWW"] = True
             
@@ -497,7 +499,7 @@ class ZenLight:
                 for group in groups:
                     group = ZenGroup(protocol=self.protocol, address=group)
                     group.lights.add(self) # Add to group's set of lights
-                self.groups.add(group) # Add to light's set of groups
+                    self.groups.add(group) # Add to light's set of groups
             
             # Add to controller's set of lights
             self.address.controller.lights.add(self)
@@ -702,7 +704,8 @@ class ZenLight:
     async def dali_enable_dapc_sequence(self) -> bool:
         return await self.protocol.dali_enable_dapc_sequence(self.address)
     async def dali_inhibit(self, inhibit: bool = True) -> bool:
-        return await self.protocol.dali_inhibit(self.address, inhibit)
+        time_seconds = 65535 if inhibit else 0
+        return await self.protocol.dali_inhibit(self.address, time_seconds)
         
 
 class ZenGroup(ZenLight):
@@ -884,6 +887,7 @@ class ZenMotionSensor:
             self.label = await self.protocol.query_dali_device_label(addr, generic_if_none=True)
             self.instance_label = await self.protocol.query_dali_instance_label(inst, generic_if_none=True)
             self.deadtime = occupancy_timers["deadtime"]
+            self.hold_time = occupancy_timers["hold"]
             self.last_detect = time.time() - occupancy_timers["last_detect"]
             self._occupied = None
         else:
