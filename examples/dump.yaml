@@ -1,0 +1,153 @@
+- id: 1
+  name: zen1
+  label: Zencontrol 1
+  groups:
+  - id: 0
+    label: All Lights
+  - id: 1
+    label: Kitchen Table
+  - id: 2
+    label: Lounge
+  - id: 3
+    label: Pantry
+  - id: 4
+    label: Entrance
+  - id: 8
+    label: Office
+  - id: 10
+    label: Guest
+  - id: 11
+    label: Hallways
+  - id: 12
+    label: Master
+  - id: 13
+    label: Emily
+  - id: 14
+    label: Arthur
+  - id: 15
+    label: Ground
+  lights:
+  - ecg: 0
+    label: Kit-Pant
+  - ecg: 1
+    label: Kit-Pant
+  - ecg: 2
+    label: Kitchen Table N
+  - ecg: 3
+    label: Kitchen Table S
+  - ecg: 4
+    label: Kitchen Table C
+  - ecg: 5
+    label: Kitchen Oven
+  - ecg: 6
+    label: Kitchen Cooktop
+  - ecg: 7
+    label: Kitchen Window
+  - ecg: 8
+    label: Kitchen Sink
+  - ecg: 9
+    label: Kitchen Tea
+  - ecg: 10
+    label: Lounge NE
+  - ecg: 11
+    label: Lounge SE
+  - ecg: 12
+    label: Lounge NC
+  - ecg: 13
+    label: Lounge SC
+  - ecg: 14
+    label: Lounge NW
+  - ecg: 15
+    label: Lounge SW
+  - ecg: 16
+    label: Pantry Oyster
+  - ecg: 17
+    label: Pantry Bench
+  - ecg: 18
+    label: Entrance S
+  - ecg: 19
+    label: Entrance N
+  - ecg: 20
+    label: Guest NW
+  - ecg: 21
+    label: Guest NE
+  - ecg: 22
+    label: Guest SW
+  - ecg: 23
+    label: Guest SE
+  - ecg: 24
+    label: Annex-Hall-Bath
+  - ecg: 25
+    label: Annex-Hall-Bath
+  - ecg: 26
+    label: Annex-Hall-Bath
+  - ecg: 27
+    label: Annex-Hall-Bath
+  - ecg: 28
+    label: Stair Steps
+  - ecg: 29
+    label: Stair Landing
+  - ecg: 30
+    label: Theatre NW
+  - ecg: 31
+    label: Theatre NE
+  - ecg: 32
+    label: Theatre SW
+  - ecg: 33
+    label: Theatre SE
+  - ecg: 34
+    label: Office NW
+  - ecg: 35
+    label: Office NE
+  - ecg: 36
+    label: Office SW
+  - ecg: 37
+    label: Office SE
+  - ecg: 38
+    label: Garage Panels
+  - ecg: 39
+    label: Garage 41T
+  - ecg: 40
+    label: Garage 41T
+  - ecg: 41
+    label: Garage 41T
+  - ecg: 42
+    label: Garage 41T
+  - ecg: 45
+    label: Porch
+  - ecg: 46
+    label: Wir-Hall-Bath-Ens
+  - ecg: 47
+    label: Wir-Hall-Bath-Ens
+  - ecg: 48
+    label: Wir-Hall-Bath-Ens
+  - ecg: 49
+    label: Wir-Hall-Bath-Ens
+  - ecg: 50
+    label: Master NW
+  - ecg: 51
+    label: Master NE
+  - ecg: 52
+    label: Master SW
+  - ecg: 53
+    label: Master SE
+  - ecg: 54
+    label: Emily NW
+  - ecg: 55
+    label: Emily NE
+  - ecg: 56
+    label: Emily SW
+  - ecg: 57
+    label: Emily SE
+  - ecg: 58
+    label: Arthur NE
+  - ecg: 59
+    label: Arthur SE
+  - ecg: 60
+    label: Arthur NW
+  - ecg: 61
+    label: Arthur SW
+  - ecg: 62
+    label: Laundry
+  - ecg: 63
+    label: Ensuite Towel

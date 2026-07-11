@@ -26,10 +26,9 @@ asyncio.run(main())
 """
 
 import asyncio
-import socket
-import struct
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Dict, Optional, Self, Tuple
@@ -83,9 +82,12 @@ class Request:
                 # No padding for command type
                 pass
 
-    def to_bytes(self, checksum: callable) -> bytes:
+    def to_bytes(self, checksum: Callable[[bytes], int]) -> bytes:
         """Convert request to wire format"""
-        req = bytes([ClientConst.MAGIC, self.seq & 0xFF, self.command & 0xFF]) + self.data
+        if self.seq is None:
+            raise ValueError("Request.seq must be set before calling to_bytes")
+        data = self.data if isinstance(self.data, bytes) else bytes([d & 0xFF for d in self.data])
+        req = bytes([ClientConst.MAGIC, self.seq & 0xFF, self.command & 0xFF]) + data
         cs = bytes([checksum(req) & 0xFF])
         self.raw_sent = req + cs
         return req + cs
@@ -111,7 +113,11 @@ class Response:
 
 # Protocol classes
 class ZenRequestProtocol(asyncio.DatagramProtocol):
-    def __init__(self, response_handler, logger: Optional[logging.Logger] = None):
+    def __init__(
+        self,
+        response_handler: Callable[[bytes, Tuple[str, int]], Awaitable[None]],
+        logger: Optional[logging.Logger] = None,
+    ):
         self.response_handler = response_handler
         self.logger = logger or logging.getLogger(__name__)
         self.transport: Optional[asyncio.transports.DatagramTransport] = None
@@ -122,11 +128,11 @@ class ZenRequestProtocol(asyncio.DatagramProtocol):
     def datagram_received(self, data, addr):
         self._run_handler(self.response_handler(data, addr))
 
-    def _run_handler(self, coro):
-        task = asyncio.create_task(coro)
+    def _run_handler(self, coro: Awaitable[None]):
+        task = asyncio.ensure_future(coro)
         task.add_done_callback(self._handler_done)
 
-    def _handler_done(self, task: asyncio.Task):
+    def _handler_done(self, task: asyncio.Task[None]):
         if task.cancelled():
             return
         exc = task.exception()
@@ -155,7 +161,7 @@ class ZenClient:
         self.server = server
         self.logger = logger or logging.getLogger(__name__)
         self._transport: Optional[asyncio.transports.DatagramTransport] = None
-        self._pending: Dict[int, Tuple[asyncio.Future, Request]] = {}
+        self._pending: Dict[int, Tuple[asyncio.Future[Response], Request]] = {}
         self._next_seq: int = 0
         self._closed = False
         self._stop_event = asyncio.Event()
@@ -184,7 +190,7 @@ class ZenClient:
         async with self._lock:
             # Create a future to await the response
             loop = asyncio.get_running_loop()
-            fut: asyncio.Future = loop.create_future()
+            fut: asyncio.Future[Response] = loop.create_future()
 
             # Allocate a sequence number
             req.seq = self._alloc_seq()
@@ -247,6 +253,8 @@ class ZenClient:
         response = Response(ResponseType(response_type_byte), seq=sequence_byte, data=data_bytes, raw_rcvd=datagram, addr=addr)
         
         # Find the pending request
+        if response.seq is None:
+            return
         pending = self._pending.get(response.seq)
         if not pending:
             return

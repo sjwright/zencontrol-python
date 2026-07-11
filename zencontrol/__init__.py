@@ -26,14 +26,20 @@ Example usage:
 """
 
 # High-level interface (recommended for most users)
-from .interface import ZenControl
+from .interface import (
+    ZenControl,
+    ZenController,
+    ZenProfile,
+    ZenLight,
+    ZenGroup,
+    ZenButton,
+    ZenMotionSensor,
+    ZenSystemVariable,
+)
 
-# API-level models (used by zen_api and zen_interface)
-from .api.models import ZenController, ZenAddress, ZenInstance, ZenColour, ZenProfile
+# API-level models (used by zen_api)
+from .api.models import ZenAddress, ZenInstance, ZenColour
 from .api.protocol import ZenProtocol
-
-# High-level models (used by zen_interface)
-from .interface import ZenLight, ZenGroup, ZenButton, ZenMotionSensor, ZenSystemVariable
 
 # Low-level models (used by zen_io)
 from .io import ZenClient, ZenListener, ZenEvent, Request, Response, ResponseType, RequestType
@@ -54,19 +60,19 @@ __all__ = [
     "ZenControl",
     
     # High-level models (for most users)
-    "ZenLight", 
+    "ZenController",
+    "ZenProfile",
+    "ZenLight",
     "ZenGroup",
     "ZenButton",
     "ZenMotionSensor",
     "ZenSystemVariable",
     
     # API-level models (for advanced users)
-    "ZenController", 
     "ZenAddress",
     "ZenInstance",
     "ZenProtocol",
     "ZenColour",
-    "ZenProfile",
 
     # Low-level models (for advanced users)
     "ZenClient",
@@ -79,7 +85,7 @@ __all__ = [
     
     # Exceptions
     "ZenError",
-    "ZenTimeoutError", 
+    "ZenTimeoutError",
     "ZenResponseError",
     
     # Types and enums

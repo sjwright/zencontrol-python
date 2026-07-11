@@ -1,13 +1,15 @@
+from __future__ import annotations
+
 import asyncio
+import json
 import time
 import logging
-from typing import Optional, Callable, Awaitable
+from typing import Any, ClassVar, Optional, Callable, Awaitable, cast, Self
+from collections.abc import Coroutine
 
-from ..api import ZenProtocol, ZenController as SuperZenController, ZenAddress, ZenInstance, ZenAddressType, ZenColour, ZenColourType, ZenInstanceType, ZenEventMask
-from ..api.models import ZenController, ZenProfile
+from ..api import ZenProtocol, ZenController as SuperZenController, ZenAddress, ZenInstance, ZenAddressType, ZenColour, ZenColourType, ZenInstanceType
+from ..api.protocol import ZenCallbacks
 from ..api.types import Const
-from ..io import ZenClient
-from ..exceptions import ZenTimeoutError
 
 """
 ===================================================================================
@@ -33,85 +35,139 @@ ZenInstance = Represents a DALI ECD instance.
 # Callback type definitions moved to end of file after class definitions
 
 
+def _serialize_colour(colour: Optional[ZenColour]) -> Optional[dict[str, int | str | None]]:
+    if colour is None or colour.type is None:
+        return None
+    data: dict[str, int | str | None] = {"type": colour.type.name.lower()}
+    if colour.type == ZenColourType.TC:
+        data["kelvin"] = colour.kelvin
+    elif colour.type == ZenColourType.RGBWAF:
+        data["r"] = colour.r
+        data["g"] = colour.g
+        data["b"] = colour.b
+        data["w"] = colour.w
+        data["a"] = colour.a
+        data["f"] = colour.f
+    elif colour.type == ZenColourType.XY:
+        data["x"] = colour.x
+        data["y"] = colour.y
+    return data
+
+
+def _hydrate_colour(data: Optional[dict[str, Any]]) -> Optional[ZenColour]:
+    if data is None:
+        return None
+    colour_type = ZenColourType[str(data["type"]).upper()]
+    if colour_type == ZenColourType.TC:
+        return ZenColour(type=colour_type, kelvin=data.get("kelvin"))
+    if colour_type == ZenColourType.RGBWAF:
+        return ZenColour(
+            type=colour_type,
+            r=data.get("r"),
+            g=data.get("g"),
+            b=data.get("b"),
+            w=data.get("w"),
+            a=data.get("a"),
+            f=data.get("f"),
+        )
+    if colour_type == ZenColourType.XY:
+        return ZenColour(type=colour_type, x=data.get("x"), y=data.get("y"))
+    return None
+
+
+def _serialize_group_address(address: ZenAddress) -> dict[str, int]:
+    return {"number": address.number}
+
+
+def _loads_interview_data(data: str | dict[str, Any]) -> dict[str, Any]:
+    if isinstance(data, str):
+        loaded: dict[str, Any] = json.loads(data)
+        return loaded
+    return data
+
+
 class ZenControl:
     def __init__(self,
-                 logger: logging.Logger=None,
+                 logger: logging.Logger | None = None,
                  print_traffic: bool = False,
                  unicast: bool = False,
                  listen_ip: Optional[str] = None,
                  listen_port: Optional[int] = None,
-                 cache: dict | None = None
+                 cache: dict[bytes, dict[str, Any]] | None = None
                  ):
         self.logger = logger or logging.getLogger(__name__)
         self.protocol: ZenProtocol = ZenProtocol(logger=self.logger, print_traffic=print_traffic, unicast=unicast, listen_ip=listen_ip, listen_port=listen_port, cache=cache if cache is not None else {})
         self.controllers: list[ZenController] = []
+        # Each ZenControl instance gets its own callback registry so multiple
+        # instances (e.g. an integration and a test connection) cannot interfere.
+        self.protocol.callbacks = ZenCallbacks()
 
     @property
-    def cache(self) -> dict:
+    def cache(self) -> dict[bytes, dict[str, Any]]:
         return self.protocol.cache
 
     @property
     def on_connect(self) -> "CallbackOnConnect | None":
-        return _callbacks.on_connect
+        return self.protocol.callbacks.on_connect
     @on_connect.setter
     def on_connect(self, func: "CallbackOnConnect | None") -> None:
-        _callbacks.on_connect = func
+        self.protocol.callbacks.on_connect = func
 
     @property
     def on_disconnect(self) -> "CallbackOnDisconnect | None":
-        return _callbacks.on_disconnect
+        return self.protocol.callbacks.on_disconnect
     @on_disconnect.setter
     def on_disconnect(self, func: "CallbackOnDisconnect | None") -> None:
-        _callbacks.on_disconnect = func
+        self.protocol.callbacks.on_disconnect = func
 
     @property
     def profile_change(self) -> "CallbackProfileChange | None":
-        return _callbacks.profile_change
+        return self.protocol.callbacks.profile_change
     @profile_change.setter
     def profile_change(self, func: "CallbackProfileChange | None") -> None:
-        _callbacks.profile_change = func
+        self.protocol.callbacks.profile_change = func
 
     @property
     def group_change(self) -> "CallbackGroupChange | None":
-        return _callbacks.group_change
+        return self.protocol.callbacks.group_change
     @group_change.setter
     def group_change(self, func: "CallbackGroupChange | None") -> None:
-        _callbacks.group_change = func
+        self.protocol.callbacks.group_change = func
 
     @property
     def light_change(self) -> "CallbackLightChange | None":
-        return _callbacks.light_change
+        return self.protocol.callbacks.light_change
     @light_change.setter
     def light_change(self, func: "CallbackLightChange | None") -> None:
-        _callbacks.light_change = func
+        self.protocol.callbacks.light_change = func
 
     @property
     def button_press(self) -> "CallbackButtonPress | None":
-        return _callbacks.button_press
+        return self.protocol.callbacks.button_press
     @button_press.setter
     def button_press(self, func: "CallbackButtonPress | None") -> None:
-        _callbacks.button_press = func
+        self.protocol.callbacks.button_press = func
     
     @property
     def button_long_press(self) -> "CallbackButtonLongPress | None":
-        return _callbacks.button_long_press
+        return self.protocol.callbacks.button_long_press
     @button_long_press.setter
     def button_long_press(self, func: "CallbackButtonLongPress | None") -> None:
-        _callbacks.button_long_press = func
+        self.protocol.callbacks.button_long_press = func
     
     @property
     def motion_event(self) -> "CallbackMotionEvent | None":
-        return _callbacks.motion_event
+        return self.protocol.callbacks.motion_event
     @motion_event.setter
     def motion_event(self, func: "CallbackMotionEvent | None") -> None:
-        _callbacks.motion_event = func
+        self.protocol.callbacks.motion_event = func
     
     @property
     def system_variable_change(self) -> "CallbackSystemVariableChange | None":
-        return _callbacks.system_variable_change
+        return self.protocol.callbacks.system_variable_change
     @system_variable_change.setter
     def system_variable_change(self, func: "CallbackSystemVariableChange | None") -> None:
-        _callbacks.system_variable_change = func
+        self.protocol.callbacks.system_variable_change = func
 
     # ============================
     # Setup / Start / Stop
@@ -120,7 +176,8 @@ class ZenControl:
     def add_controller(self, id: int, name: str, label: str, host: str, port: int = 5108, mac: Optional[str] = None, filtering: bool = False) -> "ZenController":
         controller = ZenController(protocol=self.protocol, id=id, name=name, label=label, host=host, port=port, mac=mac, filtering=filtering)
         self.controllers.append(controller)
-        self.protocol.set_controllers(self.controllers)
+        # list is invariant; protocol expects the API-level ZenController type
+        self.protocol.set_controllers(cast(list[SuperZenController], self.controllers))
         return controller
 
     async def start(self) -> None:
@@ -134,16 +191,27 @@ class ZenControl:
             is_occupied_callback = self.is_occupied_event,
             system_variable_change_callback = self.system_variable_change_event,
             colour_change_callback = self.colour_change_event,
-            profile_change_callback = self.profile_change_event
+            profile_change_callback = self.profile_change_event,
+            disconnect_callback = self._protocol_disconnect_event,
         )
         await self.protocol.start_event_monitoring()
-        if callable(_callbacks.on_connect):
-            await _callbacks.on_connect()
+        if callable(self.protocol.callbacks.on_connect):
+            await self.protocol.callbacks.on_connect()
     
     async def stop(self) -> None:
+        # Capture before stop_event_monitoring: an unexpected listener death may
+        # already have fired disconnect_callback; notify_disconnect dedupes if both race.
+        was_running = bool(
+            self.protocol.event_task and not self.protocol.event_task.done()
+        )
         await self.protocol.stop_event_monitoring()
-        if callable(_callbacks.on_disconnect):
-            await _callbacks.on_disconnect()
+        if was_running:
+            await self.protocol.notify_disconnect()
+
+    async def _protocol_disconnect_event(self) -> None:
+        """Forward protocol-level disconnect to the high-level on_disconnect hook."""
+        if callable(self.protocol.callbacks.on_disconnect):
+            await self.protocol.callbacks.on_disconnect()
 
     # ============================
     # ZenProtocol callbacks
@@ -162,6 +230,9 @@ class ZenControl:
         await ZenMotionSensor(protocol=self.protocol, instance=instance)._event_received()
 
     async def level_change_event(self, address: ZenAddress, arc_level: int, payload: bytes) -> None:
+        # LEVEL_CHANGE_V2: payload[1] is the dimming destination — ignore current level in payload[0]
+        if len(payload) >= 2:
+            arc_level = payload[1]
         if address.type == ZenAddressType.ECG:
             light = ZenLight(protocol=self.protocol, address=address)
             await light._event_received(level=arc_level)
@@ -180,18 +251,19 @@ class ZenControl:
             #     await light._event_received(level=arc_level, cascaded_from=group)
 
     async def colour_change_event(self, address: ZenAddress, colour: bytes, payload: bytes) -> None:
+        parsed_colour = ZenColour.from_bytes(colour)
         if address.type == ZenAddressType.ECG:
             # Delay the light event to allow group updates to arrive and propogate
             ecg = ZenLight(protocol=self.protocol, address=address)
             async def delayed_colour_event():
                 await asyncio.sleep(0.0)
-                await ecg._event_received(colour=colour)
+                await ecg._event_received(colour=parsed_colour)
             asyncio.create_task(delayed_colour_event())
         elif address.type == ZenAddressType.GROUP:
             group = ZenGroup(protocol=self.protocol, address=address)
-            await group._event_received(colour=colour)
+            await group._event_received(colour=parsed_colour)
             for light in group.lights:
-                await light._event_received(colour=colour, cascaded_from=group)
+                await light._event_received(colour=parsed_colour, cascaded_from=group)
 
     async def scene_change_event(self, address: ZenAddress, scene: int, active: bool, payload: bytes) -> None:
         if address.type == ZenAddressType.ECG:
@@ -206,7 +278,7 @@ class ZenControl:
             group = ZenGroup(protocol=self.protocol, address=address)
             await group._event_received(scene=scene, active=active)
             for light in group.lights:
-                await light._event_received(scene=scene, cascaded_from=group)
+                await light._event_received(scene=scene, active=active, cascaded_from=group)
     
     async def system_variable_change_event(self, controller: ZenController, target: int, value: int, payload: bytes) -> None:
         await ZenSystemVariable(protocol=self.protocol, controller=controller, id=target)._event_received(value)
@@ -218,20 +290,22 @@ class ZenControl:
     # Abstraction layer commands
     # ============================ 
 
-    async def get_profiles(self, controller: Optional["ZenController"] = None) -> "set[ZenProfile]":
+    async def get_profiles(self, controller: Optional["ZenController"] = None) -> set["ZenProfile"]:
         """Return a set of all profiles."""
-        profiles = set()
+        profiles: set[ZenProfile] = set()
         controllers = [controller] if controller else self.controllers
-        for controller in controllers:
-            numbers = await self.protocol.query_profile_numbers(controller=controller)
+        for ctrl in controllers:
+            numbers = await self.protocol.query_profile_numbers(controller=ctrl)
+            if numbers is None:
+                continue
             for number in numbers:
-                profile = await ZenProfile.create(protocol=self.protocol, controller=controller, number=number)
+                profile = await ZenProfile.create(protocol=self.protocol, controller=ctrl, number=number)
                 profiles.add(profile)
         return profiles
 
-    async def get_groups(self) -> "set[ZenGroup]":
+    async def get_groups(self) -> set["ZenGroup"]:
         """Return a set of all groups."""
-        groups = set()
+        groups: set[ZenGroup] = set()
         for controller in self.controllers:
             addresses = await self.protocol.query_group_numbers(controller=controller)
             for address in addresses:
@@ -239,9 +313,9 @@ class ZenControl:
                 groups.add(group)
         return groups
     
-    async def get_lights(self) -> "set[ZenLight]":
+    async def get_lights(self) -> set["ZenLight"]:
         """Return a set of all lights available."""
-        lights = set()
+        lights: set[ZenLight] = set()
         for controller in self.controllers:
             addresses = await self.protocol.query_control_gear_dali_addresses(controller=controller)
             for address in addresses:
@@ -249,11 +323,31 @@ class ZenControl:
                 lights.add(light)
         return lights
     
-    async def get_buttons(self) -> "set[ZenButton]":
+    async def _get_addresses_with_instances(self, controller: "ZenController") -> list[ZenAddress]:
+        """Return all DALI addresses that have instances, scanning all address ranges.
+
+        ``query_dali_addresses_with_instances`` can only return up to 60 addresses
+        per call. Iterating over start_address in steps of 60 covers the full
+        DALI address space (0-127).
+        """
+        seen: set[tuple[str, int]] = set()
+        addresses: list[ZenAddress] = []
+        for start in range(0, 128, 60):
+            batch = await self.protocol.query_dali_addresses_with_instances(
+                controller=controller, start_address=start
+            )
+            for addr in batch:
+                key = (addr.controller.name, addr.number)
+                if key not in seen:
+                    seen.add(key)
+                    addresses.append(addr)
+        return addresses
+
+    async def get_buttons(self) -> set["ZenButton"]:
         """Return a set of all buttons available."""
-        buttons = set()
+        buttons: set[ZenButton] = set()
         for controller in self.controllers:
-            addresses = await self.protocol.query_dali_addresses_with_instances(controller=controller)
+            addresses = await self._get_addresses_with_instances(controller)
             for address in addresses:
                 instances = await self.protocol.query_instances_by_address(address=address)
                 for instance in instances:
@@ -262,11 +356,11 @@ class ZenControl:
                         buttons.add(button)
         return buttons
     
-    async def get_motion_sensors(self) -> "set[ZenMotionSensor]":
+    async def get_motion_sensors(self) -> set["ZenMotionSensor"]:
         """Return a set of all motion sensors available."""
-        motion_sensors = set()
+        motion_sensors: set[ZenMotionSensor] = set()
         for controller in self.controllers:
-            addresses = await self.protocol.query_dali_addresses_with_instances(controller=controller)
+            addresses = await self._get_addresses_with_instances(controller)
             for address in addresses:
                 instances = await self.protocol.query_instances_by_address(address=address)
                 for instance in instances:
@@ -275,9 +369,9 @@ class ZenControl:
                         motion_sensors.add(motion_sensor)
         return motion_sensors
 
-    async def get_system_variables(self, give_up_after: int = 10) -> "set[ZenSystemVariable]":
+    async def get_system_variables(self, give_up_after: int = 10) -> set["ZenSystemVariable"]:
         """Return a set of all system variables. Variables must have a label. Searching will give_up_after [x] sequential IDs without a label."""
-        sysvars = set()
+        sysvars: set[ZenSystemVariable] = set()
         failed_attempts = 0
         for controller in self.controllers:
             for variable in range(Const.MAX_SYSVAR):
@@ -297,65 +391,103 @@ class ZenControl:
 # ============================ 
 
 class ZenController(SuperZenController):
-    _instances = {}
-    def __new__(cls, protocol: ZenProtocol, id: int, name: str, label: str, host: str, port: int = 5108, mac: Optional[str] = None, filtering: bool = False):
+    _instances: ClassVar[dict[str, "ZenController"]] = {}
+
+    # Narrow/override dataclass fields used by the interface layer
+    protocol: ZenProtocol
+    version: Optional[str] = None
+
+    connected: bool = False
+    profile: Optional["ZenProfile"] = None
+    profiles: set["ZenProfile"] = set()
+    lights: set["ZenLight"] = set()
+    groups: set["ZenGroup"] = set()
+    buttons: set["ZenButton"] = set()
+    motion_sensors: set["ZenMotionSensor"] = set()
+    sysvars: set["ZenSystemVariable"] = set()
+    client_data: dict[str, Any] = {}
+
+    def __new__(cls, protocol: ZenProtocol, id: int, name: str, label: str, host: str, port: int = 5108, mac: Optional[str] = None, filtering: bool = False) -> "ZenController":
         # Singleton based on controller name
         if name not in cls._instances:
             inst = super().__new__(cls)
             cls._instances[name] = inst
             inst.connected = False
             inst.client = None  # Will be initialized when first used
+            object.__setattr__(inst, "_ip", None)
+            object.__setattr__(inst, "mac_bytes", None)
             inst._reset()
             # Don't call interview() here - it will be called async later
         inst = cls._instances[name]
         inst.protocol = protocol
-        inst.id = id
+        inst.id = str(id)
         inst.name = name
         inst.label = label
         inst.host = host
         inst.port = port
         inst.mac = mac
         inst.filtering = filtering
+        inst._update_mac_bytes(mac)
         return inst
+
+    def __init__(self, protocol: ZenProtocol, id: int, name: str, label: str, host: str, port: int = 5108, mac: Optional[str] = None, filtering: bool = False) -> None:
+        # Satisfy reportMissingSuperCall; __new__ owns singleton field assignment.
+        super().__init__(
+            id=str(id),
+            name=name,
+            label=label,
+            host=host,
+            port=port,
+            mac=mac,
+            protocol=protocol,
+            filtering=filtering,
+        )
     
     @classmethod
-    async def create(cls, protocol: ZenProtocol, id: int, name: str, label: str, host: str, port: int = 5108, mac: Optional[str] = None, filtering: bool = False):
+    async def create(cls, protocol: ZenProtocol, id: int, name: str, label: str, host: str, port: int = 5108, mac: Optional[str] = None, filtering: bool = False) -> "ZenController":
         """Async factory method for ZenController"""
-        controller = cls(protocol, id, name, label, host, port, mac, filtering)
+        controller = cls(protocol=protocol, id=id, name=name, label=label, host=host, port=port, mac=mac, filtering=filtering)
         await controller.interview()
         return controller
     def __repr__(self) -> str:
         return f"ZenController<{self.name}>"
     def _reset(self) -> None:
         # label is set from config in __new__ or from interview(); not runtime state
-        self.version: Optional[int] = None
-        self.profile: Optional[ZenProfile] = None
-        self.profiles: set[ZenProfile] = set()
-        self.lights: set[ZenLight] = set()
-        self.groups: "set[ZenGroup]" = set()
-        self.buttons: "set[ZenButton]" = set()
-        self.motion_sensors: "set[ZenMotionSensor]" = set()
-        self.sysvars: "set[ZenSystemVariable]" = set()
-        self.client_data: dict = {}
+        self.version = None
+        self.profile = None
+        self.profiles = set()
+        self.lights = set()
+        self.groups = set()
+        self.buttons = set()
+        self.motion_sensors = set()
+        self.sysvars = set()
+        self.client_data = {}
     async def interview(self) -> bool:
-        if self.label is None: self.label = await self.protocol.query_controller_label(self)
-        self.version = await self.protocol.query_controller_version_number(self)
-        current_profile = await self.protocol.query_current_profile_number(self)
-        self.profile = ZenProfile(protocol=self.protocol, controller=self, number=current_profile)
+        protocol = self.protocol
+        if self.label is None or self.label == "":
+            queried = await protocol.query_controller_label(self)
+            if queried is not None:
+                self.label = queried
+        self.version = await protocol.query_controller_version_number(self)
+        current_profile = await protocol.query_current_profile_number(self)
+        if current_profile is not None:
+            self.profile = ZenProfile(protocol=protocol, controller=self, number=current_profile)
         self.connected = True
         return True
     async def _event_received(self, profile: Optional[int] = None):
+        protocol = self.protocol
         if profile is not None:
-            self.profile = ZenProfile(protocol=self.protocol, controller=self, number=profile)
-            if callable(_callbacks.profile_change):
-                await _callbacks.profile_change(profile=self.profile)
+            self.profile = ZenProfile(protocol=protocol, controller=self, number=profile)
+            cb = protocol.callbacks.profile_change
+            if callable(cb):
+                await cb(profile=self.profile)
     def get_sysvar(self, id: int) -> "ZenSystemVariable":
         return ZenSystemVariable(protocol=self.protocol, controller=self, id=id)
     async def is_controller_ready(self) -> Optional[bool]:
         return await self.protocol.query_controller_startup_complete(self)
-    async def is_dali_ready(self) -> bool:
+    async def is_dali_ready(self) -> Optional[bool]:
         return await self.protocol.query_is_dali_ready(self)
-    async def switch_to_profile(self, profile: ZenProfile|int|str) -> bool:
+    async def switch_to_profile(self, profile: "ZenProfile|int|str") -> bool:
         zp = None
         if isinstance(profile, ZenProfile):
             zp = profile
@@ -366,17 +498,24 @@ class ZenController(SuperZenController):
             for p in self.profiles:
                 if p.number == profile: zp = p
         if isinstance(zp, ZenProfile):
-            print(f"Switching to profile {zp}")
-            return await self.protocol.change_profile_number(self, zp.number)
+            self.protocol.logger.debug("Switching to profile %s", zp)
+            result = await self.protocol.change_profile_number(self, zp.number)
+            return bool(result)
         else:
             return False
-    async def return_to_scheduled_profile(self) -> bool:
+    async def return_to_scheduled_profile(self) -> Optional[bool]:
         return await self.protocol.return_to_scheduled_profile(self)
 
 
 class ZenProfile:
-    _instances = {}
-    def __new__(cls, protocol: ZenProtocol, controller: ZenController, number: int):
+    _instances: ClassVar[dict[str, "ZenProfile"]] = {}
+    protocol: ZenProtocol
+    controller: ZenController
+    number: int
+    label: Optional[str] = None
+    client_data: dict[str, Any] = {}
+
+    def __new__(cls, protocol: ZenProtocol, controller: ZenController, number: int) -> "ZenProfile":
         # Singleton based on controller and profile number
         compound_id = f"{controller.name} {number}"
         if compound_id not in cls._instances:
@@ -388,33 +527,79 @@ class ZenProfile:
             inst._reset()
             # Don't call interview() here - it will be called async later
         return cls._instances[compound_id]
+
+    def __init__(self, protocol: ZenProtocol, controller: ZenController, number: int) -> None:
+        self.protocol = protocol
+        self.controller = controller
+        self.number = number
     
     @classmethod
-    async def create(cls, protocol: ZenProtocol, controller: ZenController, number: int):
+    async def create(cls, protocol: ZenProtocol, controller: ZenController, number: int) -> "ZenProfile":
         """Async factory method for ZenProfile"""
         profile = cls(protocol, controller, number)
         await profile.interview()
         return profile
     def __repr__(self) -> str:
         return f"ZenProfile<{self.controller.name} profile {self.number}: {self.label}>"
-    def _reset(self):
-        self.label: Optional[str] = None
-        self.client_data: dict = {}
+    def _reset(self) -> None:
+        self.label = None
+        self.client_data = {}
+    def interview_serialize(self) -> str:
+        return json.dumps({
+            "number": self.number,
+            "label": self.label,
+        })
+    def interview_hydrate(self, data: str | dict[str, Any]) -> bool:
+        try:
+            data = _loads_interview_data(data)
+            self.label = data.get("label")
+            self.controller.profiles.add(self)
+            return True
+        except Exception:
+            return False
     async def interview(self) -> bool:
         self.label = await self.protocol.query_profile_label(self.controller, self.number)
         # Add self to controller's set of profiles
         self.controller.profiles.add(self)
         return True
     async def select(self) -> bool:
-        return await self.protocol.change_profile_number(self.controller, self.number)
+        result = await self.protocol.change_profile_number(self.controller, self.number)
+        return bool(result)
 
 
 class ZenLight:
-    _instances = {}
-    def __new__(cls, protocol: ZenProtocol, address: ZenAddress):
+    _instances: ClassVar[dict[str, "ZenLight"]] = {}
+    protocol: ZenProtocol
+    address: ZenAddress
+    label: Optional[str] = None
+    serial: Optional[int | str] = None
+    cgtype: list[int] = []
+    groups: set["ZenGroup"] = set()
+    group_membership: list[ZenAddress] = []
+    features: dict[str, bool] = {
+        "brightness": False,
+        "temperature": False,
+        "RGB": False,
+        "RGBW": False,
+        "RGBWW": False,
+    }
+    properties: dict[str, Optional[int]] = {
+        "min_kelvin": Const.DEFAULT_WARMEST_TEMP,
+        "max_kelvin": Const.DEFAULT_COOLEST_TEMP,
+    }
+    _scene_labels: list[Optional[str]] = [None] * Const.MAX_SCENE
+    _scene_levels: list[Optional[int]] = [None] * Const.MAX_SCENE
+    _scene_colours: list[Optional[ZenColour]] = [None] * Const.MAX_SCENE
+    level: Optional[int] = None
+    colour: Optional[ZenColour] = None
+    scene: Optional[int] = None
+    client_data: dict[str, Any] = {}
+    _refresh_timer: Optional[asyncio.Task[None]] = None
+
+    def __new__(cls, protocol: ZenProtocol, address: ZenAddress) -> Self:
         # Inherited classes should bypass ZenLight __new__
         if cls is not ZenLight:
-            return super().__new__(cls)
+            return cast(Self, super().__new__(cls))
         # Singleton based on controller and address
         compound_id = f"{address.controller.name} {address.number}"
         if compound_id not in cls._instances:
@@ -424,40 +609,85 @@ class ZenLight:
             inst.address = address
             inst._reset()
             # Don't call interview() here - it will be called async later
-        return cls._instances[compound_id]
+        return cast(Self, cls._instances[compound_id])
+
+    def __init__(self, protocol: ZenProtocol, address: ZenAddress) -> None:
+        self.protocol = protocol
+        self.address = address
     
     @classmethod
-    async def create(cls, protocol: ZenProtocol, address: ZenAddress):
+    async def create(cls, protocol: ZenProtocol, address: ZenAddress) -> "ZenLight":
         """Async factory method for ZenLight"""
         instance = cls(protocol, address)
         await instance.interview()
         return instance
     def __repr__(self) -> str:
         return f"ZenLight<{self.address.controller.name} ecg {self.address.number}: {self.label}>"
-    def _reset(self):
-        self.label: Optional[str] = None
-        self.serial: Optional[str] = None
-        self.groups: "set[ZenGroup]" = set()
-        self.features: dict[str, bool] = {
+    def _reset(self) -> None:
+        self.label = None
+        self.serial = None
+        self.cgtype = []
+        self.groups = set()
+        self.group_membership = []
+        self.features = {
             "brightness": False,
             "temperature": False,
             "RGB": False,
             "RGBW": False,
             "RGBWW": False,
         }
-        self.properties: dict[str, Optional[int]] = {
+        self.properties = {
             "min_kelvin": Const.DEFAULT_WARMEST_TEMP,
             "max_kelvin": Const.DEFAULT_COOLEST_TEMP,
         }
-        self._scene_labels: list[Optional[str]] = [None] * Const.MAX_SCENE # Scene labels (only used by ZenGroup)
-        self._scene_levels: list[Optional[int]] = [None] * Const.MAX_SCENE # Scene levels (only used by ZenLight)
-        self._scene_colours: "list[Optional[ZenColour]]" = [None] * Const.MAX_SCENE # Scene colours (only used by ZenLight)
-        self.level: Optional[int] = None
-        self.colour: Optional["ZenColour"] = None
-        self.scene: Optional[int] = None # Current scene number
-        self.client_data: dict = {}
+        self._scene_labels = [None] * Const.MAX_SCENE # Scene labels (only used by ZenGroup)
+        self._scene_levels = [None] * Const.MAX_SCENE # Scene levels (only used by ZenLight)
+        self._scene_colours = [None] * Const.MAX_SCENE # Scene colours (only used by ZenLight)
+        self.level = None
+        self.colour = None
+        self.scene = None # Current scene number
+        self.client_data = {}
         # Timer for refresh_state_from_controller after property changes
-        self._refresh_timer: Optional[asyncio.Task] = None
+        self._refresh_timer = None
+    def _apply_group_membership(self, membership: list[ZenAddress]) -> None:
+        for existing_group in self.groups:
+            existing_group.lights.discard(self)
+        self.groups.clear()
+        self.group_membership = list(membership)
+        for group_address in self.group_membership:
+            group = ZenGroup(protocol=self.protocol, address=group_address)
+            group.lights.add(self)
+            self.groups.add(group)
+    def interview_serialize(self) -> str:
+        return json.dumps({
+            "label": self.label,
+            "serial": self.serial,
+            "cgtype": list(self.cgtype),
+            "group_membership": [_serialize_group_address(group) for group in self.group_membership],
+            "features": dict(self.features),
+            "properties": dict(self.properties),
+            "scene_levels": list(self._scene_levels),
+            "scene_colours": [_serialize_colour(colour) for colour in self._scene_colours],
+        })
+    def interview_hydrate(self, data: str | dict[str, Any]) -> bool:
+        try:
+            data = _loads_interview_data(data)
+            self.label = data.get("label")
+            self.serial = data.get("serial")
+            self.cgtype = list(data.get("cgtype", []))
+            self.features.update(data.get("features", {}))
+            self.properties.update(data.get("properties", {}))
+            self._scene_levels = list(data.get("scene_levels", []))
+            self._scene_colours = [_hydrate_colour(colour) for colour in data.get("scene_colours", [])]
+            membership = [
+                ZenAddress(controller=self.address.controller, type=ZenAddressType.GROUP, number=group["number"])
+                for group in data.get("group_membership", [])
+            ]
+            self._apply_group_membership(membership)
+            cast(ZenController, self.address.controller).lights.add(self)
+            return True
+        except Exception:
+            return False
     async def interview(self) -> bool:
         cgstatus = await self.protocol.dali_query_control_gear_status(self.address)
         if cgstatus:
@@ -495,14 +725,10 @@ class ZenLight:
 
             # Groups
             groups = await self.protocol.query_group_membership_by_address(self.address)
-            if groups:
-                for group in groups:
-                    group = ZenGroup(protocol=self.protocol, address=group)
-                    group.lights.add(self) # Add to group's set of lights
-                    self.groups.add(group) # Add to light's set of groups
+            self._apply_group_membership(groups or [])
             
             # Add to controller's set of lights
-            self.address.controller.lights.add(self)
+            cast(ZenController, self.address.controller).lights.add(self)
 
             return True
         else:
@@ -523,15 +749,27 @@ class ZenLight:
             refreshed_colour = await self.protocol.query_dali_colour(self.address)
         
         if verifying:
-            if self.level != refreshed_level:
-                self.protocol.logger.error(f"Light {self.address.number} level mismatch! We had {self.level}, actual level is {refreshed_level}")
+            # Level is driven by LEVEL_CHANGE_V2 dimming-to events; query returns current arc mid-fade
+            if refreshed_level is not None and self.level != refreshed_level:
+                self.protocol.logger.debug(
+                    f"Light {self.address.number} queried level {refreshed_level} "
+                    f"differs from tracked destination {self.level} (expected during fade)"
+                )
+            refreshed_level = None
             if self.colour != refreshed_colour:
                 self.protocol.logger.error(f"Light {self.address.number} colour mismatch! We had {self.colour}, actual colour is {refreshed_colour}")
             if self.scene != refreshed_scene:
                 self.protocol.logger.error(f"Light {self.address.number} scene mismatch! We had {self.scene}, actual scene is {refreshed_scene}")
         
-        # Mimic an incoming event
-        await self._event_received(level=refreshed_level, colour=refreshed_colour, scene=refreshed_scene, verifying=verifying)
+        # Mimic an incoming scene event when the controller reports the last
+        # scene is current. This ensures we also update `self.scene`.
+        await self._event_received(
+            level=refreshed_level,
+            colour=refreshed_colour,
+            scene=refreshed_scene,
+            active=(refreshed_scene is not None and not verifying),
+            verifying=verifying,
+        )
 
     def _start_refresh_timer(self):
         """Start a 2-second timer to refresh from controller after API user changes state."""
@@ -561,20 +799,31 @@ class ZenLight:
         level_changed = False
         colour_changed = False
         scene_changed = False
-        if scene is not None and active is True:
+        # `active` may be bool or int (protocol passes payload[1] as 0/1).
+        # Use truthiness — `1 is True` is False in Python.
+        if scene is not None and active:
             self.scene = scene
             scene_changed = True
             scene_level = self._scene_levels[scene]
             scene_colour = self._scene_colours[scene]
             if scene_level is None:
-                pass # The scene has no effect on this light's level
+                # Some objects (e.g. groups) may not have scene level tables.
+                # Fall back to the queried `level` so we still keep runtime
+                # light/group state consistent on refresh.
+                if level is not None and level != 255 and level != self.level:
+                    self.level = level
+                    level_changed = True
             elif self.level == scene_level:
                 pass # The level didn't change
             else:
                 self.level = scene_level
                 level_changed = True
             if scene_colour is None:
-                pass # The scene has no effect on this light's colour
+                # Same fallback as for level: preserve queried colour when
+                # scene colour tables are unavailable.
+                if colour is not None and colour != self.colour:
+                    self.colour = colour
+                    colour_changed = True
             elif self.colour == scene_colour:
                 pass # The colour didn't change
             else:
@@ -615,15 +864,15 @@ class ZenLight:
         # Send callbacks to the application
         if type(self) is ZenGroup:
             if level_changed or colour_changed or scene_changed:
-                if callable(_callbacks.group_change):
-                    await _callbacks.group_change(group=self,
+                if callable(self.protocol.callbacks.group_change):
+                    await self.protocol.callbacks.group_change(group=self,
                                     level=self.level if level_changed else None,
                                     colour=self.colour if colour_changed else None,
                                     scene=self.scene if scene_changed else None)
         elif type(self) is ZenLight:
             if level_changed or colour_changed or scene_changed:
-                if callable(_callbacks.light_change):
-                    await _callbacks.light_change(light=self,
+                if callable(self.protocol.callbacks.light_change):
+                    await self.protocol.callbacks.light_change(light=self,
                                     level=self.level if level_changed else None,
                                     colour=self.colour if colour_changed else None,
                                     scene=self.scene if scene_changed else None)
@@ -645,15 +894,15 @@ class ZenLight:
     #   These methods send commands to the controller. The controller sends events back.
     #   The events update the internal state.
     # -----------------------------------------------------------------------------------------
-    async def on(self, fade: bool = True) -> bool:
+    async def on(self, fade: bool = True) -> Optional[bool]:
         self._start_refresh_timer()
         if not fade: await self.protocol.dali_enable_dapc_sequence(self.address)
         return await self.protocol.dali_go_to_last_active_level(self.address)
-    async def off(self, fade: bool = True) -> bool:
+    async def off(self, fade: bool = True) -> Optional[bool]:
         self._start_refresh_timer()
         if fade: return await self.protocol.dali_arc_level(self.address, 0)
         else: return await self.protocol.dali_off(self.address)
-    async def set_scene(self, scene: int|str|dict, fade: bool = True) -> bool:
+    async def set_scene(self, scene: int|str|dict[str, Any], fade: bool = True) -> Optional[bool]:
         self._start_refresh_timer()
         if type(scene) == str:
             scene = next((i for i, s in enumerate(self._scene_labels) if s == scene), False)
@@ -661,9 +910,9 @@ class ZenLight:
             if not fade: await self.protocol.dali_enable_dapc_sequence(self.address)
             return await self.protocol.dali_scene(self.address, scene)
         return False
-    async def set(self, level: int = 255, colour: Optional["ZenColour"] = None, fade: bool = True) -> bool:
+    async def set(self, level: int = 255, colour: Optional["ZenColour"] = None, fade: bool = True) -> Optional[bool]:
         self._start_refresh_timer()
-        if (self.supports_colour(colour)):
+        if colour is not None and self.supports_colour(colour):
             if not fade: await self.protocol.dali_enable_dapc_sequence(self.address)
             return await self.protocol.dali_colour(self.address, colour, level)
         if 0 <= level <= 254:
@@ -671,71 +920,91 @@ class ZenLight:
                 return await self.protocol.dali_arc_level(self.address, level)
             else:
                 return await self.protocol.dali_custom_fade(self.address, level, 0)
-    async def dali_on_step_up(self) -> bool:
+        return False
+    async def dali_on_step_up(self) -> Optional[bool]:
         self._start_refresh_timer()
         return await self.protocol.dali_on_step_up(self.address)
-    async def dali_step_down_off(self) -> bool:
+    async def dali_step_down_off(self) -> Optional[bool]:
         self._start_refresh_timer()
         return await self.protocol.dali_step_down_off(self.address)
-    async def dali_up(self) -> bool:
+    async def dali_up(self) -> Optional[bool]:
         self._start_refresh_timer()
         return await self.protocol.dali_up(self.address)
-    async def dali_down(self) -> bool:
+    async def dali_down(self) -> Optional[bool]:
         self._start_refresh_timer()
         return await self.protocol.dali_down(self.address)
-    async def dali_recall_max(self) -> bool:
+    async def dali_recall_max(self) -> Optional[bool]:
         self._start_refresh_timer()
         return await self.protocol.dali_recall_max(self.address)
-    async def dali_recall_min(self) -> bool:
+    async def dali_recall_min(self) -> Optional[bool]:
         self._start_refresh_timer()
         return await self.protocol.dali_recall_min(self.address)
-    async def dali_go_to_last_active_level(self) -> bool:
+    async def dali_go_to_last_active_level(self) -> Optional[bool]:
         self._start_refresh_timer()
         return await self.protocol.dali_go_to_last_active_level(self.address)
-    async def dali_off(self) -> bool:
+    async def dali_off(self) -> Optional[bool]:
         self._start_refresh_timer()
         return await self.protocol.dali_off(self.address)
-    async def dali_custom_fade(self, level: int, duration: int) -> bool:
+    async def dali_custom_fade(self, level: int, duration: int) -> Optional[bool]:
         self._start_refresh_timer()
         return await self.protocol.dali_custom_fade(self.address, level, duration)
-    async def dali_stop_fade(self) -> bool:
+    async def dali_stop_fade(self) -> Optional[bool]:
         self._start_refresh_timer()
         return await self.protocol.dali_stop_fade(self.address)
-    async def dali_enable_dapc_sequence(self) -> bool:
+    async def dali_enable_dapc_sequence(self) -> Optional[bool]:
         return await self.protocol.dali_enable_dapc_sequence(self.address)
-    async def dali_inhibit(self, inhibit: bool = True) -> bool:
+    async def dali_inhibit(self, inhibit: bool = True) -> Optional[bool]:
         time_seconds = 65535 if inhibit else 0
         return await self.protocol.dali_inhibit(self.address, time_seconds)
         
 
 class ZenGroup(ZenLight):
-    _instances = {}
-    def __new__(cls, protocol: ZenProtocol, address: ZenAddress):
+    _group_instances: ClassVar[dict[str, "ZenGroup"]] = {}
+    lights: set[ZenLight] = set()
+
+    def __new__(cls, protocol: ZenProtocol, address: ZenAddress) -> "ZenGroup":
         # Singleton based on controller and address
         compound_id = f"{address.controller.name} g{address.number}"
-        if compound_id not in cls._instances:
+        if compound_id not in cls._group_instances:
             inst = super().__new__(cls, protocol=protocol, address=address)
-            cls._instances[compound_id] = inst
+            cls._group_instances[compound_id] = inst
             inst.protocol = protocol
             inst.address = address
-            inst.lights = set() # self.lights is managed by ZenLight
+            inst.lights = set()  # member lights; managed via ZenLight._apply_group_membership
             inst._reset()
             # Don't call interview() here - it will be called async later
-        return cls._instances[compound_id]
+        return cls._group_instances[compound_id]
+
+    def __init__(self, protocol: ZenProtocol, address: ZenAddress) -> None:
+        super().__init__(protocol, address)
     
     @classmethod
-    async def create(cls, protocol: ZenProtocol, address: ZenAddress):
+    async def create(cls, protocol: ZenProtocol, address: ZenAddress) -> "ZenGroup":
         """Async factory method for ZenGroup"""
         group = cls(protocol, address)
         await group.interview()
         return group
     def __repr__(self) -> str:
         return f"ZenGroup<{self.address.controller.name} group {self.address.number}: {self.label}>"
+    def interview_serialize(self) -> str:
+        return json.dumps({
+            "label": self.label,
+            "scene_labels": list(self._scene_labels),
+        })
+    def interview_hydrate(self, data: str | dict[str, Any]) -> bool:
+        try:
+            data = _loads_interview_data(data)
+            self.label = data.get("label")
+            self._scene_labels = list(data.get("scene_labels", []))
+            cast(ZenController, self.address.controller).groups.add(self)
+            return True
+        except Exception:
+            return False
     async def interview(self) -> bool:
         self.label = await self.protocol.query_group_label(self.address, generic_if_none=True)
         self._scene_labels = await self.protocol.query_scenes_for_group(self.address, generic_if_none=True)
         # Add to controller's set of groups
-        self.address.controller.groups.add(self)
+        cast(ZenController, self.address.controller).groups.add(self)
         return True
     def supports_colour(self, colour: "ZenColourType|ZenColour") -> bool:
         # If at least one light in the group supports this colour, return True
@@ -767,8 +1036,8 @@ class ZenGroup(ZenLight):
         self.level = None
         self.colour = None
         self.scene = None
-        if callable(_callbacks.group_change):
-            await _callbacks.group_change(group=self,
+        if callable(self.protocol.callbacks.group_change):
+            await self.protocol.callbacks.group_change(group=self,
                                     discoordinated=True)
     def contains_dimmable_lights(self) -> bool:
         # Is there at least one ZenLight in self.lights that supports dimming?
@@ -784,8 +1053,17 @@ class ZenGroup(ZenLight):
         return False
 
 class ZenButton:
-    _instances = {}
-    def __new__(cls, protocol: ZenProtocol, instance: ZenInstance):
+    _instances: ClassVar[dict[str, "ZenButton"]] = {}
+    protocol: ZenProtocol
+    instance: ZenInstance
+    serial: Optional[int | str] = None
+    label: Optional[str] = None
+    instance_label: Optional[str] = None
+    last_press_time: float = 0.0
+    long_press_count: int = 0
+    client_data: dict[str, Any] = {}
+
+    def __new__(cls, protocol: ZenProtocol, instance: ZenInstance) -> "ZenButton":
         # Singleton based on controller, address, and instance number
         compound_id = f"{instance.address.controller.name} {instance.address.number} {instance.number}"
         if compound_id not in cls._instances:
@@ -796,28 +1074,50 @@ class ZenButton:
             inst._reset()
             # Don't call interview() here - it will be called async later
         return cls._instances[compound_id]
+
+    def __init__(self, protocol: ZenProtocol, instance: ZenInstance) -> None:
+        self.protocol = protocol
+        self.instance = instance
     
     @classmethod
-    async def create(cls, protocol: ZenProtocol, instance: ZenInstance):
+    async def create(cls, protocol: ZenProtocol, instance: ZenInstance) -> "ZenButton":
         """Async factory method for ZenButton"""
         button = cls(protocol, instance)
         await button.interview()
         return button
     def __repr__(self) -> str:
         return f"ZenButton<{self.instance.address.controller.name} ecd {self.instance.address.number} inst {self.instance.number}: {self.label} / {self.instance_label}>"
-    def _reset(self):
-        self.serial: Optional[str] = None
-        self.label: Optional[str] = None
-        self.instance_label: Optional[str] = None
-        self.last_press_time: float = time.time()
-        self.long_press_count: int = 0
-        self.client_data: dict = {}
+    def _reset(self) -> None:
+        self.serial = None
+        self.label = None
+        self.instance_label = None
+        self.last_press_time = time.time()
+        self.long_press_count = 0
+        self.client_data = {}
+    def interview_serialize(self) -> str:
+        return json.dumps({
+            "serial": self.serial,
+            "label": self.label,
+            "instance_label": self.instance_label,
+        })
+    def interview_hydrate(self, data: str | dict[str, Any]) -> bool:
+        try:
+            data = _loads_interview_data(data)
+            self.serial = data.get("serial")
+            self.label = data.get("label")
+            self.instance_label = data.get("instance_label")
+            self.instance.address.label = self.label
+            self.instance.address.serial = cast(Optional[str], self.serial)
+            cast(ZenController, self.instance.address.controller).buttons.add(self)
+            return True
+        except Exception:
+            return False
     async def interview(self) -> bool:
         inst = self.instance
         addr = inst.address
-        ctrl = addr.controller
+        ctrl = cast(ZenController, addr.controller)
         if addr.label is None: addr.label = await self.protocol.query_dali_device_label(addr, generic_if_none=True)
-        if addr.serial is None: addr.serial = await self.protocol.query_dali_serial(addr)
+        if addr.serial is None: addr.serial = cast(Optional[str], await self.protocol.query_dali_serial(addr))
         self.label = addr.label
         self.serial = addr.serial
         self.instance_label = await self.protocol.query_dali_instance_label(inst, generic_if_none=True)
@@ -826,8 +1126,8 @@ class ZenButton:
         return True
     async def _event_received(self, held: bool = False):
         if not held:
-            if callable(_callbacks.button_press):
-                await _callbacks.button_press(button=self)
+            if callable(self.protocol.callbacks.button_press):
+                await self.protocol.callbacks.button_press(button=self)
         else:
             seconds_since_last_press = time.time() - self.last_press_time
             # if there's been less than 500 msec between the last hold message, increment the hold count
@@ -838,14 +1138,26 @@ class ZenButton:
             self.last_press_time = time.time()
             # if the hold count is exactly Const.LONG_PRESS_COUNT, call the long press callback
             if self.long_press_count == Const.LONG_PRESS_COUNT:
-                if callable(_callbacks.button_long_press):
-                    await _callbacks.button_long_press(button=self)
+                if callable(self.protocol.callbacks.button_long_press):
+                    await self.protocol.callbacks.button_long_press(button=self)
 
 
 
 class ZenMotionSensor:
-    _instances = {}
-    def __new__(cls, protocol: ZenProtocol, instance: ZenInstance):
+    _instances: ClassVar[dict[str, "ZenMotionSensor"]] = {}
+    protocol: ZenProtocol
+    instance: ZenInstance
+    hold_time: int = Const.DEFAULT_HOLD_TIME
+    hold_expiry_task: Optional[asyncio.Task[None]] = None
+    serial: Optional[int | str] = None
+    label: Optional[str] = None
+    instance_label: Optional[str] = None
+    deadtime: Optional[int] = None
+    last_detect: Optional[float] = None
+    _occupied: Optional[bool] = None
+    client_data: dict[str, Any] = {}
+
+    def __new__(cls, protocol: ZenProtocol, instance: ZenInstance) -> "ZenMotionSensor":
         # Singleton based on controller, address, and instance number
         compound_id = f"{instance.address.controller.name} {instance.address.number} {instance.number}"
         if compound_id not in cls._instances:
@@ -856,31 +1168,58 @@ class ZenMotionSensor:
             inst._reset()
             # Don't call interview() here - it will be called async later
         return cls._instances[compound_id]
+
+    def __init__(self, protocol: ZenProtocol, instance: ZenInstance) -> None:
+        self.protocol = protocol
+        self.instance = instance
     
     @classmethod
-    async def create(cls, protocol: ZenProtocol, instance: ZenInstance):
+    async def create(cls, protocol: ZenProtocol, instance: ZenInstance) -> "ZenMotionSensor":
         """Async factory method for ZenMotionSensor"""
         sensor = cls(protocol, instance)
         await sensor.interview()
         return sensor
     def __repr__(self) -> str:
         return f"ZenMotionSensor<{self.instance.address.controller.name} ecd {self.instance.address.number} inst {self.instance.number}: {self.label} / {self.instance_label}>"
-    def _reset(self):
-        self.hold_time: int = Const.DEFAULT_HOLD_TIME
-        self.hold_expiry_task: Optional[asyncio.Task] = None
+    def _reset(self) -> None:
+        self.hold_time = Const.DEFAULT_HOLD_TIME
+        self.hold_expiry_task = None
         #
-        self.serial: Optional[str] = None
-        self.label: Optional[str] = None
-        self.instance_label: Optional[str] = None
-        self.deadtime: Optional[int] = None
-        self.last_detect: Optional[float] = None
-        self._occupied: Optional[bool] = None
+        self.serial = None
+        self.label = None
+        self.instance_label = None
+        self.deadtime = None
+        self.last_detect = None
+        self._occupied = None
         #
-        self.client_data: dict = {}
+        self.client_data = {}
+    def interview_serialize(self) -> str:
+        return json.dumps({
+            "serial": self.serial,
+            "label": self.label,
+            "instance_label": self.instance_label,
+            "deadtime": self.deadtime,
+            "hold_time": self.hold_time,
+        })
+    def interview_hydrate(self, data: str | dict[str, Any]) -> bool:
+        try:
+            data = _loads_interview_data(data)
+            self.serial = data.get("serial")
+            self.label = data.get("label")
+            self.instance_label = data.get("instance_label")
+            self.deadtime = data.get("deadtime")
+            self.hold_time = data.get("hold_time", Const.DEFAULT_HOLD_TIME)
+            self._occupied = None
+            self.instance.address.label = self.label
+            self.instance.address.serial = cast(Optional[str], self.serial)
+            cast(ZenController, self.instance.address.controller).motion_sensors.add(self)
+            return True
+        except Exception:
+            return False
     async def interview(self) -> bool:
         inst = self.instance
         addr = inst.address
-        ctrl = addr.controller
+        ctrl = cast(ZenController, addr.controller)
         occupancy_timers = await self.protocol.query_occupancy_instance_timers(inst)
         if occupancy_timers is not None:
             self.serial = await self.protocol.query_dali_serial(addr)
@@ -896,10 +1235,37 @@ class ZenMotionSensor:
         # Add to controller's set of motion sensors
         ctrl.motion_sensors.add(self)
         return True
+
+    async def refresh_state_from_controller(self) -> bool:
+        """Query controller and update runtime occupancy fields."""
+        inst = self.instance
+        occupancy_timers = await self.protocol.query_occupancy_instance_timers(inst)
+        if occupancy_timers is None:
+            self.last_detect = None
+            self._occupied = None
+            self.hold_expiry_task = None
+            self.deadtime = None
+            self.hold_time = Const.DEFAULT_HOLD_TIME
+            return False
+
+        # `last_detect` is stored as "time when last motion happened"
+        # converted into a duration since last motion (same as interview()).
+        self.deadtime = occupancy_timers["deadtime"]
+        self.hold_time = occupancy_timers["hold"]
+        self.last_detect = time.time() - occupancy_timers["last_detect"]
+        self._occupied = None
+        return True
     async def _event_received(self):
+        # Capture old state before the setter updates it so we can fire the
+        # callback with await instead of asyncio.create_task (fire-and-forget).
+        was_occupied = self._occupied or False
         self.occupied = True
+        if not was_occupied and callable(self.protocol.callbacks.motion_event):
+            await self.protocol.callbacks.motion_event(sensor=self, occupied=True)
     @property
     def occupied(self) -> bool:
+        if self.last_detect is None:
+            return False
         seconds_since_last_motion = time.time() - self.last_detect
         within_hold_time = seconds_since_last_motion < self.hold_time
         # if occupied but a hold task isn't running, start one with the time remaining
@@ -914,8 +1280,8 @@ class ZenMotionSensor:
         self.last_detect = None
         self.hold_expiry_task = None
         # Trigger motion event callback
-        if callable(_callbacks.motion_event):
-            await _callbacks.motion_event(sensor=self, occupied=False)
+        if callable(self.protocol.callbacks.motion_event):
+            await self.protocol.callbacks.motion_event(sensor=self, occupied=False)
 
     @occupied.setter 
     def occupied(self, new_value: bool):
@@ -926,26 +1292,35 @@ class ZenMotionSensor:
             self.hold_expiry_task = None
         # Start a new task
         if new_value:
-            # Update last detect time, begin a task, and set occupied to True
+            # Update last detect time, begin a task, and set occupied to True.
+            # The occupied=True callback is fired by _event_received (which is
+            # async and can await it properly).
             self.last_detect = time.time()
             self.hold_expiry_task = asyncio.create_task(self._timeout_after_delay(self.hold_time))
             self._occupied = True
-            # If we're going from False to True, trigger motion event callback
-            if old_value is False:
-                if callable(_callbacks.motion_event):
-                    asyncio.create_task(_callbacks.motion_event(sensor=self, occupied=True))
         else:
             self._occupied = False
             self.last_detect = None
-            # If we're going from True to False, trigger motion event callback
+            # If we're going from True to False, trigger motion event callback.
+            # This branch is only reached when occupied is set to False directly
+            # (not via _timeout_after_delay which handles the callback itself).
             if old_value is True:
-                if callable(_callbacks.motion_event):
-                    asyncio.create_task(_callbacks.motion_event(sensor=self, occupied=False))
+                cb = self.protocol.callbacks.motion_event
+                if callable(cb):
+                    asyncio.create_task(cast(Coroutine[Any, Any, None], cb(sensor=self, occupied=False)))
 
 
 class ZenSystemVariable:
-    _instances = {}
-    def __new__(cls, protocol: ZenProtocol, controller: ZenController, id: int, value: Optional[int] = None, label: Optional[str] = None):
+    _instances: ClassVar[dict[str, "ZenSystemVariable"]] = {}
+    protocol: ZenProtocol
+    controller: ZenController
+    id: int
+    label: Optional[str] = None
+    _value: Optional[int] = None
+    _future_value: Optional[int] = None
+    client_data: dict[str, Any] = {}
+
+    def __new__(cls, protocol: ZenProtocol, controller: ZenController, id: int, value: Optional[int] = None, label: Optional[str] = None) -> "ZenSystemVariable":
         # Singleton based on controller and id
         compound_id = f"{controller.name} {id}"
         if compound_id not in cls._instances:
@@ -959,20 +1334,42 @@ class ZenSystemVariable:
             inst.label = label
             # Don't call interview() here - it will be called async later
         return cls._instances[compound_id]
+
+    def __init__(self, protocol: ZenProtocol, controller: ZenController, id: int, value: Optional[int] = None, label: Optional[str] = None) -> None:
+        self.protocol = protocol
+        self.controller = controller
+        self.id = id
+        if value is not None:
+            self._value = value
+        if label is not None:
+            self.label = label
     
     @classmethod
-    async def create(cls, protocol: ZenProtocol, controller: ZenController, id: int, value: Optional[int] = None, label: Optional[str] = None):
+    async def create(cls, protocol: ZenProtocol, controller: ZenController, id: int, value: Optional[int] = None, label: Optional[str] = None) -> "ZenSystemVariable":
         """Async factory method for ZenSystemVariable"""
         sysvar = cls(protocol, controller, id, value, label)
         await sysvar.interview()
         return sysvar
     def __repr__(self) -> str:
         return f"ZenSystemVariable<{self.controller.name} sv {self.id}: {self.label}>"
-    def _reset(self):
-        self.label: Optional[str] = None
-        self._value: Optional[int] = None
-        self._future_value: Optional[int] = None
-        self.client_data: dict = {}
+    def _reset(self) -> None:
+        self.label = None
+        self._value = None
+        self._future_value = None
+        self.client_data = {}
+    def interview_serialize(self) -> str:
+        return json.dumps({
+            "label": self.label,
+        })
+    def interview_hydrate(self, data: str | dict[str, Any]) -> bool:
+        try:
+            data = _loads_interview_data(data)
+            self.label = data.get("label")
+            self._future_value = None
+            self.controller.sysvars.add(self)
+            return True
+        except Exception:
+            return False
     async def interview(self) -> bool:
         ctrl = self.controller
         if self.label is None:
@@ -982,14 +1379,14 @@ class ZenSystemVariable:
         # Add to controller's set of system variables
         ctrl.sysvars.add(self)
         return True
-    async def _event_received(self, new_value):
+    async def _event_received(self, new_value: Optional[int]):
         changed = (new_value != self._value)
         by_me = (new_value == self._future_value)
         self._value = new_value
         self._future_value = None
         if changed:
-            if callable(_callbacks.system_variable_change):
-                await _callbacks.system_variable_change(system_variable=self,
+            if callable(self.protocol.callbacks.system_variable_change):
+                await self.protocol.callbacks.system_variable_change(system_variable=self,
                                   value=self._value,
                                   changed=changed,
                                   by_me=by_me)
@@ -998,14 +1395,23 @@ class ZenSystemVariable:
     #   These methods send commands to the controller. The controller sends events back.
     #   The events update the internal state.
     # -----------------------------------------------------------------------------------------
-    async def get_value(self):
-        """Get the current value of the system variable"""
-        # If we don't know the value, request from the controller
+    @property
+    def value(self) -> Optional[int]:
+        """Return the last-known value without querying the controller."""
+        return self._value
+
+    async def get_value(self) -> Optional[int]:
+        """Get the current value of the system variable, querying the controller if unknown."""
         if self._value is None:
             self._value = await self.protocol.query_system_variable(self.controller, self.id)
         return self._value
+
+    async def refresh_state_from_controller(self) -> None:
+        """Query the controller and update this system variable's runtime value."""
+        new_value = await self.protocol.query_system_variable(self.controller, self.id)
+        await self._event_received(new_value)
     
-    async def set_value(self, new_value):
+    async def set_value(self, new_value: int) -> None:
         """Set the value of the system variable"""
         self._future_value = new_value # If we get this value back as an event, we'll know it's from us
         await self.protocol.set_system_variable(self.controller, self.id, new_value)
@@ -1021,14 +1427,3 @@ CallbackButtonPress = Callable[[ZenButton], Awaitable[None]]
 CallbackButtonLongPress = Callable[[ZenButton], Awaitable[None]]
 CallbackMotionEvent = Callable[[ZenMotionSensor, bool], Awaitable[None]]
 CallbackSystemVariableChange = Callable[[ZenSystemVariable, int, bool, bool], Awaitable[None]]
-
-class _callbacks:
-    on_connect: Optional[CallbackOnConnect] = None
-    on_disconnect: Optional[CallbackOnDisconnect] = None
-    profile_change: Optional[CallbackProfileChange] = None
-    group_change: Optional[CallbackGroupChange] = None
-    light_change: Optional[CallbackLightChange] = None
-    button_press: Optional[CallbackButtonPress] = None
-    button_long_press: Optional[CallbackButtonLongPress] = None
-    motion_event: Optional[CallbackMotionEvent] = None
-    system_variable_change: Optional[CallbackSystemVariableChange] = None

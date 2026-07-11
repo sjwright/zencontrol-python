@@ -23,6 +23,7 @@ import socket
 import struct
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Optional, Tuple, AsyncGenerator
 
@@ -46,7 +47,11 @@ class EventConst:
     MULTICAST_PORT = 6969
 
 class ZenEventProtocol(asyncio.DatagramProtocol):
-    def __init__(self, event_handler, logger: Optional[logging.Logger] = None):
+    def __init__(
+        self,
+        event_handler: Callable[[bytes, Tuple[str, int]], Awaitable[None]],
+        logger: Optional[logging.Logger] = None,
+    ):
         self.event_handler = event_handler
         self.logger = logger or logging.getLogger(__name__)
         self.transport = None
@@ -55,11 +60,11 @@ class ZenEventProtocol(asyncio.DatagramProtocol):
     def datagram_received(self, data, addr):
         self._run_handler(self.event_handler(data, addr))
 
-    def _run_handler(self, coro):
-        task = asyncio.create_task(coro)
+    def _run_handler(self, coro: Awaitable[None]):
+        task = asyncio.ensure_future(coro)
         task.add_done_callback(self._handler_done)
 
-    def _handler_done(self, task: asyncio.Task):
+    def _handler_done(self, task: asyncio.Task[None]):
         if task.cancelled():
             return
         exc = task.exception()
@@ -90,7 +95,7 @@ class ZenListener:
         self._stop_event = asyncio.Event()
         
         # Event queue for async generator pattern
-        self._event_queue: asyncio.Queue = asyncio.Queue()
+        self._event_queue: asyncio.Queue[ZenEvent] = asyncio.Queue()
 
     @classmethod
     async def create(

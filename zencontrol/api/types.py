@@ -106,12 +106,11 @@ class ZenEventMask:
     
     @classmethod
     def all_events(cls):
+        # Exclude deprecated level_change / group_level_change — use level_change_v2 (spec V2.001.121+)
         return cls(
             button_press = True,
             button_hold = True,
             absolute_input = True,
-            level_change = True,
-            group_level_change = True,
             scene_change = True,
             is_occupied = True,
             system_variable_change = True,

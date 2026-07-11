@@ -7,14 +7,12 @@ This module contains models that belong to the zen_api layer:
 - These are the core objects used by the TPI protocol
 """
 
+import logging
 import socket
 import struct
 import time
 from dataclasses import dataclass, field
-from typing import Optional, Self, TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from .protocol import ZenProtocol
+from typing import Any, Optional, Self
 
 from ..io import ZenClient
 from .types import ZenAddressType, ZenInstanceType, ZenColourType, Const
@@ -34,33 +32,35 @@ class ZenController:
     port: int
     mac: Optional[str] = None
     mac_bytes: Optional[bytes] = field(init=False, default=None)
-    protocol: Optional["ZenProtocol"] = None
+    # Any avoids an import cycle with protocol.py (which imports this module).
+    protocol: Optional[Any] = None
     version: Optional[str] = None
     startup_complete: bool = False
     dali_ready: bool = False
     filtering: bool = False
     last_seen: float = field(default_factory=time.time)
     client: Optional[ZenClient] = None
-    _mac: Optional[str] = field(init=False, repr=False, default=None)
     _ip: Optional[str] = field(init=False, repr=False, default=None)
 
     def __post_init__(self):
-        # Use the property setter to initialize mac_bytes
-        self.mac = self.mac
+        self._update_mac_bytes(self.mac)
 
-    @property
-    def mac(self) -> Optional[str]:
-        """Get MAC address as string."""
-        return self._mac
+    def __setattr__(self, name: str, value: object) -> None:
+        object.__setattr__(self, name, value)
+        # After init, keep mac_bytes in sync when mac is assigned.
+        if name == "mac" and "mac_bytes" in self.__dict__:
+            self._update_mac_bytes(value if isinstance(value, str) or value is None else None)
 
-    @mac.setter
-    def mac(self, value: Optional[str]):
-        """Set MAC address from string, updating both string and bytes representation."""
-        self._mac = value
+    def _update_mac_bytes(self, value: Optional[str]) -> None:
+        """Update mac_bytes from a MAC string (or clear it)."""
         if value is not None:
-            self.mac_bytes = bytes.fromhex(value.replace(':', '').replace('-', ''))
+            object.__setattr__(
+                self,
+                "mac_bytes",
+                bytes.fromhex(value.replace(":", "").replace("-", "")),
+            )
         else:
-            self.mac_bytes = None
+            object.__setattr__(self, "mac_bytes", None)
     
     @property
     def ip(self) -> str:
@@ -130,6 +130,10 @@ class ZenAddress:
     def group(self) -> int:
         if self.type == ZenAddressType.GROUP: return self.number
         raise ValueError("Address is not a Group")
+
+    def entity_id_string(self) -> str:
+        """Return a stable HA-friendly identifier for this address."""
+        return f"{self.type.name.casefold()}{self.number}"
     
     def __post_init__(self):
         match self.type:
@@ -159,11 +163,15 @@ class ZenInstance:
         if not 0 <= self.number < Const.MAX_INSTANCE: 
             raise ValueError(f"Instance number must be between 0 and {Const.MAX_INSTANCE-1}, received {self.number}")
 
+    def entity_id_string(self) -> str:
+        """Return a stable HA-friendly identifier for this instance."""
+        return f"{self.address.entity_id_string()}_{self.number}"
+
 
 @dataclass
 class ZenColour:
     """Represents a DALI color"""
-    type: ZenColourType = None
+    type: Optional[ZenColourType] = None
     kelvin: Optional[int] = None
     r: Optional[int] = None
     g: Optional[int] = None
@@ -191,18 +199,24 @@ class ZenColour:
     
     def __post_init__(self):
         if self.type == ZenColourType.TC:
-            if not Const.MIN_KELVIN <= self.kelvin <= Const.MAX_KELVIN:
+            kelvin = self.kelvin
+            if kelvin is None:
+                raise ValueError("Kelvin is required for TC colour type")
+            if not Const.MIN_KELVIN <= kelvin <= Const.MAX_KELVIN:
                 #raise ValueError(f"Kelvin must be between {Const.MIN_KELVIN} and {Const.MAX_KELVIN}, received {self.kelvin}")
-                print(f"Kelvin must be between {Const.MIN_KELVIN} and {Const.MAX_KELVIN}, received {self.kelvin}")
+                logging.getLogger(__name__).warning(
+                    "Kelvin %s out of range [%s, %s]; clamping",
+                    kelvin, Const.MIN_KELVIN, Const.MAX_KELVIN,
+                )
                 # set to the nearest valid value
-                self.kelvin = max(Const.MIN_KELVIN, min(Const.MAX_KELVIN, self.kelvin))
-                print(f"Setting to {self.kelvin} instead")
+                self.kelvin = max(Const.MIN_KELVIN, min(Const.MAX_KELVIN, kelvin))
         if self.type == ZenColourType.RGBWAF:
-            if not 0 <= self.r <= 255:
+            r, g, b = self.r, self.g, self.b
+            if r is None or not 0 <= r <= 255:
                 raise ValueError(f"R must be between 0 and 255, received {self.r}")
-            if not 0 <= self.g <= 255:
+            if g is None or not 0 <= g <= 255:
                 raise ValueError(f"G must be between 0 and 255, received {self.g}")
-            if not 0 <= self.b <= 255:
+            if b is None or not 0 <= b <= 255:
                 raise ValueError(f"B must be between 0 and 255, received {self.b}")
             if self.w is not None and not 0 <= self.w <= 255:
                 raise ValueError(f"W must be between 0 and 255, received {self.w}")
@@ -211,9 +225,10 @@ class ZenColour:
             if self.f is not None and not 0 <= self.f <= 255:
                 raise ValueError(f"F must be between 0 and 255, received {self.f}")
         if self.type == ZenColourType.XY:
-            if not 0 <= self.x <= 65535:
+            x, y = self.x, self.y
+            if x is None or not 0 <= x <= 65535:
                 raise ValueError(f"X must be between 0 and 65535, received {self.x}")
-            if not 0 <= self.y <= 65535:
+            if y is None or not 0 <= y <= 65535:
                 raise ValueError(f"Y must be between 0 and 65535, received {self.y}")
     
     def __repr__(self) -> str:
@@ -223,6 +238,7 @@ class ZenColour:
             return f"ZenColour(r={self.r}, g={self.g}, b={self.b}, w={self.w}, a={self.a}, f={self.f})"
         if self.type == ZenColourType.XY:
             return f"ZenColour(x={self.x}, y={self.y})"
+        return f"ZenColour(type={self.type})"
     
     def __eq__(self, other):
         if isinstance(other, self.__class__):
