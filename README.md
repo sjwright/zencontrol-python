@@ -6,7 +6,7 @@ This is an implementation of the **Zencontrol TPI Advanced** protocol, written i
 - zencontrol.api: Implementation of most TPI Advanced API commands and events;
 - zencontrol.interface: An opinionated abstraction layer suitable for integration into smart building control software. It provides methods, objects, and callbacks for managing lights, groups, profiles, buttons, motion sensors, and system variables. This code is still undergoing significant refinement.
 
-Built on top of this is an example MQTT bridge for Home Assistant. See [examples/README.md](examples/README.md).
+Built on top of this is an example MQTT bridge for Home Assistant. See [examples/mqtt_bridge.md](examples/mqtt_bridge.md).
 
 ## Requirements
 
@@ -16,7 +16,7 @@ Built on top of this is an example MQTT bridge for Home Assistant. See [examples
 ## Install
 
 Refer to zencontrol-tpi project for now.
-For integrators, the library is also published on PyPi.
+For integrators, the library is also published on PyPI.
 
 ## Limitations
 
@@ -31,19 +31,11 @@ Not implemented:
 
 * Any commands involving DMX, Control4, or virtual instances (I don't have licenses for any of these so I couldn't test them even if I wanted to, but the scaffolding is there if anyone wishes to add support)
 * Any commands described in the documentation as "legacy" (they aren't useful)
-
-## TPI Advanced errata
-
-The following TPI Advanced commands/events are incomplete:
-
-* QUERY_DALI_COLOUR — This command is supposed to be able to return a light's current colour temperature, but it only returns correct values under some instances. If the temperature is changed by way of scene recall, this query returns wrong information. _(A fix is anticipated soon)_
-* COLOUR_CHANGE_EVENT — This event is supposed to fire when a light's colour temperature changes, but it only does so under some circumstances. If the temperature is changed by way of scene recall, the event does not fire. _(A fix is anticipated soon)_
-
 ## TPI Advanced wishlist
 
-* Command to return a controller's MAC address used for multicast packets _(There are other ways to get or infer the MAC access, but being able to query it directly would be ideal.)_
+* Command to return a controller's MAC address used for multicast packets _(There are other ways to get or infer the MAC access, but they're unreliable.)_
 * Command to list active system variables _(As a workaround, you can query every number for its label. This assumes no system variables of interest are unlabelled.)_
-* Command to read an ambient light sensor's lux value. _(As a workaround, you can target a light sensor to a system variable. Less elegant but it works.)_
+* Command to read an ambient light sensor's lux value. _(As a workaround, you can target a light sensor to a system variable. Not elegant but it works.)_
 * Event notification for ambient light sensor lux values. _(Same workaround as above.)_
 
 ## Links
