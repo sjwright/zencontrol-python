@@ -53,6 +53,8 @@ class RateLimiter:
 class Const:
 
     STARTUP_POLL_DELAY = 10
+    STARTUP_RETRY_MIN_DELAY = 5
+    STARTUP_RETRY_MAX_DELAY = 60
 
     # MQTT settings
     MQTT_RECONNECT_MIN_DELAY = 1
@@ -111,6 +113,7 @@ class ZenMQTTBridge:
 
         self.config_topics_to_delete: list[str] = [] # List of topics to delete after completing setup
         self.topic_object: dict[str, Any] = {} # Map of topics to objects
+        self._zen_online = False
         
         # Rate limiter for controlling concurrent operations
         self.rate_limiter = RateLimiter(max_concurrent=5, delay_between_batches=0.1)
@@ -129,39 +132,12 @@ class ZenMQTTBridge:
         self.logger.info("==================================== Starting ZenMQTTBridge ====================================")
         await self.setup_zen()
         await self.setup_mqtt()
-        
-        # Wait for Zen controllers to be ready
-        for ctrl in self.control:
-            print(f"Connecting to Zen controller {ctrl.name} on {ctrl.host}:{ctrl.port}...")
-            self.logger.info(f"Connecting to Zen controller {ctrl.name} on {ctrl.host}:{ctrl.port}...")
 
-            try:
-                while True:
-                    ready = await ctrl.is_controller_ready()
-                    if ready is None:
-                        self.logger.critical(f"Aborting - cannot query startup state for Zen controller {ctrl.name}.")
-                        return
-                    if ready:
-                        break
-                    print(f"Controller {ctrl.label} still starting up...")
-                    await asyncio.sleep(Const.STARTUP_POLL_DELAY)
-            
-            except ZenTimeoutError as e:
-                self.logger.critical(f"Aborting - Zen controller {ctrl.name} cannot be reached.")
-                return # Don't reach the run loop
-                
-            except Exception as e:
-                self.logger.critical(f"Aborting - Error connecting to Zen controller {ctrl.name}: {e}")
-                return # Don't reach the run loop
-
-            # It's ready, interview it.
-            await ctrl.interview()
-        
-        # Start MQTT message handling task
+        # Start MQTT first so HA can see availability while Zen controllers come up
         self.mqtt_task = asyncio.create_task(self._mqtt_message_handler())
-
-        # Wait for all retained topics to arrive
         await asyncio.sleep(0.5)
+
+        await self._wait_controllers_ready()
 
         # Generate config topics
         self.setup_started = True
@@ -174,7 +150,7 @@ class ZenMQTTBridge:
         await self.delete_retained_topics()
         self.setup_complete = True
 
-        # Begin listening for zen events
+        # Begin listening for zen events (reconnects automatically on loss)
         await self.zen.start()
 
         with open(self.example_dir / "cache.pkl", "wb") as f:
@@ -241,6 +217,58 @@ class ZenMQTTBridge:
 
         while True:
             await asyncio.sleep(1)
+
+    async def _wait_controllers_ready(self) -> None:
+        """Poll controllers until ready; retry with backoff instead of aborting."""
+        delay = Const.STARTUP_RETRY_MIN_DELAY
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                for ctrl in self.control:
+                    self.logger.info(
+                        f"Connecting to Zen controller {ctrl.name} on {ctrl.host}:{ctrl.port}..."
+                    )
+                    while True:
+                        ready = await ctrl.is_controller_ready()
+                        if ready is None:
+                            raise ZenTimeoutError(
+                                f"cannot query startup state for {ctrl.name}"
+                            )
+                        if ready:
+                            break
+                        self.logger.info(f"Controller {ctrl.label} still starting up...")
+                        await asyncio.sleep(Const.STARTUP_POLL_DELAY)
+                    await ctrl.interview()
+                self.logger.info("All Zen controllers ready")
+                return
+            except (ZenTimeoutError, OSError, ConnectionError) as e:
+                self.logger.warning(
+                    "Zen controllers not ready (attempt %d): %s; retrying in %ds",
+                    attempt,
+                    e,
+                    delay,
+                )
+            except Exception as e:
+                self.logger.warning(
+                    "Error reaching Zen controllers (attempt %d): %s; retrying in %ds",
+                    attempt,
+                    e,
+                    delay,
+                )
+            self._zen_online = False
+            await self._publish_zen_availability()
+            for ctrl in self.control:
+                ctrl.refresh_ip()
+                client = ctrl.client
+                ctrl.client = None
+                if client is not None:
+                    try:
+                        await client.close()
+                    except Exception:
+                        pass
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, Const.STARTUP_RETRY_MAX_DELAY)
 
     async def stop(self) -> None:
         """Clean shutdown of the bridge"""
@@ -421,9 +449,29 @@ class ZenMQTTBridge:
     
     async def _zen_on_connect(self) -> None:
         self.logger.info("Connected to Zen controllers")
+        self._zen_online = True
+        await self._publish_zen_availability()
 
     async def _zen_on_disconnect(self) -> None:
         self.logger.info("Disconnected from Zen controllers")
+        self._zen_online = False
+        await self._publish_zen_availability()
+
+    async def _publish_zen_availability(self) -> None:
+        """Publish retained availability reflecting Zen event-listener state."""
+        mqttc = getattr(self, "mqttc", None)
+        if mqttc is None:
+            return
+        payload = "online" if self._zen_online else "offline"
+        for ctrl in self.control:
+            try:
+                await mqttc.publish(
+                    f"{Const.MQTT_SERVICE_PREFIX}/{ctrl.name}/availability",
+                    payload,
+                    retain=True,
+                )
+            except Exception as e:
+                self.logger.debug(f"Failed to publish availability for {ctrl.name}: {e}")
     
     # ================================
     #        ZEN PUBLISHING
@@ -517,9 +565,10 @@ class ZenMQTTBridge:
                         await client.subscribe(f"{self.discovery_prefix}/event/{ctrl.name}/#")
                         await client.subscribe(f"{self.discovery_prefix}/select/{ctrl.name}/#")
                         await client.subscribe(f"{self.discovery_prefix}/device_automation/{ctrl.name}/#")
-                        await client.publish(f"{Const.MQTT_SERVICE_PREFIX}/{ctrl.name}/availability", "online", retain=True)
                     
                     self.logger.info("Successfully connected to MQTT broker")
+                    # Reflect current Zen state (offline until zen.start / reconnect)
+                    await self._publish_zen_availability()
                     
                     # Process messages
                     async for message in client.messages:

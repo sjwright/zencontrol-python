@@ -196,3 +196,8 @@ class Const:
 
     # Cache
     CACHE_TIMEOUT = 1*60*60  # 1 hour
+
+    # Event-listener reconnect (ZenControl supervisor)
+    RECONNECT_MIN_DELAY = 1.0
+    RECONNECT_MAX_DELAY = 30.0
+    RECONNECT_HEALTHY_SECONDS = 60.0

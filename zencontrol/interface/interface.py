@@ -133,6 +133,12 @@ class ZenControl:
         # Each ZenControl instance gets its own callback registry so multiple
         # instances (e.g. an integration and a test connection) cannot interfere.
         self.protocol.callbacks = ZenCallbacks()
+        self._stopping = False
+        self._supervisor_task: Optional[asyncio.Task[None]] = None
+        self._first_connected = asyncio.Event()
+        self.reconnect_min_delay = Const.RECONNECT_MIN_DELAY
+        self.reconnect_max_delay = Const.RECONNECT_MAX_DELAY
+        self.reconnect_healthy_seconds = Const.RECONNECT_HEALTHY_SECONDS
 
     async def __aenter__(self) -> Self:
         return self
@@ -230,6 +236,9 @@ class ZenControl:
         return controller
 
     async def start(self) -> None:
+        """Start event monitoring with automatic reconnect on unexpected loss."""
+        self._stopping = False
+        self._first_connected = asyncio.Event()
         self.protocol.set_callbacks(
             button_press_callback = self.button_press_event,
             button_hold_callback = self.button_hold_event,
@@ -243,29 +252,111 @@ class ZenControl:
             profile_change_callback = self.profile_change_event,
             disconnect_callback = self._protocol_disconnect_event,
         )
-        await self.protocol.start_event_monitoring()
-        if callable(self.protocol.callbacks.on_connect):
-            await self.protocol.callbacks.on_connect()
-    
+        if self._supervisor_task is None or self._supervisor_task.done():
+            self._supervisor_task = asyncio.create_task(self._event_monitor_supervisor())
+        await self._first_connected.wait()
+
     async def stop(self) -> None:
-        # Capture before stop_event_monitoring: an unexpected listener death may
-        # already have fired disconnect_callback; notify_disconnect dedupes if both race.
+        """Stop reconnect supervisor and event monitoring (keeps entity caches)."""
+        self._stopping = True
         was_running = bool(
             self.protocol.event_task and not self.protocol.event_task.done()
         )
+        await self._cancel_supervisor()
         await self.protocol.stop_event_monitoring()
         if was_running:
             await self.protocol.notify_disconnect()
 
     async def aclose(self) -> None:
         """Stop monitoring, cancel background tasks, close UDP clients, clear entity caches."""
+        self._stopping = True
         was_running = bool(
             self.protocol.event_task and not self.protocol.event_task.done()
         )
+        await self._cancel_supervisor()
         await self.protocol.aclose()
         if was_running:
             await self.protocol.notify_disconnect()
         self.clear_entity_caches()
+
+    async def _cancel_supervisor(self) -> None:
+        task = self._supervisor_task
+        self._supervisor_task = None
+        if task is None or task.done():
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    async def _event_monitor_supervisor(self) -> None:
+        """Keep the event listener running; reconnect with backoff after unexpected loss."""
+        delay = self.reconnect_min_delay
+        while not self._stopping:
+            try:
+                await self.protocol.start_event_monitoring()
+            except asyncio.CancelledError:
+                raise
+            except Exception as err:
+                self.logger.error(f"Failed to start event monitoring: {err}")
+                if self._stopping:
+                    return
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, self.reconnect_max_delay)
+                continue
+
+            if callable(self.protocol.callbacks.on_connect):
+                try:
+                    await self.protocol.callbacks.on_connect()
+                except Exception as err:
+                    self.logger.error(f"on_connect error: {err}")
+            self._first_connected.set()
+            delay = self.reconnect_min_delay
+
+            event_task = self.protocol.event_task
+            if event_task is None:
+                continue
+
+            session_start = time.time()
+            try:
+                await event_task
+            except asyncio.CancelledError:
+                if self._stopping:
+                    return
+            except Exception as err:
+                self.logger.error(f"Event monitor task error: {err}")
+
+            if self._stopping:
+                return
+
+            session_secs = time.time() - session_start
+            if session_secs >= self.reconnect_healthy_seconds:
+                delay = self.reconnect_min_delay
+            else:
+                delay = min(max(delay, self.reconnect_min_delay) * 2, self.reconnect_max_delay)
+
+            await self._prepare_for_reconnect()
+            self.logger.warning(
+                "Event monitoring stopped; reconnecting in %.1fs", delay
+            )
+            try:
+                await asyncio.sleep(delay)
+            except asyncio.CancelledError:
+                return
+
+    async def _prepare_for_reconnect(self) -> None:
+        """Drop stale clients and refresh DNS before binding the listener again."""
+        for controller in self.controllers:
+            controller.refresh_ip()
+            client = controller.client
+            controller.client = None
+            if client is None:
+                continue
+            try:
+                await client.close()
+            except Exception:
+                pass
 
     async def _protocol_disconnect_event(self) -> None:
         """Forward protocol-level disconnect to the high-level on_disconnect hook."""

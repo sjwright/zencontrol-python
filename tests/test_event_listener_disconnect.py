@@ -77,6 +77,7 @@ async def test_listener_clean_exit_fires_on_disconnect() -> None:
 @pytest.mark.asyncio
 async def test_intentional_stop_fires_on_disconnect_once() -> None:
     zen = ZenControl()
+    zen.reconnect_min_delay = 10.0  # avoid reconnect during this test
     on_disconnect = AsyncMock()
     zen.on_disconnect = on_disconnect
 
@@ -109,6 +110,7 @@ async def test_intentional_stop_fires_on_disconnect_once() -> None:
 @pytest.mark.asyncio
 async def test_stop_after_crash_does_not_double_notify() -> None:
     zen = ZenControl()
+    zen.reconnect_min_delay = 10.0  # stop before reconnect sleep elapses
     on_disconnect = AsyncMock()
     zen.on_disconnect = on_disconnect
 
@@ -121,6 +123,8 @@ async def test_stop_after_crash_does_not_double_notify() -> None:
         await zen.start()
         assert zen.protocol.event_task is not None
         await asyncio.wait_for(zen.protocol.event_task, timeout=1.0)
+        # Allow disconnect callback to run
+        await asyncio.sleep(0.05)
         await zen.stop()
 
     on_disconnect.assert_awaited_once()
