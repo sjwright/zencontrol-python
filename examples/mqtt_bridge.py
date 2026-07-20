@@ -244,7 +244,8 @@ class ZenMQTTBridge:
 
     async def stop(self) -> None:
         """Clean shutdown of the bridge"""
-        await self.zen.stop()
+        if hasattr(self, "zen"):
+            await self.zen.aclose()
         if hasattr(self, 'mqtt_task'):
             self.mqtt_task.cancel()
             try:

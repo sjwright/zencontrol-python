@@ -134,6 +134,23 @@ class ZenControl:
         # instances (e.g. an integration and a test connection) cannot interfere.
         self.protocol.callbacks = ZenCallbacks()
 
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
+        await self.aclose()
+
+    @staticmethod
+    def clear_entity_caches() -> None:
+        """Clear process-global entity singleton registries."""
+        ZenController.clear_instances()
+        ZenProfile.clear_instances()
+        ZenLight.clear_instances()
+        ZenGroup.clear_instances()
+        ZenButton.clear_instances()
+        ZenMotionSensor.clear_instances()
+        ZenSystemVariable.clear_instances()
+
     @property
     def cache(self) -> dict[bytes, dict[str, Any]]:
         return self.protocol.cache
@@ -240,6 +257,16 @@ class ZenControl:
         if was_running:
             await self.protocol.notify_disconnect()
 
+    async def aclose(self) -> None:
+        """Stop monitoring, cancel background tasks, close UDP clients, clear entity caches."""
+        was_running = bool(
+            self.protocol.event_task and not self.protocol.event_task.done()
+        )
+        await self.protocol.aclose()
+        if was_running:
+            await self.protocol.notify_disconnect()
+        self.clear_entity_caches()
+
     async def _protocol_disconnect_event(self) -> None:
         """Forward protocol-level disconnect to the high-level on_disconnect hook."""
         if callable(self.protocol.callbacks.on_disconnect):
@@ -292,7 +319,7 @@ class ZenControl:
             async def delayed_colour_event():
                 await asyncio.sleep(0.0)
                 await ecg._event_received(colour=colour)
-            asyncio.create_task(delayed_colour_event())
+            self.protocol.track_task(delayed_colour_event())
         elif address.type == ZenAddressType.GROUP:
             group = ZenGroup(protocol=self.protocol, address=address)
             await group._event_received(colour=colour)
@@ -307,7 +334,7 @@ class ZenControl:
             async def delayed_scene_event():
                 await asyncio.sleep(0.0)
                 await ecg._event_received(scene=scene, active=active)
-            asyncio.create_task(delayed_scene_event())
+            self.protocol.track_task(delayed_scene_event())
         elif address.type == ZenAddressType.GROUP:
             group = ZenGroup(protocol=self.protocol, address=address)
             await group._event_received(scene=scene, active=active)
@@ -443,6 +470,10 @@ class ZenController(SuperZenController):
     sysvars: set["ZenSystemVariable"] = set()
     client_data: dict[str, Any] = {}
 
+    @classmethod
+    def clear_instances(cls) -> None:
+        cls._instances.clear()
+
     def __new__(cls, protocol: ZenProtocol, id: int, name: str, label: str, host: str, port: int = 5108, mac: Optional[str] = None, filtering: bool = False) -> "ZenController":
         # Singleton based on controller name
         if name not in cls._instances:
@@ -551,6 +582,10 @@ class ZenProfile:
     label: Optional[str] = None
     client_data: dict[str, Any] = {}
 
+    @classmethod
+    def clear_instances(cls) -> None:
+        cls._instances.clear()
+
     def __new__(cls, protocol: ZenProtocol, controller: ZenController, number: int) -> "ZenProfile":
         # Singleton based on controller and profile number
         compound_id = f"{controller.name} {number}"
@@ -632,6 +667,10 @@ class ZenLight:
     scene: Optional[int] = None
     client_data: dict[str, Any] = {}
     _refresh_timer: Optional[asyncio.Task[None]] = None
+
+    @classmethod
+    def clear_instances(cls) -> None:
+        cls._instances.clear()
 
     def __new__(cls, protocol: ZenProtocol, address: ZenAddress) -> Self:
         # Inherited classes should bypass ZenLight __new__
@@ -825,7 +864,7 @@ class ZenLight:
             except asyncio.CancelledError:
                 pass
         
-        self._refresh_timer = asyncio.create_task(delayed_refresh())
+        self._refresh_timer = self.protocol.track_task(delayed_refresh())
 
     async def _event_received(self,
             level: int|None = 255,
@@ -1002,6 +1041,10 @@ class ZenGroup(ZenLight):
     _group_instances: ClassVar[dict[str, "ZenGroup"]] = {}
     lights: set[ZenLight] = set()
 
+    @classmethod
+    def clear_instances(cls) -> None:
+        cls._group_instances.clear()
+
     def __new__(cls, protocol: ZenProtocol, address: ZenAddress) -> "ZenGroup":
         # Singleton based on controller and address
         compound_id = f"{address.controller.name} g{address.number}"
@@ -1103,6 +1146,10 @@ class ZenButton:
     long_press_count: int = 0
     client_data: dict[str, Any] = {}
 
+    @classmethod
+    def clear_instances(cls) -> None:
+        cls._instances.clear()
+
     def __new__(cls, protocol: ZenProtocol, instance: ZenInstance) -> "ZenButton":
         # Singleton based on controller, address, and instance number
         compound_id = f"{instance.address.controller.name} {instance.address.number} {instance.number}"
@@ -1196,6 +1243,10 @@ class ZenMotionSensor:
     last_detect: Optional[float] = None
     _occupied: Optional[bool] = None
     client_data: dict[str, Any] = {}
+
+    @classmethod
+    def clear_instances(cls) -> None:
+        cls._instances.clear()
 
     def __new__(cls, protocol: ZenProtocol, instance: ZenInstance) -> "ZenMotionSensor":
         # Singleton based on controller, address, and instance number
@@ -1311,7 +1362,7 @@ class ZenMotionSensor:
         # if occupied but a hold task isn't running, start one with the time remaining
         if within_hold_time and self.hold_expiry_task is None:
             seconds_until_hold_time_expires = self.hold_time - seconds_since_last_motion
-            self.hold_expiry_task = asyncio.create_task(self._timeout_after_delay(seconds_until_hold_time_expires))
+            self.hold_expiry_task = self.protocol.track_task(self._timeout_after_delay(seconds_until_hold_time_expires))
         return within_hold_time
     async def _timeout_after_delay(self, delay: float):
         """Async method to handle motion sensor timeout"""
@@ -1336,7 +1387,7 @@ class ZenMotionSensor:
             # The occupied=True callback is fired by _event_received (which is
             # async and can await it properly).
             self.last_detect = time.time()
-            self.hold_expiry_task = asyncio.create_task(self._timeout_after_delay(self.hold_time))
+            self.hold_expiry_task = self.protocol.track_task(self._timeout_after_delay(self.hold_time))
             self._occupied = True
         else:
             self._occupied = False
@@ -1347,7 +1398,7 @@ class ZenMotionSensor:
             if old_value is True:
                 cb = self.protocol.callbacks.motion_event
                 if callable(cb):
-                    asyncio.create_task(cast(Coroutine[Any, Any, None], cb(sensor=self, occupied=False)))
+                    self.protocol.track_task(cast(Coroutine[Any, Any, None], cb(sensor=self, occupied=False)))
 
 
 class ZenSystemVariable:
@@ -1359,6 +1410,10 @@ class ZenSystemVariable:
     _value: Optional[int] = None
     _future_value: Optional[int] = None
     client_data: dict[str, Any] = {}
+
+    @classmethod
+    def clear_instances(cls) -> None:
+        cls._instances.clear()
 
     def __new__(cls, protocol: ZenProtocol, controller: ZenController, id: int, value: Optional[int] = None, label: Optional[str] = None) -> "ZenSystemVariable":
         # Singleton based on controller and id

@@ -2,7 +2,7 @@
 Wire-level protocol implementation.
 
 This module contains the lowest-level communication components:
-- ZenClient, ZenListener - Raw TCP/UDP communication
+- ZenClient, ZenListener - Raw UDP communication
 - ZenEvent - Raw event data from wire
 - Message framing and parsing
 - Connection management

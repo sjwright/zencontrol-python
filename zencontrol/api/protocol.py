@@ -5,7 +5,7 @@ import time
 import logging
 import traceback
 from datetime import datetime as dt
-from typing import Any, Optional, Self, Callable, Awaitable, Literal, overload
+from typing import Any, Optional, Self, Callable, Awaitable, Coroutine, Literal, overload
 from enum import Enum
 from colorama import Fore, Back, Style
 from dataclasses import dataclass, field
@@ -192,6 +192,8 @@ class ZenProtocol:
         self.controllers = []
         # High-level callback registry (replaced per ZenControl instance)
         self.callbacks = ZenCallbacks()
+        # Fire-and-forget work (delayed events, refresh timers, motion holds)
+        self._bg_tasks: set[asyncio.Task[Any]] = set()
 
     async def __aenter__(self):
         """Async context manager entry"""
@@ -201,16 +203,42 @@ class ZenProtocol:
         """Async context manager exit"""
         await self.aclose()
     
+    def track_task(self, coro: Coroutine[Any, Any, Any]) -> asyncio.Task[Any]:
+        """Schedule a background task and track it for cancellation on aclose."""
+        task = asyncio.create_task(coro)
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_task_done)
+        return task
+
+    def _bg_task_done(self, task: asyncio.Task[Any]) -> None:
+        self._bg_tasks.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            self.logger.error(f"Background task failed: {exc}", exc_info=exc)
+
+    async def _cancel_background_tasks(self) -> None:
+        tasks = list(self._bg_tasks)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._bg_tasks.clear()
+
     async def aclose(self):
-        """Async cleanup when object is destroyed"""
+        """Stop monitoring, cancel background tasks, and close UDP clients."""
         await self.stop_event_monitoring()
-        # Close all ZenClient connections
+        await self._cancel_background_tasks()
         for controller in self.controllers:
-            if controller.client and controller.client.is_connected():
-                try:
-                    await controller.client.close()
-                except:
-                    pass  # Ignore errors during cleanup
+            client = controller.client
+            controller.client = None
+            if client is None:
+                continue
+            try:
+                await client.close()
+            except Exception:
+                pass
 
     def set_controllers(self, controllers: list[ZenController]):
         self.controllers = controllers # Used to match events to controllers, and include controller objects in callbacks

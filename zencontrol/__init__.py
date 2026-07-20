@@ -5,20 +5,27 @@ A Python library for interfacing with ZenControl DALI lighting controllers.
 
 This library provides three distinct layers of abstraction:
 
-1. **zen_io**: Wire-level protocol implementation (TCP/UDP, message framing)
+1. **zen_io**: Wire-level protocol implementation (UDP, message framing)
 2. **zen_api**: Zen API calls using zen_io (DALI commands, TPI protocol)
 3. **zen_interface**: Pythonic interface to Zen entities using zen_api (high-level objects)
 
 Example usage:
     import zencontrol
-    
+
     # High-level interface (recommended for most users)
     async with zencontrol.ZenControl() as zen:
-        await zen.add_controller(host="192.168.1.100", port=5108, ...)
+        zen.add_controller(
+            id=1,
+            name="living",
+            label="Living Room",
+            host="192.168.1.100",
+            port=5108,
+        )
+        await zen.start()
         lights = await zen.get_lights()
         for light in lights:
-            await light.set_level(50)
-    
+            await light.set(level=50)
+
     # Low-level API access (for advanced users)
     async with zencontrol.ZenProtocol() as protocol:
         controller = zencontrol.ZenController(protocol=protocol, ...)
