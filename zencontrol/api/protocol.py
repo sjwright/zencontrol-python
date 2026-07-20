@@ -42,6 +42,32 @@ class ZenCallbacks:
         self.system_variable_change: Optional[Callable[..., Awaitable[None]]] = None
 
 
+class EntityRegistry:
+    """Per-protocol caches for interface-layer entity identity.
+
+    Entities keyed here are unique within one ``ZenProtocol`` / ``ZenControl``
+    instance, not process-wide.
+    """
+
+    def __init__(self) -> None:
+        self.controllers: dict[str, Any] = {}
+        self.profiles: dict[str, Any] = {}
+        self.lights: dict[str, Any] = {}
+        self.groups: dict[str, Any] = {}
+        self.buttons: dict[str, Any] = {}
+        self.motion_sensors: dict[str, Any] = {}
+        self.system_variables: dict[str, Any] = {}
+
+    def clear(self) -> None:
+        self.controllers.clear()
+        self.profiles.clear()
+        self.lights.clear()
+        self.groups.clear()
+        self.buttons.clear()
+        self.motion_sensors.clear()
+        self.system_variables.clear()
+
+
 class ZenProtocol:
 
     callbacks: ZenCallbacks
@@ -192,6 +218,8 @@ class ZenProtocol:
         self.controllers = []
         # High-level callback registry (replaced per ZenControl instance)
         self.callbacks = ZenCallbacks()
+        # Interface-layer entity identity (scoped to this protocol)
+        self.entity_registry = EntityRegistry()
         # Fire-and-forget work (delayed events, refresh timers, motion holds)
         self._bg_tasks: set[asyncio.Task[Any]] = set()
 
@@ -203,6 +231,10 @@ class ZenProtocol:
         """Async context manager exit"""
         await self.aclose()
     
+    def clear_entity_cache(self) -> None:
+        """Drop all interface entity singletons owned by this protocol."""
+        self.entity_registry.clear()
+
     def track_task(self, coro: Coroutine[Any, Any, Any]) -> asyncio.Task[Any]:
         """Schedule a background task and track it for cancellation on aclose."""
         task = asyncio.create_task(coro)
@@ -239,6 +271,7 @@ class ZenProtocol:
                 await client.close()
             except Exception:
                 pass
+        self.clear_entity_cache()
 
     def set_controllers(self, controllers: list[ZenController]):
         self.controllers = controllers # Used to match events to controllers, and include controller objects in callbacks

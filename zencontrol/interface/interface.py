@@ -4,7 +4,7 @@ import asyncio
 import json
 import time
 import logging
-from typing import Any, ClassVar, Optional, Callable, Awaitable, cast, Self
+from typing import Any, Optional, Callable, Awaitable, cast, Self
 from collections.abc import Coroutine
 
 from ..api import ZenProtocol, ZenController as SuperZenController, ZenAddress, ZenInstance, ZenAddressType, ZenColour, ZenColourType, ZenInstanceType
@@ -146,16 +146,9 @@ class ZenControl:
     async def __aexit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
         await self.aclose()
 
-    @staticmethod
-    def clear_entity_caches() -> None:
-        """Clear process-global entity singleton registries."""
-        ZenController.clear_instances()
-        ZenProfile.clear_instances()
-        ZenLight.clear_instances()
-        ZenGroup.clear_instances()
-        ZenButton.clear_instances()
-        ZenMotionSensor.clear_instances()
-        ZenSystemVariable.clear_instances()
+    def clear_entity_caches(self) -> None:
+        """Clear entity singleton registries for this ZenControl instance."""
+        self.protocol.clear_entity_cache()
 
     @property
     def cache(self) -> dict[bytes, dict[str, Any]]:
@@ -545,8 +538,6 @@ class ZenControl:
 # ============================ 
 
 class ZenController(SuperZenController):
-    _instances: ClassVar[dict[str, "ZenController"]] = {}
-
     # Narrow/override dataclass fields used by the interface layer
     protocol: ZenProtocol
     version: Optional[str] = None
@@ -561,22 +552,19 @@ class ZenController(SuperZenController):
     sysvars: set["ZenSystemVariable"] = set()
     client_data: dict[str, Any] = {}
 
-    @classmethod
-    def clear_instances(cls) -> None:
-        cls._instances.clear()
-
     def __new__(cls, protocol: ZenProtocol, id: int, name: str, label: str, host: str, port: int = 5108, mac: Optional[str] = None, filtering: bool = False) -> "ZenController":
-        # Singleton based on controller name
-        if name not in cls._instances:
+        # Unique per protocol + controller name
+        registry = protocol.entity_registry.controllers
+        if name not in registry:
             inst = super().__new__(cls)
-            cls._instances[name] = inst
+            registry[name] = inst
             inst.connected = False
             inst.client = None  # Will be initialized when first used
             object.__setattr__(inst, "_ip", None)
             object.__setattr__(inst, "mac_bytes", None)
             inst._reset()
             # Don't call interview() here - it will be called async later
-        inst = cls._instances[name]
+        inst = registry[name]
         inst.protocol = protocol
         inst.id = str(id)
         inst.name = name
@@ -666,29 +654,25 @@ class ZenController(SuperZenController):
 
 
 class ZenProfile:
-    _instances: ClassVar[dict[str, "ZenProfile"]] = {}
     protocol: ZenProtocol
     controller: ZenController
     number: int
     label: Optional[str] = None
     client_data: dict[str, Any] = {}
 
-    @classmethod
-    def clear_instances(cls) -> None:
-        cls._instances.clear()
-
     def __new__(cls, protocol: ZenProtocol, controller: ZenController, number: int) -> "ZenProfile":
-        # Singleton based on controller and profile number
+        # Unique per protocol + controller + profile number
         compound_id = f"{controller.name} {number}"
-        if compound_id not in cls._instances:
+        registry = protocol.entity_registry.profiles
+        if compound_id not in registry:
             inst = super().__new__(cls)
-            cls._instances[compound_id] = inst
+            registry[compound_id] = inst
             inst.protocol = protocol
             inst.controller = controller
             inst.number = number
             inst._reset()
             # Don't call interview() here - it will be called async later
-        return cls._instances[compound_id]
+        return registry[compound_id]
 
     def __init__(self, protocol: ZenProtocol, controller: ZenController, number: int) -> None:
         self.protocol = protocol
@@ -730,7 +714,6 @@ class ZenProfile:
 
 
 class ZenLight:
-    _instances: ClassVar[dict[str, "ZenLight"]] = {}
     protocol: ZenProtocol
     address: ZenAddress
     label: Optional[str] = None
@@ -759,24 +742,21 @@ class ZenLight:
     client_data: dict[str, Any] = {}
     _refresh_timer: Optional[asyncio.Task[None]] = None
 
-    @classmethod
-    def clear_instances(cls) -> None:
-        cls._instances.clear()
-
     def __new__(cls, protocol: ZenProtocol, address: ZenAddress) -> Self:
         # Inherited classes should bypass ZenLight __new__
         if cls is not ZenLight:
             return cast(Self, super().__new__(cls))
-        # Singleton based on controller and address
+        # Unique per protocol + controller + address
         compound_id = f"{address.controller.name} {address.number}"
-        if compound_id not in cls._instances:
+        registry = protocol.entity_registry.lights
+        if compound_id not in registry:
             inst = super().__new__(cls)
-            cls._instances[compound_id] = inst
+            registry[compound_id] = inst
             inst.protocol = protocol
             inst.address = address
             inst._reset()
             # Don't call interview() here - it will be called async later
-        return cast(Self, cls._instances[compound_id])
+        return cast(Self, registry[compound_id])
 
     def __init__(self, protocol: ZenProtocol, address: ZenAddress) -> None:
         self.protocol = protocol
@@ -1129,25 +1109,21 @@ class ZenLight:
         
 
 class ZenGroup(ZenLight):
-    _group_instances: ClassVar[dict[str, "ZenGroup"]] = {}
     lights: set[ZenLight] = set()
 
-    @classmethod
-    def clear_instances(cls) -> None:
-        cls._group_instances.clear()
-
     def __new__(cls, protocol: ZenProtocol, address: ZenAddress) -> "ZenGroup":
-        # Singleton based on controller and address
+        # Unique per protocol + controller + group address
         compound_id = f"{address.controller.name} g{address.number}"
-        if compound_id not in cls._group_instances:
+        registry = protocol.entity_registry.groups
+        if compound_id not in registry:
             inst = super().__new__(cls, protocol=protocol, address=address)
-            cls._group_instances[compound_id] = inst
+            registry[compound_id] = inst
             inst.protocol = protocol
             inst.address = address
             inst.lights = set()  # member lights; managed via ZenLight._apply_group_membership
             inst._reset()
             # Don't call interview() here - it will be called async later
-        return cls._group_instances[compound_id]
+        return registry[compound_id]
 
     def __init__(self, protocol: ZenProtocol, address: ZenAddress) -> None:
         super().__init__(protocol, address)
@@ -1227,7 +1203,6 @@ class ZenGroup(ZenLight):
         return False
 
 class ZenButton:
-    _instances: ClassVar[dict[str, "ZenButton"]] = {}
     protocol: ZenProtocol
     instance: ZenInstance
     serial: Optional[int | str] = None
@@ -1237,21 +1212,18 @@ class ZenButton:
     long_press_count: int = 0
     client_data: dict[str, Any] = {}
 
-    @classmethod
-    def clear_instances(cls) -> None:
-        cls._instances.clear()
-
     def __new__(cls, protocol: ZenProtocol, instance: ZenInstance) -> "ZenButton":
-        # Singleton based on controller, address, and instance number
+        # Unique per protocol + controller + address + instance
         compound_id = f"{instance.address.controller.name} {instance.address.number} {instance.number}"
-        if compound_id not in cls._instances:
+        registry = protocol.entity_registry.buttons
+        if compound_id not in registry:
             inst = super().__new__(cls)
-            cls._instances[compound_id] = inst
+            registry[compound_id] = inst
             inst.protocol = protocol
             inst.instance = instance
             inst._reset()
             # Don't call interview() here - it will be called async later
-        return cls._instances[compound_id]
+        return registry[compound_id]
 
     def __init__(self, protocol: ZenProtocol, instance: ZenInstance) -> None:
         self.protocol = protocol
@@ -1322,7 +1294,6 @@ class ZenButton:
 
 
 class ZenMotionSensor:
-    _instances: ClassVar[dict[str, "ZenMotionSensor"]] = {}
     protocol: ZenProtocol
     instance: ZenInstance
     hold_time: int = Const.DEFAULT_HOLD_TIME
@@ -1335,21 +1306,18 @@ class ZenMotionSensor:
     _occupied: Optional[bool] = None
     client_data: dict[str, Any] = {}
 
-    @classmethod
-    def clear_instances(cls) -> None:
-        cls._instances.clear()
-
     def __new__(cls, protocol: ZenProtocol, instance: ZenInstance) -> "ZenMotionSensor":
-        # Singleton based on controller, address, and instance number
+        # Unique per protocol + controller + address + instance
         compound_id = f"{instance.address.controller.name} {instance.address.number} {instance.number}"
-        if compound_id not in cls._instances:
+        registry = protocol.entity_registry.motion_sensors
+        if compound_id not in registry:
             inst = super().__new__(cls)
-            cls._instances[compound_id] = inst
+            registry[compound_id] = inst
             inst.protocol = protocol
             inst.instance = instance
             inst._reset()
             # Don't call interview() here - it will be called async later
-        return cls._instances[compound_id]
+        return registry[compound_id]
 
     def __init__(self, protocol: ZenProtocol, instance: ZenInstance) -> None:
         self.protocol = protocol
@@ -1493,7 +1461,6 @@ class ZenMotionSensor:
 
 
 class ZenSystemVariable:
-    _instances: ClassVar[dict[str, "ZenSystemVariable"]] = {}
     protocol: ZenProtocol
     controller: ZenController
     id: int
@@ -1502,16 +1469,13 @@ class ZenSystemVariable:
     _future_value: Optional[int] = None
     client_data: dict[str, Any] = {}
 
-    @classmethod
-    def clear_instances(cls) -> None:
-        cls._instances.clear()
-
     def __new__(cls, protocol: ZenProtocol, controller: ZenController, id: int, value: Optional[int] = None, label: Optional[str] = None) -> "ZenSystemVariable":
-        # Singleton based on controller and id
+        # Unique per protocol + controller + id
         compound_id = f"{controller.name} {id}"
-        if compound_id not in cls._instances:
+        registry = protocol.entity_registry.system_variables
+        if compound_id not in registry:
             inst = super().__new__(cls)
-            cls._instances[compound_id] = inst
+            registry[compound_id] = inst
             inst.protocol = protocol
             inst.controller = controller
             inst.id = id
@@ -1519,7 +1483,7 @@ class ZenSystemVariable:
             inst._value = value
             inst.label = label
             # Don't call interview() here - it will be called async later
-        return cls._instances[compound_id]
+        return registry[compound_id]
 
     def __init__(self, protocol: ZenProtocol, controller: ZenController, id: int, value: Optional[int] = None, label: Optional[str] = None) -> None:
         self.protocol = protocol

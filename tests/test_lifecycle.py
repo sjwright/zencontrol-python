@@ -10,22 +10,10 @@ import pytest
 from zencontrol.api.models import ZenAddress
 from zencontrol.api.types import ZenAddressType
 from zencontrol.interface.interface import (
-    ZenButton,
     ZenControl,
     ZenController,
-    ZenGroup,
     ZenLight,
-    ZenMotionSensor,
-    ZenProfile,
-    ZenSystemVariable,
 )
-
-
-@pytest.fixture(autouse=True)
-def _clear_entity_caches():
-    ZenControl.clear_entity_caches()
-    yield
-    ZenControl.clear_entity_caches()
 
 
 @pytest.mark.asyncio
@@ -53,15 +41,15 @@ async def test_aclose_closes_clients_and_clears_instances() -> None:
 
     address = ZenAddress(controller=ctrl, type=ZenAddressType.ECG, number=1)
     light = ZenLight(protocol=zen.protocol, address=address)
-    assert "ctrl-a 1" in ZenLight._instances
-    assert "ctrl-a" in ZenController._instances
+    assert "ctrl-a 1" in zen.protocol.entity_registry.lights
+    assert "ctrl-a" in zen.protocol.entity_registry.controllers
 
     await zen.aclose()
 
     fake_client.close.assert_awaited()
     assert ctrl.client is None
-    assert ZenLight._instances == {}
-    assert ZenController._instances == {}
+    assert zen.protocol.entity_registry.lights == {}
+    assert zen.protocol.entity_registry.controllers == {}
 
 
 @pytest.mark.asyncio
@@ -109,25 +97,19 @@ async def test_stop_does_not_clear_entity_caches() -> None:
         # stop without ever starting should be a no-op for disconnect
         await zen.stop()
 
-    assert "ctrl-b 2" in ZenLight._instances
-    assert "ctrl-b" in ZenController._instances
+    assert "ctrl-b 2" in zen.protocol.entity_registry.lights
+    assert "ctrl-b" in zen.protocol.entity_registry.controllers
+    await zen.aclose()
 
 
-def test_clear_instances_on_all_entity_types() -> None:
-    ZenController._instances["x"] = MagicMock()
-    ZenProfile._instances["x"] = MagicMock()
-    ZenLight._instances["x"] = MagicMock()
-    ZenGroup._group_instances["x"] = MagicMock()
-    ZenButton._instances["x"] = MagicMock()
-    ZenMotionSensor._instances["x"] = MagicMock()
-    ZenSystemVariable._instances["x"] = MagicMock()
+def test_clear_entity_caches_clears_protocol_registry() -> None:
+    zen = ZenControl()
+    zen.protocol.entity_registry.controllers["x"] = MagicMock()
+    zen.protocol.entity_registry.lights["x"] = MagicMock()
+    zen.protocol.entity_registry.groups["x"] = MagicMock()
 
-    ZenControl.clear_entity_caches()
+    zen.clear_entity_caches()
 
-    assert ZenController._instances == {}
-    assert ZenProfile._instances == {}
-    assert ZenLight._instances == {}
-    assert ZenGroup._group_instances == {}
-    assert ZenButton._instances == {}
-    assert ZenMotionSensor._instances == {}
-    assert ZenSystemVariable._instances == {}
+    assert zen.protocol.entity_registry.controllers == {}
+    assert zen.protocol.entity_registry.lights == {}
+    assert zen.protocol.entity_registry.groups == {}

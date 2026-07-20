@@ -38,10 +38,9 @@ class _ControllableListener:
 
 
 @pytest.fixture(autouse=True)
-def _clear_caches():
-    ZenControl.clear_entity_caches()
+def _noop_cleanup():
+    # Entity registries are per-protocol; tests call aclose/clear as needed
     yield
-    ZenControl.clear_entity_caches()
 
 
 @pytest.mark.asyncio
