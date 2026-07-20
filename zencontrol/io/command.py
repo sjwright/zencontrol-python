@@ -40,6 +40,10 @@ class ClientConst:
     DEFAULT_TIMEOUT = 1.5
     MIN_TIMEOUT = 0.01
     MAX_TIMEOUT = 10.0
+    # TPI ERROR payload: controller DALI command queue briefly full
+    QUEUE_FAILURE = 0xB3
+    QUEUE_FAILURE_RETRIES = 3
+    QUEUE_FAILURE_BASE_DELAY = 0.05  # doubles each attempt: 50/100/200ms
 
 class RequestType(IntEnum):
     """Types of requests that can be sent"""
@@ -223,7 +227,37 @@ class ZenClient:
                 self._pending.pop(req.seq, None)
                 if not fut.done():
                     fut.cancel()
-    
+
+    async def send_request_with_retries(
+        self,
+        req: Request,
+        *,
+        timeout: Optional[float] = None,
+        retries: int = 0,
+        queue_retries: int = ClientConst.QUEUE_FAILURE_RETRIES,
+    ) -> Response:
+        """Like send_request, but retries on TPI QUEUE_FAILURE with backoff."""
+        response: Response | None = None
+        for attempt in range(queue_retries + 1):
+            response = await self.send_request(req, timeout=timeout, retries=retries)
+            if (
+                response.response_type == ResponseType.ERROR
+                and response.data
+                and response.data[0] == ClientConst.QUEUE_FAILURE
+                and attempt < queue_retries
+            ):
+                delay = ClientConst.QUEUE_FAILURE_BASE_DELAY * (2 ** attempt)
+                self.logger.debug(
+                    "QUEUE_FAILURE from %s:%s, retry %d/%d in %.0fms",
+                    self.server[0], self.server[1],
+                    attempt + 1, queue_retries, delay * 1000,
+                )
+                await asyncio.sleep(delay)
+                continue
+            break
+        assert response is not None
+        return response
+
     async def _receive_response(self, datagram: bytes, addr: Tuple[str, int]):
         
         # Too short to be a valid packet

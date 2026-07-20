@@ -35,6 +35,38 @@ ZenInstance = Represents a DALI ECD instance.
 # Callback type definitions moved to end of file after class definitions
 
 
+def _assign_light_sub_labels(lights: list["ZenLight"] | set["ZenLight"]) -> None:
+    """Derive ``sub_label`` for lights that share a comma-separated label.
+
+    Controllers sometimes store one label string across several ECGs that share
+    a fitting, e.g. ``"Hallway,Bathroom,,Annex"`` on addresses 31–34 meaning
+    31=Hallway, 32=Bathroom, 33 unused, 34=Annex.
+
+    Only applied when multiple lights share an identical label that contains a
+    comma. Clusters are sorted by address number; empty segments become
+    ``Unused {number}``. Lights outside such clusters keep ``sub_label=None``.
+    """
+    for light in lights:
+        light.sub_label = None
+
+    clusters: dict[tuple[str, str], list[ZenLight]] = {}
+    for light in lights:
+        label = light.label
+        if not label or "," not in label:
+            continue
+        key = (light.address.controller.name, label)
+        clusters.setdefault(key, []).append(light)
+
+    for cluster in clusters.values():
+        if len(cluster) < 2:
+            continue
+        cluster.sort(key=lambda lt: lt.address.number)
+        parts = [part.strip() for part in (cluster[0].label or "").split(",")]
+        for i, light in enumerate(cluster):
+            part = parts[i] if i < len(parts) else ""
+            light.sub_label = part if part else f"Unused {light.address.number}"
+
+
 def _serialize_colour(colour: Optional[ZenColour]) -> Optional[dict[str, int | str | None]]:
     if colour is None or colour.type is None:
         return None
@@ -250,20 +282,22 @@ class ZenControl:
             # for light in group.lights:
             #     await light._event_received(level=arc_level, cascaded_from=group)
 
-    async def colour_change_event(self, address: ZenAddress, colour: bytes, payload: bytes) -> None:
-        parsed_colour = ZenColour.from_bytes(colour)
+    async def colour_change_event(self, address: ZenAddress, colour: Optional[ZenColour], payload: bytes) -> None:
+        # Protocol already parses payload via ZenColour.from_bytes before calling us
+        if colour is None:
+            return
         if address.type == ZenAddressType.ECG:
             # Delay the light event to allow group updates to arrive and propogate
             ecg = ZenLight(protocol=self.protocol, address=address)
             async def delayed_colour_event():
                 await asyncio.sleep(0.0)
-                await ecg._event_received(colour=parsed_colour)
+                await ecg._event_received(colour=colour)
             asyncio.create_task(delayed_colour_event())
         elif address.type == ZenAddressType.GROUP:
             group = ZenGroup(protocol=self.protocol, address=address)
-            await group._event_received(colour=parsed_colour)
+            await group._event_received(colour=colour)
             for light in group.lights:
-                await light._event_received(colour=parsed_colour, cascaded_from=group)
+                await light._event_received(colour=colour, cascaded_from=group)
 
     async def scene_change_event(self, address: ZenAddress, scene: int, active: bool, payload: bytes) -> None:
         if address.type == ZenAddressType.ECG:
@@ -321,6 +355,8 @@ class ZenControl:
             for address in addresses:
                 light = await ZenLight.create(protocol=self.protocol, address=address)
                 lights.add(light)
+        # Second pass: labels are known; split shared comma-labels into sub_labels.
+        _assign_light_sub_labels(lights)
         return lights
     
     async def _get_addresses_with_instances(self, controller: "ZenController") -> list[ZenAddress]:
@@ -572,6 +608,7 @@ class ZenLight:
     protocol: ZenProtocol
     address: ZenAddress
     label: Optional[str] = None
+    sub_label: Optional[str] = None
     serial: Optional[int | str] = None
     cgtype: list[int] = []
     groups: set["ZenGroup"] = set()
@@ -625,6 +662,7 @@ class ZenLight:
         return f"ZenLight<{self.address.controller.name} ecg {self.address.number}: {self.label}>"
     def _reset(self) -> None:
         self.label = None
+        self.sub_label = None
         self.serial = None
         self.cgtype = []
         self.groups = set()
@@ -661,6 +699,7 @@ class ZenLight:
     def interview_serialize(self) -> str:
         return json.dumps({
             "label": self.label,
+            "sub_label": self.sub_label,
             "serial": self.serial,
             "cgtype": list(self.cgtype),
             "group_membership": [_serialize_group_address(group) for group in self.group_membership],
@@ -673,6 +712,7 @@ class ZenLight:
         try:
             data = _loads_interview_data(data)
             self.label = data.get("label")
+            self.sub_label = data.get("sub_label")
             self.serial = data.get("serial")
             self.cgtype = list(data.get("cgtype", []))
             self.features.update(data.get("features", {}))

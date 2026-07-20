@@ -1,0 +1,212 @@
+homeassistant:
+  discovery_prefix: homeassistant
+
+mqtt:
+  host: 172.22.2.4
+  port: 1883
+  user: script
+  password: script123
+  keepalive: 60
+
+logging:
+  file: 'mqtt.log'
+  max_bytes: 5242880  # 5MB
+  backup_count: 5
+
+virtual_devices:
+  - name: indoor
+  - name: guest
+  - name: simon
+  - name: emily
+  - name: master
+  - name: arthur
+  - name: laundry
+  - name: garage
+  - name: outdoor
+
+zencontrol:
+  - id: 1
+    name: zen1
+    label: Zencontrol 1
+    mac: 7c:ba:cc:22:27:b0
+    host: 172.22.2.161
+    port: 5108
+    # unicast_ip: 172.22.2.21
+    # unicast_port: 5109
+    # filtering: False
+    system_variables:
+      - id: 2
+        component: sensor # integer, read only, -32768 to 32767
+        object_id: entrance_lux
+        attributes:
+          name: "Front Porch Lux"
+          device_class: illuminance
+      - id: 3
+        component: sensor # integer, read only, -32768 to 32767
+        object_id: hallway_lux
+        attributes:
+          name: "Hallway Lux"
+          device_class: illuminance
+      - id: 0
+        component: switch # boolean, read/write, 1 or 0
+        object_id: zen_mvhr_boost
+        attributes:
+          name: "MVHR Boost Mode"
+          icon: mdi:home-export-outline
+      - id: 1
+        component: switch # boolean, read/write, 1 or 0
+        object_id: zen_garage_side_door
+        attributes:
+          name: "Zen Garage Side Door"
+          icon: mdi:garage
+      - id: 4
+        component: switch # boolean, read/write, 1 or 0
+        object_id: zen_garage_front_opening
+        attributes:
+          name: "Zen Garage Front Opening"
+          icon: mdi:garage
+      - id: 5
+        component: switch # boolean, read/write, 1 or 0
+        object_id: zen_garage_front_closing
+        attributes:
+          name: "Zen Garage Front Closing"
+          icon: mdi:garage
+      - id: 6
+        component: switch # boolean, read/write, 1 or 0
+        object_id: zen_garage_rear_opening
+        attributes:
+          name: "Zen Garage Rear Opening"
+          icon: mdi:garage
+      - id: 7
+        component: switch # boolean, read/write, 1 or 0
+        object_id: zen_garage_rear_closing
+        attributes:
+          name: "Zen Garage Rear Closing"
+          icon: mdi:garage
+    buttons:
+      - match_instance_label: "Ensuite MVHR Boost"
+        name: zen_ensuite_mvhr
+        label: "Ensuite MVHR"
+      - match_instance_label: "Office Garage Side Door"
+        name: zen_office_garage_side_door
+        label: "Office Garage Side Door"
+      - match_instance_label: "Entrance Garage Side Door"
+        name: zen_entrance_garage_side_door
+        label: "Entrance Garage Side Door"
+    #   - match_instance_label: "Garage door up"
+    #     name: garage_door_up
+    #     label: "Garage door up"
+    #   - match_instance_label: "Garage door down"
+    #     name: garage_door_down
+    #     label: "Garage door down"
+    groups:
+      - id: 0
+        label: All Lights
+        ignore: true
+      - id: 1
+        label: Kitchen
+        ignore: true
+      - id: 2
+        label: Lounge
+        ignore: true
+      - id: 3
+        label: Pantry
+        ignore: true
+      - id: 4
+        label: Entrance
+        ignore: true
+      - id: 8
+        label: Office
+        device: simon
+      - id: 10
+        label: Guest
+        device: guest
+      - id: 11
+        label: Hallways
+        ignore: true
+      - id: 12
+        label: Master
+        device: master
+      - id: 13
+        label: Emily
+        device: emily
+      - id: 14
+        label: Arthur
+        device: arthur
+      - id: 15
+        label: Ground
+        device: indoor
+    lights:
+      - ecg: 0
+        label: Kit-Pant
+        override_label: Kitchen Cabinets
+        device: indoor
+      - ecg: 1
+        label: Kit-Pant
+        override_label: Pantry Cabinets
+        device: indoor
+      - ecg: 24
+        label: Annex-Hall-Bath
+        override_label: Guest Annex
+        device: guest
+      - ecg: 25
+        label: Annex-Hall-Bath
+        override_label: Entrance Hallway
+        device: guest
+      - ecg: 26
+        label: Annex-Hall-Bath
+        override_label: Guest Bathroom
+        device: guest
+      - ecg: 27
+        label: Annex-Hall-Bath
+      - ecg: 38
+        label: Garage Panels
+        device: garage
+      - ecg: 39
+        label: Garage
+        override_label: Garage Downlights
+        device: garage
+      - ecg: 40
+        label: Garage
+        override_label: Outdoor 40
+        device: outdoor
+      - ecg: 41
+        label: Garage
+        override_label: Outdoor 41
+        device: outdoor
+      - ecg: 42
+        label: Garage
+        override_label: Outdoor 42
+        device: outdoor
+      - ecg: 45
+        label: Porch
+        device: outdoor
+      - ecg: 46
+        label: Wir-Hall-Bath-Ens
+        override_label: Master Wardrobe
+        device: master
+      - ecg: 47
+        label: Wir-Hall-Bath-Ens
+        override_label: Upstairs Hallway
+        device: indoor
+      - ecg: 48
+        label: Wir-Hall-Bath-Ens
+        override_label: Upstairs Bathroom
+        device: indoor
+      - ecg: 49
+        label: Wir-Hall-Bath-Ens
+        override_label: Master Ensuite
+        device: master
+      - ecg: 62
+        label: Laundry
+        device: laundry
+      - ecg: 63
+        label: Ensuite Towel
+        override_label: Master Ensuite
+        device: master
+  # - id: 2
+  #   name: zen2
+  #   label: Zencontrol 2
+  #   mac: 7c:ba:cc:22:27:b1
+  #   host: 172.22.3.196
+  #   port: 5108

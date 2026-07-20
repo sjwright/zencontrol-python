@@ -46,7 +46,7 @@ async def scene_change_event(address: ZenAddress, scene: int, active: bool, payl
     ms()
     print(f"Scene Change Event       - {address.type} {address.number} scene {scene}")
 
-async def colour_change_event(address: ZenAddress, colour: bytes, payload: bytes) -> None:
+async def colour_change_event(address: ZenAddress, colour, payload: bytes) -> None:
     ms()
     print(f"Colour Change Event      - {address.type} {address.number} colour {colour}")
 

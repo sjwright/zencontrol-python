@@ -421,8 +421,7 @@ class ZenProtocol:
         if controller.client is None or not controller.client.is_connected():
             controller.client = await ZenClient.create((controller.ip, controller.port), logger=self.logger)
         
-        # Send request with timeout and retries
-        response: Response = await controller.client.send_request(request)
+        response: Response = await controller.client.send_request_with_retries(request)
 
         # Timeout?
         # Work out how many msec we waited for
@@ -728,6 +727,12 @@ class ZenProtocol:
                         self.logger.error(f"Invalid colour change event target: {target}")
                         return
                     colour = ZenColour.from_bytes(payload)
+                    if colour is None:
+                        self.logger.warning(
+                            f"Unparseable colour change payload from {ip_address}: "
+                            f"[{' '.join(f'0x{b:02X}' for b in payload)}]"
+                        )
+                        return
                     await self.colour_change_callback(address=address, colour=colour, payload=payload)
 
             case ZenEventCode.PROFILE_CHANGE:
