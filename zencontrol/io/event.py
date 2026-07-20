@@ -45,6 +45,8 @@ class EventConst:
     """Constants for event handling"""
     MULTICAST_GROUP = "239.255.90.67"
     MULTICAST_PORT = 6969
+    DEFAULT_MAX_QUEUE_SIZE = 1000
+    DROP_LOG_INTERVAL = 5.0  # seconds between queue-full warnings
 
 class ZenEventProtocol(asyncio.DatagramProtocol):
     def __init__(
@@ -79,23 +81,29 @@ class ZenEventProtocol(asyncio.DatagramProtocol):
             self.logger.info("Event connection closed")
 
 class ZenListener:
-    def __init__(self, 
-                 unicast: bool = False,
-                 listen_ip: str = "0.0.0.0",
-                 listen_port: int = 0,
-                 logger: Optional[logging.Logger] = None):
+    def __init__(
+        self,
+        unicast: bool = False,
+        listen_ip: str = "0.0.0.0",
+        listen_port: int = 0,
+        logger: Optional[logging.Logger] = None,
+        max_queue_size: int = EventConst.DEFAULT_MAX_QUEUE_SIZE,
+    ):
         self.unicast = unicast
         self.listen_ip = listen_ip
         self.listen_port = listen_port
         self.logger = logger or logging.getLogger(__name__)
-        
+        self.max_queue_size = max(1, max_queue_size)
+
         # Modern asyncio components
         self.transport: Optional[asyncio.DatagramTransport] = None
         self.protocol: Optional[ZenEventProtocol] = None
         self._stop_event = asyncio.Event()
-        
-        # Event queue for async generator pattern
-        self._event_queue: asyncio.Queue[ZenEvent] = asyncio.Queue()
+
+        # Bounded queue: drop-oldest under backpressure so the UDP path never stalls
+        self._event_queue: asyncio.Queue[ZenEvent] = asyncio.Queue(maxsize=self.max_queue_size)
+        self.dropped_events = 0
+        self._last_drop_log = 0.0
 
     @classmethod
     async def create(
@@ -104,9 +112,10 @@ class ZenListener:
         listen_ip: str = "0.0.0.0",
         listen_port: int = 0,
         logger: Optional[logging.Logger] = None,
+        max_queue_size: int = EventConst.DEFAULT_MAX_QUEUE_SIZE,
     ) -> "ZenListener":
         """Create and start a ZenListener instance"""
-        self = cls(unicast, listen_ip, listen_port, logger)
+        self = cls(unicast, listen_ip, listen_port, logger, max_queue_size=max_queue_size)
         await self._create_datagram_endpoint()
         self.logger.info(f"Started event listener in {'unicast' if self.unicast else 'multicast'} mode")
         return self
@@ -224,8 +233,36 @@ class ZenListener:
         if event_code != 7 and event_code != 8: # 7=system varaiable, 8=colour changed
             self.logger.debug(f"Received {typecast} from {addr[0]}:{addr[1]}: target {target} event {event_code} payload [{', '.join(f'0x{b:02x}' for b in payload)}]")
 
-        # Put event in queue for async generator
-        await self._event_queue.put(event)
+        self._enqueue_event(event)
+
+    def _enqueue_event(self, event: ZenEvent) -> None:
+        """Enqueue event; if full, drop the oldest and keep the newest."""
+        try:
+            self._event_queue.put_nowait(event)
+            return
+        except asyncio.QueueFull:
+            pass
+
+        try:
+            self._event_queue.get_nowait()
+            self._event_queue.task_done()
+        except asyncio.QueueEmpty:
+            pass
+
+        try:
+            self._event_queue.put_nowait(event)
+        except asyncio.QueueFull:
+            pass
+
+        self.dropped_events += 1
+        now = time.time()
+        if now - self._last_drop_log >= EventConst.DROP_LOG_INTERVAL:
+            self._last_drop_log = now
+            self.logger.warning(
+                "Event queue full (max=%d); dropped %d event(s) total",
+                self.max_queue_size,
+                self.dropped_events,
+            )
 
     async def events(self, timeout: Optional[float] = None) -> AsyncGenerator[ZenEvent, None]:
         """Async generator yielding events as they arrive"""

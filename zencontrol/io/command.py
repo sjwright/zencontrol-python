@@ -18,7 +18,7 @@ async def main():
         if resp.resp_type == ResponseType.ANSWER:
             print("Answer:", resp.data)
         elif resp.resp_type == ResponseType.TIMEOUT:
-            print("Timed out after 3 attempts")
+            print("Timed out after retries")
         else:
             print("Resp:", resp.resp_type.name, resp.data)
 
@@ -40,6 +40,8 @@ class ClientConst:
     DEFAULT_TIMEOUT = 1.5
     MIN_TIMEOUT = 0.01
     MAX_TIMEOUT = 10.0
+    # UDP datagram retries (lost packets / brief network blips); separate from QUEUE_FAILURE
+    DEFAULT_RETRIES = 1
     # TPI ERROR payload: controller DALI command queue briefly full
     QUEUE_FAILURE = 0xB3
     QUEUE_FAILURE_RETRIES = 3
@@ -121,9 +123,11 @@ class ZenRequestProtocol(asyncio.DatagramProtocol):
         self,
         response_handler: Callable[[bytes, Tuple[str, int]], Awaitable[None]],
         logger: Optional[logging.Logger] = None,
+        on_transport_lost: Optional[Callable[[Optional[Exception]], None]] = None,
     ):
         self.response_handler = response_handler
         self.logger = logger or logging.getLogger(__name__)
+        self.on_transport_lost = on_transport_lost
         self.transport: Optional[asyncio.transports.DatagramTransport] = None
         
     def connection_made(self, transport):
@@ -145,12 +149,16 @@ class ZenRequestProtocol(asyncio.DatagramProtocol):
         
     def error_received(self, exc):
         self.logger.error(f"Request protocol error: {exc}")
+        if self.on_transport_lost:
+            self.on_transport_lost(exc)
         
     def connection_lost(self, exc):
         if exc:
             self.logger.error(f"Request connection lost: {exc}")
         else:
             self.logger.info("Request connection closed")
+        if self.on_transport_lost:
+            self.on_transport_lost(exc)
 
 class ZenClient:
     """
@@ -165,6 +173,7 @@ class ZenClient:
         self.server = server
         self.logger = logger or logging.getLogger(__name__)
         self._transport: Optional[asyncio.transports.DatagramTransport] = None
+        self._protocol: Optional[ZenRequestProtocol] = None
         self._pending: Dict[int, Tuple[asyncio.Future[Response], Request]] = {}
         self._next_seq: int = 0
         self._closed = False
@@ -176,14 +185,42 @@ class ZenClient:
         self = cls(server, logger)
         loop = asyncio.get_running_loop()
         transport, protocol = await loop.create_datagram_endpoint(
-            lambda: ZenRequestProtocol(self._receive_response, self.logger),
+            lambda: ZenRequestProtocol(
+                self._receive_response,
+                self.logger,
+                on_transport_lost=self._mark_disconnected,
+            ),
             remote_addr=server,  # Use connected UDP to maintain connection
         )
         self._transport = transport
+        self._protocol = protocol
         self.logger.info(f"Connected to Zen server at {server[0]}:{server[1]}")
         return self
 
-    async def send_request(self, req: Request, *, timeout: Optional[float] = None, retries: int = 0) -> Response:
+    def _mark_disconnected(self, exc: Optional[Exception] = None) -> None:
+        """Mark the client dead after transport loss (must not await or take _lock)."""
+        if self._closed:
+            return
+        self._closed = True
+        transport = self._transport
+        self._transport = None
+        # Unblock waiters with TIMEOUT so callers use the normal recovery path
+        for fut, req in list(self._pending.values()):
+            if not fut.done():
+                fut.set_result(Response(ResponseType.TIMEOUT, request=req))
+        self._pending.clear()
+        if transport is not None and not transport.is_closing():
+            transport.close()
+        if exc:
+            self.logger.debug("ZenClient marked disconnected: %s", exc)
+
+    async def send_request(
+        self,
+        req: Request,
+        *,
+        timeout: Optional[float] = None,
+        retries: int = ClientConst.DEFAULT_RETRIES,
+    ) -> Response:
         if self._closed: raise RuntimeError("Client is closed")
         if self._transport is None: raise RuntimeError("Transport is none?!")
 
@@ -207,6 +244,8 @@ class ZenClient:
             try:
                 wire = req.to_bytes(checksum=self._checksum)
                 for i in range(retries + 1):
+                    if self._closed or self._transport is None:
+                        return Response(ResponseType.TIMEOUT, request=req)
                     try:
                         req.timestamp = time.time() # Update timestamp when sending the request
                         self._transport.sendto(wire) # Connected socket doesn't need address
@@ -233,7 +272,7 @@ class ZenClient:
         req: Request,
         *,
         timeout: Optional[float] = None,
-        retries: int = 0,
+        retries: int = ClientConst.DEFAULT_RETRIES,
         queue_retries: int = ClientConst.QUEUE_FAILURE_RETRIES,
     ) -> Response:
         """Like send_request, but retries on TPI QUEUE_FAILURE with backoff."""
@@ -325,19 +364,24 @@ class ZenClient:
         await self.close()
     
     def is_connected(self) -> bool:
-        """Check if client is connected"""
-        return self._transport is not None and not self._closed
+        """Check if client has a usable datagram transport."""
+        return (
+            not self._closed
+            and self._transport is not None
+            and not self._transport.is_closing()
+        )
 
     async def close(self):
         """Close the client"""
         async with self._lock:
-            if self._closed:
+            if self._closed and self._transport is None:
                 return
             self._closed = True
             for future, _request in self._pending.values():
                 if not future.done():
                     future.set_exception(RuntimeError("ZenClient closed"))
             self._pending.clear()
-        if self._transport:
-            self._transport.close()
+            transport = self._transport
             self._transport = None
+        if transport is not None and not transport.is_closing():
+            transport.close()

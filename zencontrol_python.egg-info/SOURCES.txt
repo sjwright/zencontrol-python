@@ -18,8 +18,10 @@ tests/test_level_change_v2.py
 tests/test_multicast.py
 tests/test_multicast_raw.py
 tests/test_profiles.py
+tests/test_sub_labels.py
 tests/test_tpi_event_listener.py
 tests/test_variables.py
+tests/test_wire_resilience.py
 zencontrol/__init__.py
 zencontrol/exceptions.py
 zencontrol/utils.py

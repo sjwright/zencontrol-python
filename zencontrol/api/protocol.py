@@ -14,6 +14,7 @@ from ..io import ZenClient, ZenListener, ZenEvent, Request, Response, ResponseTy
 from .models import ZenController, ZenAddress, ZenInstance, ZenColour, ZenProfile
 from .types import ZenAddressType, ZenInstanceType, ZenColourType, ZenEventCode, ZenEventMask, ZenEventMode, ZenErrorCode, Const
 from ..exceptions import ZenError, ZenTimeoutError, ZenResponseError
+from ..utils import local_ip_for_remote
 
 """
 ===================================================================================
@@ -163,11 +164,11 @@ class ZenProtocol:
 
         # Cache object
         self.cache: dict[bytes, dict[str, Any]] = cache if cache is not None else {}
-        
-        # If unicast, and we're binding to 0.0.0.0, we still need to know our actual IP address
-        self.local_ip = (socket.gethostbyname(socket.gethostname()) if self.listen_ip == "0.0.0.0" else self.listen_ip) if self.unicast else None
 
-        
+        # Advertised unicast IP resolved lazily in start_event_monitoring (needs controllers)
+        self.local_ip: Optional[str] = None
+        if self.unicast and self.listen_ip and self.listen_ip != "0.0.0.0":
+            self.local_ip = self.listen_ip
         # Setup event monitoring using ZenListener
         self.event_listener: Optional[ZenListener] = None
         self.event_task = None
@@ -418,10 +419,13 @@ class ZenProtocol:
                     del self.cache[cache_key]
 
         # Ensure client is properly initialized and not closed
-        if controller.client is None or not controller.client.is_connected():
-            controller.client = await ZenClient.create((controller.ip, controller.port), logger=self.logger)
-        
-        response: Response = await controller.client.send_request_with_retries(request)
+        await self._ensure_client(controller)
+        assert controller.client is not None
+
+        response: Response = await controller.client.send_request_with_retries(
+            request,
+            retries=ClientConst.DEFAULT_RETRIES,
+        )
 
         # Timeout?
         # Work out how many msec we waited for
@@ -430,6 +434,8 @@ class ZenProtocol:
             raw_sent = request.raw_sent or (response.request.raw_sent if response.request else None)
             raw_sent_str = f"[{' '.join(f'0x{b:02X}' for b in raw_sent)}]" if raw_sent else "[]"
             self.logger.error(f"UDP packet response from {controller.host}:{controller.port} not received after {wait_time_ms:.0f}ms, probably offline {raw_sent_str}")
+            await self._invalidate_client(controller)
+            controller.refresh_ip()
             raise ZenTimeoutError(f"No response from {controller.host}:{controller.port} after {wait_time_ms:.0f}ms")
 
         # Write to cache?
@@ -449,6 +455,37 @@ class ZenProtocol:
                 + Style.RESET_ALL)
         
         return response.data, response.response_type.value
+
+    async def _ensure_client(self, controller: ZenController) -> None:
+        """Create or replace the UDP client when missing or disconnected."""
+        if controller.client is not None and controller.client.is_connected():
+            return
+        if controller.client is not None:
+            await self._invalidate_client(controller)
+        controller.client = await ZenClient.create(
+            (controller.ip, controller.port),
+            logger=self.logger,
+        )
+
+    async def _invalidate_client(self, controller: ZenController) -> None:
+        """Close and drop a stale client so the next send recreates it."""
+        client = controller.client
+        controller.client = None
+        if client is None:
+            return
+        try:
+            await client.close()
+        except Exception:
+            pass
+
+    def _resolve_unicast_advertise_ip(self) -> str:
+        """Local IPv4 to advertise to controllers for unicast event delivery."""
+        if self.listen_ip and self.listen_ip != "0.0.0.0":
+            return self.listen_ip
+        if self.controllers:
+            return local_ip_for_remote(self.controllers[0].ip)
+        # No controllers yet — best-effort via a public DNS address for routing
+        return local_ip_for_remote("8.8.8.8")
 
     # ============================
     # EVENT LISTENING
@@ -485,6 +522,10 @@ class ZenProtocol:
             return
 
         self._disconnect_notified = False
+
+        if self.unicast:
+            self.local_ip = self._resolve_unicast_advertise_ip()
+            self.logger.info(f"Advertising unicast event address {self.local_ip}")
 
         # Bind listener first so unicast mode uses the actual assigned port (not 0)
         self.event_listener = await ZenListener.create(
