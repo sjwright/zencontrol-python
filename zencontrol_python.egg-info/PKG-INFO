@@ -1,16 +1,15 @@
 Metadata-Version: 2.4
 Name: zencontrol-python
-Version: 0.0.0
-Summary: This is an implementation of the Zencontrol TPI Advanced protocol, written in Python.
-Home-page: https://github.com/sjwright/zencontrol-python
+Version: 0.1.0
+Summary: Python implementation of the Zencontrol TPI Advanced protocol for DALI lighting controllers.
 Author: Simon Wright
-License: LGPL-2.1
+License-Expression: LGPL-2.1-only
 Project-URL: Homepage, https://github.com/sjwright/zencontrol-python
 Project-URL: Repository, https://github.com/sjwright/zencontrol-python
+Project-URL: Issues, https://github.com/sjwright/zencontrol-python/issues
 Keywords: dali,lighting,control,zencontrol,home-automation
 Classifier: Development Status :: 3 - Alpha
 Classifier: Intended Audience :: Developers
-Classifier: License :: OSI Approved :: GNU Lesser General Public License v2.1 (LGPLv2.1)
 Classifier: Operating System :: OS Independent
 Classifier: Programming Language :: Python :: 3
 Classifier: Programming Language :: Python :: 3.11
@@ -18,6 +17,7 @@ Classifier: Programming Language :: Python :: 3.12
 Classifier: Programming Language :: Python :: 3.13
 Classifier: Topic :: Home Automation
 Classifier: Topic :: Software Development :: Libraries :: Python Modules
+Classifier: Typing :: Typed
 Requires-Python: >=3.11
 Description-Content-Type: text/markdown
 License-File: LICENSE
@@ -28,12 +28,11 @@ Requires-Dist: pytest-asyncio>=0.18.0; extra == "dev"
 Requires-Dist: black>=22.0; extra == "dev"
 Requires-Dist: flake8>=4.0; extra == "dev"
 Requires-Dist: mypy>=0.950; extra == "dev"
+Requires-Dist: build>=1.0; extra == "dev"
 Provides-Extra: mqtt
 Requires-Dist: aiomqtt>=2.1.0; extra == "mqtt"
 Requires-Dist: PyYAML>=6.0; extra == "mqtt"
-Dynamic: home-page
 Dynamic: license-file
-Dynamic: requires-python
 
 # zencontrol-python
 
@@ -43,14 +42,30 @@ This is an implementation of the **Zencontrol TPI Advanced** protocol, written i
 - zencontrol.api: Implementation of most TPI Advanced API commands and events;
 - zencontrol.interface: An opinionated abstraction layer suitable for integration into smart building control software. It provides methods, objects, and callbacks for managing lights, groups, profiles, buttons, motion sensors, and system variables. This code is still undergoing significant refinement.
 
-Built on top of this is an example application **mqtt_bridge.py**, which is a bridge to Home Assistant via MQTT. It reads settings from *config.json* and spams your console with lots of debug messages. To run this, ensure you have Python 3.11 (or later) installed, along with the following Python packages: `aiomqtt`, `yaml`, and `colorama`. Modify **config.yaml** as needed for your environment, then execute **mqtt_bridge.py**.
+Built on top of this is an example application **mqtt_bridge.py**, which is a bridge to Home Assistant via MQTT. It reads settings from *config.yaml* and prints debug messages to the console. Install with `pip install -e ".[mqtt]"`, copy **examples/config-example.yaml** to **examples/config.yaml**, then run `zencontrol-mqtt`.
 
 ## Requirements
 
 * Python 3.11 (or later)
 * Controller firmware 2.2.11 (or later)
 
-## Quick start
+## Install
+
+Library only:
+
+```
+pip install zencontrol-python
+```
+
+From a local checkout (development):
+
+```
+pip install -e .
+# MQTT bridge extras:
+pip install -e ".[mqtt]"
+```
+
+## Quick start (MQTT bridge)
 
 The following are the minimum steps necessary to run the MQTT bridge on a machine running a sufficiently modern version of Debian (including Ubuntu and Raspberry Pi OS):
 
@@ -58,21 +73,21 @@ The following are the minimum steps necessary to run the MQTT bridge on a machin
 # Update/Install packages:
 sudo apt update
 sudo apt upgrade -y
-sudo apt install -y git python3-yaml python3-colorama python3-pip
-pip3 install aiomqtt
+sudo apt install -y git python3-pip
 
 # Download this code:
 cd ~/Documents
 git clone https://github.com/sjwright/zencontrol-python
 cd zencontrol-python
+pip3 install -e ".[mqtt]"
 
 # Edit config.yaml to suit your environment
 cp examples/config-example.yaml examples/config.yaml
 nano examples/config.yaml
 
 # Run the MQTT bridge
-cd examples
-python3 mqtt_bridge.py
+zencontrol-mqtt
+# or: python3 examples/mqtt_bridge.py
 ```
 
 Be aware that many Linux distributions ship with old versions of python and it could require non-trivial steps to install a newer version. You can check your current python version by running `python3 -V`

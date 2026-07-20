@@ -6,6 +6,7 @@ pytest-asyncio>=0.18.0
 black>=22.0
 flake8>=4.0
 mypy>=0.950
+build>=1.0
 
 [mqtt]
 aiomqtt>=2.1.0

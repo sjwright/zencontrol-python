@@ -7,6 +7,7 @@
 **/venv/
 **/lib/
 **/include/
+*.egg-info/
 pyvenv.cfg
 *.log
 *.pkl

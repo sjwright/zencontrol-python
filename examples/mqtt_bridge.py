@@ -121,7 +121,7 @@ class ZenMQTTBridge:
         self.global_config: dict[str, Any] = {
             "origin": {
                 "name": "zencontrol-python",
-                "sw": "0.0.0",
+                "sw": zencontrol.__version__,
                 "url": "https://github.com/sjwright/zencontrol-python"
             }
         }

@@ -6,39 +6,17 @@ This is an implementation of the **Zencontrol TPI Advanced** protocol, written i
 - zencontrol.api: Implementation of most TPI Advanced API commands and events;
 - zencontrol.interface: An opinionated abstraction layer suitable for integration into smart building control software. It provides methods, objects, and callbacks for managing lights, groups, profiles, buttons, motion sensors, and system variables. This code is still undergoing significant refinement.
 
-Built on top of this is an example application **mqtt_bridge.py**, which is a bridge to Home Assistant via MQTT. It reads settings from *config.json* and spams your console with lots of debug messages. To run this, ensure you have Python 3.11 (or later) installed, along with the following Python packages: `aiomqtt`, `yaml`, and `colorama`. Modify **config.yaml** as needed for your environment, then execute **mqtt_bridge.py**.
+Built on top of this is an example MQTT bridge for Home Assistant. See [examples/README.md](examples/README.md).
 
 ## Requirements
 
 * Python 3.11 (or later)
 * Controller firmware 2.2.11 (or later)
 
-## Quick start
+## Install
 
-The following are the minimum steps necessary to run the MQTT bridge on a machine running a sufficiently modern version of Debian (including Ubuntu and Raspberry Pi OS):
-
-```
-# Update/Install packages:
-sudo apt update
-sudo apt upgrade -y
-sudo apt install -y git python3-yaml python3-colorama python3-pip
-pip3 install aiomqtt
-
-# Download this code:
-cd ~/Documents
-git clone https://github.com/sjwright/zencontrol-python
-cd zencontrol-python
-
-# Edit config.yaml to suit your environment
-cp examples/config-example.yaml examples/config.yaml
-nano examples/config.yaml
-
-# Run the MQTT bridge
-cd examples
-python3 mqtt_bridge.py
-```
-
-Be aware that many Linux distributions ship with old versions of python and it could require non-trivial steps to install a newer version. You can check your current python version by running `python3 -V`
+Refer to zencontrol-tpi project for now.
+For integrators, the library is also published on PyPi.
 
 ## Limitations
 

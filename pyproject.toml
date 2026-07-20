@@ -1,14 +1,15 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=77.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "zencontrol-python"
-version = "0.0.0"
-description = "This is an implementation of the Zencontrol TPI Advanced protocol, written in Python."
+dynamic = ["version"]
+description = "Python implementation of the Zencontrol TPI Advanced protocol for DALI lighting controllers."
 readme = "README.md"
 requires-python = ">=3.11"
-license = {text = "LGPL-2.1"}
+license = "LGPL-2.1-only"
+license-files = ["LICENSE"]
 authors = [
     {name = "Simon Wright"},
 ]
@@ -16,7 +17,6 @@ keywords = ["dali", "lighting", "control", "zencontrol", "home-automation"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: GNU Lesser General Public License v2.1 (LGPLv2.1)",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
@@ -24,6 +24,7 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Topic :: Home Automation",
     "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
 ]
 dependencies = [
     "colorama>=0.4.6",
@@ -36,6 +37,7 @@ dev = [
     "black>=22.0",
     "flake8>=4.0",
     "mypy>=0.950",
+    "build>=1.0",
 ]
 mqtt = [
     "aiomqtt>=2.1.0",
@@ -48,6 +50,10 @@ zencontrol-mqtt = "examples.mqtt_bridge:main"
 [project.urls]
 Homepage = "https://github.com/sjwright/zencontrol-python"
 Repository = "https://github.com/sjwright/zencontrol-python"
+Issues = "https://github.com/sjwright/zencontrol-python/issues"
+
+[tool.setuptools.dynamic]
+version = {attr = "zencontrol.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["."]

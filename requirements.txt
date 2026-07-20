@@ -1,3 +1,4 @@
-pyyaml>=6.0.2
-aiomqtt>=2.0.0
+# Core runtime dependencies (mirrors pyproject.toml).
+# Prefer: pip install .
+# MQTT bridge: pip install ".[mqtt]"
 colorama>=0.4.6
