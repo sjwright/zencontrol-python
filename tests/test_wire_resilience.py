@@ -298,8 +298,7 @@ async def test_invalid_checksum_completes_pending_as_invalid() -> None:
 
 
 @pytest.mark.asyncio
-async def test_send_packet_error_raises_zen_response_error() -> None:
-    from zencontrol.exceptions import ZenResponseError
+async def test_send_packet_error_returns_without_raising() -> None:
     from zencontrol.api.types import ZenErrorCode
 
     protocol = ZenProtocol()
@@ -321,13 +320,12 @@ async def test_send_packet_error_raises_zen_response_error() -> None:
     )
     controller.client = fake_client
 
-    with pytest.raises(ZenResponseError) as exc_info:
-        await protocol._send_packet(
-            controller,
-            Request(command=0x10, data=[0x00, 0x00, 0x00, 0x00]),
-        )
-    assert exc_info.value.code == ZenErrorCode.PAID_FEATURE.value
-    assert exc_info.value.error_code == ZenErrorCode.PAID_FEATURE
+    data, code = await protocol._send_packet(
+        controller,
+        Request(command=0x10, data=[0x00, 0x00, 0x00, 0x00]),
+    )
+    assert code == ResponseType.ERROR.value
+    assert data == bytes([ZenErrorCode.PAID_FEATURE.value])
 
 
 def test_mac_requires_six_bytes() -> None:

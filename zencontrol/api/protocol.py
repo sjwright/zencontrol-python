@@ -21,7 +21,7 @@ from .models import (
     ZenProfile,
 )
 from .types import ZenAddressType, ZenInstanceType, ZenColourType, ZenEventCode, ZenEventMask, ZenEventMode, ZenErrorCode, Const
-from ..exceptions import ZenError, ZenTimeoutError, ZenResponseError
+from ..exceptions import ZenError, ZenTimeoutError
 from ..utils import local_ip_for_remote
 
 
@@ -457,18 +457,19 @@ class ZenProtocol:
                     case _:
                         return None
             case 0xA3: # ERROR
-                self._raise_response_error(response_data)
+                self._log_response_error(response_data)
             case 0xAE: # TIMEOUT
                 self.logger.error("Command timed out")
                 return None
             case 0xAF: # INVALID
-                raise ZenResponseError("Invalid response from controller")
+                self.logger.error("Invalid response from controller")
+                return None
             case _:
                 self.logger.error(f"Unknown response code: {response_code}")
         return None
 
-    def _raise_response_error(self, response_data: Optional[bytes]) -> None:
-        """Log and raise ZenResponseError for a TPI ERROR payload."""
+    def _log_response_error(self, response_data: Optional[bytes]) -> None:
+        """Log a TPI ERROR payload without raising (treat like soft failure / None)."""
         code: Optional[int] = response_data[0] if response_data else None
         error_code = (
             ZenErrorCode(code)
@@ -481,11 +482,6 @@ class ZenProtocol:
             else (f"Unknown error code: {hex(code)}" if code is not None else "no error code")
         )
         self.logger.error(f"Command error code: {label}")
-        raise ZenResponseError(
-            f"Command error: {label}",
-            code=code,
-            error_code=error_code,
-        )
         
     async def _send_colour(self, controller: ZenController, command: int, address: int, colour: ZenColour, level: int = 255) -> Optional[bool]:
         """Send a DALI colour command."""
@@ -514,9 +510,11 @@ class ZenProtocol:
                     self.logger.error(f"No answer with code: {response_data}")
                 return None
             case 0xA3: # ERROR
-                self._raise_response_error(response_data)
+                self._log_response_error(response_data)
+                return None
             case 0xAF: # INVALID
-                raise ZenResponseError("Invalid response from controller")
+                self.logger.error("Invalid response from controller")
+                return None
             case _:
                 self.logger.error(f"Unknown response type: {response_code}")
                 return None
@@ -574,16 +572,9 @@ class ZenProtocol:
             controller.refresh_ip()
             raise ZenTimeoutError(f"No response from {controller.host}:{controller.port} after {wait_time_ms:.0f}ms")
 
-        if response.response_type == ResponseType.ERROR:
-            self._raise_response_error(response.data)
-
-        if response.response_type == ResponseType.INVALID:
-            self.logger.error(
-                "Invalid UDP response from %s:%s",
-                controller.host,
-                controller.port,
-            )
-            raise ZenResponseError("Invalid response from controller")
+        # ERROR / INVALID are soft failures: return payload + code so callers can
+        # treat them like NO_ANSWER (None). Raising here breaks discovery/interview
+        # for paid-feature and similar controller responses.
 
         # Write to cache?
         if cacheable and cache_key is not None:
