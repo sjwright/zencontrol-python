@@ -38,6 +38,10 @@ Not implemented:
 * Command to read an ambient light sensor's lux value. _(As a workaround, you can target a light sensor to a system variable. Not elegant but it works.)_
 * Event notification for ambient light sensor lux values. _(Same workaround as above.)_
 
+## License
+
+[MIT](LICENSE)
+
 ## Links
 
 * [About TPI Advanced](https://support.zencontrol.com/hc/en-us/articles/360000337175-What-is-the-Third-Party-Interface-TPI)
