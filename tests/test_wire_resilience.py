@@ -236,3 +236,123 @@ def test_resolve_unicast_advertise_ip_uses_route_via_controller() -> None:
 def test_default_retries_constant() -> None:
     assert ClientConst.DEFAULT_RETRIES >= 1
     assert EventConst.DEFAULT_MAX_QUEUE_SIZE >= 1
+
+
+@pytest.mark.asyncio
+async def test_send_request_timeout_with_retries_returns_timeout() -> None:
+    """wait_for used to cancel the Future; retries must still yield TIMEOUT."""
+    client = ZenClient(("127.0.0.1", 5108))
+    client._closed = False
+    transport = MagicMock()
+    transport.is_closing.return_value = False
+    client._transport = transport
+
+    req = Request(command=0x10, data=[0x00, 0x00, 0x00, 0x00])
+    resp = await client.send_request(req, timeout=0.05, retries=1)
+    assert resp.response_type == ResponseType.TIMEOUT
+    assert transport.sendto.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_send_request_allows_concurrent_awaits() -> None:
+    """Lock must not cover RTT — two in-flight requests with different seqs."""
+    client = ZenClient(("127.0.0.1", 5108))
+    client._closed = False
+    transport = MagicMock()
+    transport.is_closing.return_value = False
+    client._transport = transport
+
+    async def one_request(cmd: int) -> Response:
+        return await client.send_request(
+            Request(command=cmd, data=[0x00, 0x00, 0x00, 0x00]),
+            timeout=0.2,
+            retries=0,
+        )
+
+    t1 = asyncio.create_task(one_request(0x10))
+    t2 = asyncio.create_task(one_request(0x11))
+    await asyncio.sleep(0)  # let both register pending
+    assert len(client._pending) == 2
+    seqs = list(client._pending.keys())
+    for seq in seqs:
+        fut, req = client._pending[seq]
+        fut.set_result(Response(ResponseType.OK, seq=seq, request=req))
+    r1, r2 = await asyncio.gather(t1, t2)
+    assert r1.response_type == ResponseType.OK
+    assert r2.response_type == ResponseType.OK
+
+
+@pytest.mark.asyncio
+async def test_invalid_checksum_completes_pending_as_invalid() -> None:
+    client = ZenClient(("127.0.0.1", 5108))
+    loop = asyncio.get_running_loop()
+    fut: asyncio.Future[Response] = loop.create_future()
+    req = Request(command=0x10, data=[0x00, 0x00, 0x00, 0x00])
+    req.seq = 7
+    client._pending[7] = (fut, req)
+
+    # OK type, seq 7, len 0, bad checksum
+    await client._receive_response(bytes([0xA0, 7, 0, 0xFF]), ("127.0.0.1", 5108))
+    assert fut.done()
+    assert fut.result().response_type == ResponseType.INVALID
+
+
+@pytest.mark.asyncio
+async def test_send_packet_error_raises_zen_response_error() -> None:
+    from zencontrol.exceptions import ZenResponseError
+    from zencontrol.api.types import ZenErrorCode
+
+    protocol = ZenProtocol()
+    controller = ZenController(
+        id="1",
+        name="ctrl",
+        label="Ctrl",
+        host="127.0.0.1",
+        port=5108,
+        protocol=protocol,
+    )
+    fake_client = MagicMock()
+    fake_client.is_connected.return_value = True
+    fake_client.send_request_with_retries = AsyncMock(
+        return_value=Response(
+            ResponseType.ERROR,
+            data=bytes([ZenErrorCode.PAID_FEATURE.value]),
+        )
+    )
+    controller.client = fake_client
+
+    with pytest.raises(ZenResponseError) as exc_info:
+        await protocol._send_packet(
+            controller,
+            Request(command=0x10, data=[0x00, 0x00, 0x00, 0x00]),
+        )
+    assert exc_info.value.code == ZenErrorCode.PAID_FEATURE.value
+    assert exc_info.value.error_code == ZenErrorCode.PAID_FEATURE
+
+
+def test_mac_requires_six_bytes() -> None:
+    with pytest.raises(ValueError, match="6 bytes"):
+        ZenController(
+            id="1",
+            name="ctrl",
+            label="Ctrl",
+            host="127.0.0.1",
+            port=5108,
+            mac="aa:bb",
+        )
+
+    ctrl = ZenController(
+        id="1",
+        name="ctrl2",
+        label="Ctrl",
+        host="127.0.0.1",
+        port=5108,
+        mac="aa:bb:cc:dd:ee:ff",
+    )
+    assert ctrl.mac_bytes == bytes.fromhex("aabbccddeeff")
+
+
+def test_response_timeout_constant_matches_client() -> None:
+    from zencontrol.api.types import Const
+
+    assert Const.RESPONSE_TIMEOUT == ClientConst.DEFAULT_TIMEOUT

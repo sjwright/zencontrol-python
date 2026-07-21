@@ -1,11 +1,12 @@
 import asyncio
 import yaml
+from pathlib import Path
 from zencontrol import ZenProtocol, ZenController, run_with_keyboard_interrupt
 
 async def main():
     """Test system variable queries and sets"""
     # Load configuration
-    config = yaml.safe_load(open("tests/config.yaml"))
+    config = yaml.safe_load(open(Path(__file__).resolve().parents[2] / "tests" / "config.yaml"))
     
     # Create protocol and controller
     async with ZenProtocol(print_traffic=True) as tpi:

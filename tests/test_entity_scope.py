@@ -77,6 +77,9 @@ def test_controller_same_name_same_protocol_is_singleton() -> None:
         host="127.0.0.1",
         port=5108,
     )
+    a.client = object()  # type: ignore[assignment]
+    a.version = "1.2.3"
+    a.startup_complete = True
     b = ZenController(
         protocol=zen.protocol,
         id=2,
@@ -88,4 +91,8 @@ def test_controller_same_name_same_protocol_is_singleton() -> None:
     assert a is b
     assert a.label == "Second"
     assert a.host == "10.0.0.1"
+    # Re-construct must not wipe live transport / interview state
+    assert a.client is not None
+    assert a.version == "1.2.3"
+    assert a.startup_complete is True
     zen.clear_entity_caches()

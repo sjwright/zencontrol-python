@@ -13,7 +13,7 @@ sys.stdout.reconfigure(line_buffering=True)
 
 from zencontrol import ZenProtocol, ZenController, ZenAddress, ZenInstance, run_with_keyboard_interrupt
 
-CONFIG_PATH = Path(__file__).parent / "config.yaml"
+CONFIG_PATH = Path(__file__).resolve().parents[2] / "tests" / "config.yaml"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logger = logging.getLogger("test_events")

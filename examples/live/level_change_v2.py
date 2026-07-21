@@ -14,7 +14,7 @@ from zencontrol.api.protocol import ZenProtocol
 from zencontrol.api.types import ZenAddressType, ZenEventCode
 from zencontrol.utils import run_with_keyboard_interrupt
 
-CONFIG_PATH = Path(__file__).parent / "config.yaml"
+CONFIG_PATH = Path(__file__).resolve().parents[2] / "tests" / "config.yaml"
 ECG_ADDRESS = 33
 TIMEOUT_SECONDS = 5.0
 

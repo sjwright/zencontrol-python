@@ -1,11 +1,12 @@
 import asyncio
 from zencontrol import ZenControl, ZenProfile, ZenGroup, ZenLight, ZenButton, ZenMotionSensor, ZenSystemVariable, ZenColour, run_with_keyboard_interrupt
 import yaml
+from pathlib import Path
 import time
 from typing import Optional
 
 async def main():
-    config = yaml.safe_load(open("tests/config.yaml"))
+    config = yaml.safe_load(open(Path(__file__).resolve().parents[2] / "tests" / "config.yaml"))
     zi = ZenControl(print_traffic=False)
     zi.add_controller(**config.get('zencontrol')[0])
 
