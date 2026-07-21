@@ -177,7 +177,7 @@ class Const:
     MAX_ECD = 64  # 0-63
     MAX_INSTANCE = 32  # 0-31
     MAX_GROUP = 16  # 0-15
-    MAX_SCENE = 12  # 0-11
+    MAX_SCENE = 12  # Zencontrol scenes 0-11 (not DALI's 16 gear slots; see query_scene_levels_by_address)
     MAX_SYSVAR = 148  # 0-147
     MAX_LEVEL = 254  # 255 is mask value (i.e. no change)
     MIN_KELVIN = 1000

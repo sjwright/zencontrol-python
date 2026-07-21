@@ -1361,7 +1361,13 @@ class ZenProtocol:
         return await self._send_basic(address.controller, self.CMD["QUERY_SCENE_NUMBERS_BY_ADDRESS"], address.ecg(), return_type='list')
 
     async def query_scene_levels_by_address(self, address: ZenAddress) -> list[Optional[int]]:
-        """Query a DALI address (ECG) for its DALI scene levels. Returns a list of 16 scene level values (0-254, or None if not part of scene)."""
+        """Query scene levels for a DALI address (ECG).
+
+        Zencontrol has 12 scenes (0–11). This TPI command still returns 16 bytes
+        because it dumps the full DALI gear scene table (slots 0–15); values of
+        255 mean “not in that scene.” Treat only indices 0–11 as Zencontrol
+        scenes — slots 12–15 are unused padding, not extra product scenes.
+        """
         response = await self._send_basic(address.controller, self.CMD["QUERY_SCENE_LEVELS_BY_ADDRESS"], address.ecg(), return_type='list', cacheable=True)
         if response:
             return [None if x == 255 else x for x in response]
@@ -1375,7 +1381,12 @@ class ZenProtocol:
         return []
 
     async def query_scene_colours_by_address(self, address: ZenAddress) -> list[Optional[ZenColour]]:
-        """Query a DALI address (ECG) for its colour scene data. Returns a list of 16 scene level values (0-254, or None if not part of scene)."""
+        """Query colour scene data for a DALI address (ECG).
+
+        Returns a list of length Const.MAX_SCENE (12): scenes 0–11 only.
+        Colour TPI opcodes cover 0–7 and 8–11; there is no colour data for
+        DALI gear slots 12–15.
+        """
         # Create a list of 12 ZenColour instances
         output: list[Optional[ZenColour]] = [None] * Const.MAX_SCENE
         # Queries
