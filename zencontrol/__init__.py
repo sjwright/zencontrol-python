@@ -53,7 +53,7 @@ from .io import ZenClient, ZenListener, ZenEvent, Request, Response, ResponseTyp
 
 # Shared types and exceptions
 from .api.types import ZenAddressType, ZenInstanceType, ZenColourType, ZenEventCode, ZenEventMask, ZenEventMode
-from .exceptions import ZenError, ZenTimeoutError, ZenResponseError
+from .exceptions import ZenError, ZenTimeoutError, ZenResponseError, ZenConnectionError, ZenConfigurationError
 
 # Utilities
 from .utils import run_with_keyboard_interrupt
@@ -95,6 +95,8 @@ __all__ = [
     "ZenError",
     "ZenTimeoutError",
     "ZenResponseError",
+    "ZenConnectionError",
+    "ZenConfigurationError",
     
     # Types and enums
     "ZenAddressType",

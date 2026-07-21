@@ -67,11 +67,15 @@ class ZenController:
     def _update_mac_bytes(self, value: Optional[str]) -> None:
         """Update mac_bytes from a MAC string (or clear it)."""
         if value is not None:
-            object.__setattr__(
-                self,
-                "mac_bytes",
-                bytes.fromhex(value.replace(":", "").replace("-", "")),
-            )
+            try:
+                mac_bytes = bytes.fromhex(value.replace(":", "").replace("-", ""))
+            except ValueError as err:
+                raise ValueError(f"Invalid MAC address {value!r}") from err
+            if len(mac_bytes) != 6:
+                raise ValueError(
+                    f"MAC address must be 6 bytes, got {len(mac_bytes)} from {value!r}"
+                )
+            object.__setattr__(self, "mac_bytes", mac_bytes)
         else:
             object.__setattr__(self, "mac_bytes", None)
     

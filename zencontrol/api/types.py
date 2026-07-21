@@ -167,8 +167,10 @@ class ZenEventMask:
 # API-level constants
 class Const:
     """API-level constants"""
-    # UDP protocol - use zen_protocol constants
-    RESPONSE_TIMEOUT = 3.0  # Default timeout from ClientConst
+    # UDP / connection — keep in sync with ClientConst.DEFAULT_TIMEOUT
+    RESPONSE_TIMEOUT = 1.5
+    # ZenControl.start() waits this long for the first successful event-listener connect
+    START_TIMEOUT = 30.0
 
     # DALI limits
     MAX_ECG = 64  # 0-63

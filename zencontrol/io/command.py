@@ -228,44 +228,43 @@ class ZenClient:
         timeout = max(ClientConst.MIN_TIMEOUT, min(timeout, ClientConst.MAX_TIMEOUT))
         if retries < 0: retries = 0
 
+        loop = asyncio.get_running_loop()
+        fut: asyncio.Future[Response]
+
+        # Hold the lock only for seq allocation + pending registration (not RTT)
         async with self._lock:
-            # Create a future to await the response
-            loop = asyncio.get_running_loop()
-            fut: asyncio.Future[Response] = loop.create_future()
-
-            # Allocate a sequence number
-            req.seq = self._alloc_seq()
-
-            # Add the future and request to the pending requests
-            if req.seq in self._pending: raise RuntimeError(f"sequence {req.seq} already pending, which shouldn't be possible because we just allocated it")
-            self._pending[req.seq] = (fut, req)
-            
-            # Send the request and wait for the future to complete
-            try:
-                wire = req.to_bytes(checksum=self._checksum)
-                for i in range(retries + 1):
-                    if self._closed or self._transport is None:
-                        return Response(ResponseType.TIMEOUT, request=req)
-                    try:
-                        req.timestamp = time.time() # Update timestamp when sending the request
-                        self._transport.sendto(wire) # Connected socket doesn't need address
-                    except Exception as e:
-                        self.logger.debug(f"Send failed (attempt {i + 1}): {e}")
-                    try:
-                        resp: Response = await asyncio.wait_for(fut, timeout=timeout)
-                        resp.request = req
-                        return resp
-                    except asyncio.TimeoutError:
-                        if i == retries:
-                            break
-                        continue
-                # Retries exhausted
+            if self._closed or self._transport is None:
                 return Response(ResponseType.TIMEOUT, request=req)
-            finally:
-                # Delete the future and request from the pending requests
-                self._pending.pop(req.seq, None)
-                if not fut.done():
-                    fut.cancel()
+            fut = loop.create_future()
+            req.seq = self._alloc_seq()
+            if req.seq in self._pending:
+                raise RuntimeError(
+                    f"sequence {req.seq} already pending, which shouldn't be possible "
+                    "because we just allocated it"
+                )
+            self._pending[req.seq] = (fut, req)
+            wire = req.to_bytes(checksum=self._checksum)
+
+        try:
+            for i in range(retries + 1):
+                if self._closed or self._transport is None:
+                    return Response(ResponseType.TIMEOUT, request=req)
+                try:
+                    req.timestamp = time.time()
+                    self._transport.sendto(wire)
+                except Exception as e:
+                    self.logger.debug(f"Send failed (attempt {i + 1}): {e}")
+                # asyncio.wait does not cancel fut on timeout (unlike wait_for)
+                done, _ = await asyncio.wait({fut}, timeout=timeout)
+                if done:
+                    resp = fut.result()
+                    resp.request = req
+                    return resp
+            return Response(ResponseType.TIMEOUT, request=req)
+        finally:
+            self._pending.pop(req.seq, None)
+            if not fut.done():
+                fut.cancel()
 
     async def send_request_with_retries(
         self,
@@ -309,17 +308,42 @@ class ZenClient:
         data_length_byte = datagram[2]
         data_bytes = datagram[3:-1] # may be empty
         checksum_byte = datagram[-1]
+
+        def _fail_pending(reason: str) -> None:
+            pending = self._pending.get(sequence_byte)
+            if not pending:
+                self.logger.debug(
+                    "Dropping invalid response (%s) seq=%s from %s",
+                    reason,
+                    sequence_byte,
+                    addr,
+                )
+                return
+            future, request = pending
+            if not future.done():
+                future.set_result(
+                    Response(
+                        ResponseType.INVALID,
+                        seq=sequence_byte,
+                        raw_rcvd=datagram,
+                        request=request,
+                        addr=addr,
+                    )
+                )
         
         # Packet length mismatch
         if len(datagram) != data_length_byte + 3 + 1: # data_len + 3 header + 1 checksum
+            _fail_pending("length")
             return
         
         # Checksum mismatch
         if checksum_byte != self._checksum(datagram[:-1]):
+            _fail_pending("checksum")
             return
 
         # Unknown response type
         if response_type_byte not in (ResponseType.OK, ResponseType.ANSWER, ResponseType.NO_ANSWER, ResponseType.ERROR):
+            _fail_pending("type")
             return
 
         # Valid response

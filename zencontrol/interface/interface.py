@@ -11,6 +11,7 @@ from ..api import ZenProtocol, ZenController as SuperZenController, ZenAddress, 
 from ..api.models import DiscoveredController
 from ..api.protocol import ZenCallbacks
 from ..api.types import Const
+from ..exceptions import ZenConnectionError
 
 """
 ===================================================================================
@@ -285,7 +286,16 @@ class ZenControl:
         )
         if self._supervisor_task is None or self._supervisor_task.done():
             self._supervisor_task = asyncio.create_task(self._event_monitor_supervisor())
-        await self._first_connected.wait()
+        try:
+            await asyncio.wait_for(
+                self._first_connected.wait(),
+                timeout=Const.START_TIMEOUT,
+            )
+        except asyncio.TimeoutError as err:
+            await self.stop()
+            raise ZenConnectionError(
+                f"Event monitoring failed to connect within {Const.START_TIMEOUT:.0f}s"
+            ) from err
 
     async def stop(self) -> None:
         """Stop reconnect supervisor and event monitoring (keeps entity caches)."""
@@ -601,9 +611,11 @@ class ZenController(SuperZenController):
             inst.client = None  # Will be initialized when first used
             object.__setattr__(inst, "_ip", None)
             object.__setattr__(inst, "mac_bytes", None)
+            object.__setattr__(inst, "_dataclass_initialized", False)
             inst._reset()
             # Don't call interview() here - it will be called async later
         inst = registry[name]
+        # Always refresh config fields; never wipe transport/interview state via __init__
         inst.protocol = protocol
         inst.id = str(id)
         inst.name = name
@@ -616,7 +628,9 @@ class ZenController(SuperZenController):
         return inst
 
     def __init__(self, protocol: ZenProtocol, id: int, name: str, label: str, host: str, port: int = 5108, mac: Optional[str] = None, filtering: bool = False) -> None:
-        # Satisfy reportMissingSuperCall; __new__ owns singleton field assignment.
+        # Dataclass __init__ resets client/version/etc. Run only once per singleton.
+        if getattr(self, "_dataclass_initialized", False):
+            return
         super().__init__(
             id=str(id),
             name=name,
@@ -627,6 +641,7 @@ class ZenController(SuperZenController):
             protocol=protocol,
             filtering=filtering,
         )
+        object.__setattr__(self, "_dataclass_initialized", True)
     
     @classmethod
     async def create(cls, protocol: ZenProtocol, id: int, name: str, label: str, host: str, port: int = 5108, mac: Optional[str] = None, filtering: bool = False) -> "ZenController":

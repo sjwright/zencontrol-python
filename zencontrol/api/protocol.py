@@ -423,7 +423,9 @@ class ZenProtocol:
         match response_code:
             case 0xA0: # OK
                 match return_type:
-                    case 'ok':
+                    case 'ok' | 'bool':
+                        # PDF documents OK for several commands (e.g. filter add/clear).
+                        # Treating OK as True for bool keeps clients aligned with hardware.
                         return True
                     case _:
                         raise ValueError(f"Invalid return_type '{return_type}' for response code {response_code}")
@@ -444,6 +446,8 @@ class ZenProtocol:
                         if response_data and len(response_data) == 1: return int(response_data[0])
                     case 'bool':
                         if response_data and len(response_data) == 1: return bool(response_data[0])
+                    case 'ok':
+                        return True
                     case _:
                         raise ValueError(f"Invalid return_type '{return_type}' for response code {response_code}")
             case 0xA2: # NO_ANSWER
@@ -453,21 +457,35 @@ class ZenProtocol:
                     case _:
                         return None
             case 0xA3: # ERROR
-                if response_data:
-                    error_code = ZenErrorCode(response_data[0]) if response_data[0] in ZenErrorCode._value2member_map_ else None
-                    error_label = error_code.name if error_code else f"Unknown error code: {hex(response_data[0])}"
-                    self.logger.error(f"Command error code: {error_label}")
-                else:
-                    self.logger.error("Command error (no error code)")
+                self._raise_response_error(response_data)
             case 0xAE: # TIMEOUT
                 self.logger.error("Command timed out")
                 return None
             case 0xAF: # INVALID
-                self.logger.error("Invalid response code")
-                return None
+                raise ZenResponseError("Invalid response from controller")
             case _:
                 self.logger.error(f"Unknown response code: {response_code}")
         return None
+
+    def _raise_response_error(self, response_data: Optional[bytes]) -> None:
+        """Log and raise ZenResponseError for a TPI ERROR payload."""
+        code: Optional[int] = response_data[0] if response_data else None
+        error_code = (
+            ZenErrorCode(code)
+            if code is not None and code in ZenErrorCode._value2member_map_
+            else None
+        )
+        label = (
+            error_code.name
+            if error_code
+            else (f"Unknown error code: {hex(code)}" if code is not None else "no error code")
+        )
+        self.logger.error(f"Command error code: {label}")
+        raise ZenResponseError(
+            f"Command error: {label}",
+            code=code,
+            error_code=error_code,
+        )
         
     async def _send_colour(self, controller: ZenController, command: int, address: int, colour: ZenColour, level: int = 255) -> Optional[bool]:
         """Send a DALI colour command."""
@@ -496,13 +514,9 @@ class ZenProtocol:
                     self.logger.error(f"No answer with code: {response_data}")
                 return None
             case 0xA3: # ERROR
-                if response_data:
-                    error_code = ZenErrorCode(response_data[0]) if response_data[0] in ZenErrorCode._value2member_map_ else None
-                    error_label = error_code.name if error_code else f"Unknown error code: {hex(response_data[0])}"
-                    self.logger.error(f"Command error code: {error_label}")
-                else:
-                    self.logger.error("Command error (no error code)")
-                return None
+                self._raise_response_error(response_data)
+            case 0xAF: # INVALID
+                raise ZenResponseError("Invalid response from controller")
             case _:
                 self.logger.error(f"Unknown response type: {response_code}")
                 return None
@@ -559,6 +573,17 @@ class ZenProtocol:
             await self._invalidate_client(controller)
             controller.refresh_ip()
             raise ZenTimeoutError(f"No response from {controller.host}:{controller.port} after {wait_time_ms:.0f}ms")
+
+        if response.response_type == ResponseType.ERROR:
+            self._raise_response_error(response.data)
+
+        if response.response_type == ResponseType.INVALID:
+            self.logger.error(
+                "Invalid UDP response from %s:%s",
+                controller.host,
+                controller.port,
+            )
+            raise ZenResponseError("Invalid response from controller")
 
         # Write to cache?
         if cacheable and cache_key is not None:
@@ -688,8 +713,15 @@ class ZenProtocol:
         try:
             async with event_listener:
                 async for event in event_listener.events():
-                    # Process the event using the new ZenEvent structure
-                    await self._process_zen_event(event)
+                    try:
+                        await self._process_zen_event(event)
+                    except Exception as e:
+                        self.logger.error(
+                            "Error processing event from %s: %s",
+                            getattr(event, "ip_address", "?"),
+                            e,
+                            exc_info=True,
+                        )
             self.logger.error("Async event listener stopped unexpectedly")
         except asyncio.CancelledError:
             unexpected = False
@@ -718,6 +750,16 @@ class ZenProtocol:
                 if ctrl.mac_bytes == mac:
                     return ctrl
         return None
+
+    def _ecd_address_from_target(
+        self, controller: ZenController, target: int
+    ) -> Optional[ZenAddress]:
+        """Map an event target byte to an ECD ZenAddress, or None if out of range."""
+        number = target - 64
+        if not 0 <= number <= 63:
+            self.logger.error(f"Invalid ECD event target: {target}")
+            return None
+        return ZenAddress(controller=controller, type=ZenAddressType.ECD, number=number)
 
     async def _handle_unknown_controller(self, event: ZenEvent) -> None:
         """Identify a new controller from multicast, query its label, and remember it."""
@@ -853,7 +895,9 @@ class ZenProtocol:
                         Fore.CYAN + f" Button {target-64}.{payload[0]} pressed" +
                         Style.RESET_ALL)
                 if self.button_press_callback:
-                    address = ZenAddress(controller=controller, type=ZenAddressType.ECD, number=target-64)
+                    address = self._ecd_address_from_target(controller, target)
+                    if address is None:
+                        return
                     instance = ZenInstance(address=address, type=ZenInstanceType.PUSH_BUTTON, number=payload[0])
                     await self.button_press_callback(instance=instance, payload=payload)
 
@@ -863,7 +907,9 @@ class ZenProtocol:
                         Fore.CYAN + f" Button {target-64}.{payload[0]} held" +
                         Style.RESET_ALL)
                 if self.button_hold_callback:
-                    address = ZenAddress(controller=controller, type=ZenAddressType.ECD, number=target-64)
+                    address = self._ecd_address_from_target(controller, target)
+                    if address is None:
+                        return
                     instance = ZenInstance(address=address, type=ZenInstanceType.PUSH_BUTTON, number=payload[0])
                     await self.button_hold_callback(instance=instance, payload=payload)
 
@@ -874,7 +920,9 @@ class ZenProtocol:
                         Style.DIM + f" [{' '.join(f'0x{b:02X}' for b in payload)}]" +
                         Style.RESET_ALL)
                 if self.absolute_input_callback:
-                    address = ZenAddress(controller=controller, type=ZenAddressType.ECD, number=target-64)
+                    address = self._ecd_address_from_target(controller, target)
+                    if address is None:
+                        return
                     instance = ZenInstance(address=address, type=ZenInstanceType.ABSOLUTE_INPUT, number=payload[0])
                     await self.absolute_input_callback(instance=instance, payload=payload)
 
@@ -938,7 +986,9 @@ class ZenProtocol:
                         Style.DIM + f" [{' '.join(f'0x{b:02X}' for b in payload)}]" +
                         Style.RESET_ALL)
                 if self.is_occupied_callback:
-                    address = ZenAddress(controller=controller, type=ZenAddressType.ECD, number=target-64)
+                    address = self._ecd_address_from_target(controller, target)
+                    if address is None:
+                        return
                     instance = ZenInstance(address=address, type=ZenInstanceType.OCCUPANCY_SENSOR, number=payload[0])
                     await self.is_occupied_callback(instance=instance, payload=payload)
                 
