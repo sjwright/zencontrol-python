@@ -18,6 +18,19 @@ from ..io import ZenClient
 from .types import ZenAddressType, ZenInstanceType, ZenColourType, Const
 
 
+DEFAULT_CONTROLLER_PORT = 5108
+
+
+@dataclass(frozen=True)
+class DiscoveredController:
+    """A controller identified from multicast events (not yet registered)."""
+
+    host: str
+    mac: str
+    label: Optional[str] = None
+    port: int = DEFAULT_CONTROLLER_PORT
+
+
 @dataclass
 class ZenController:
     """Represents a ZenControl controller

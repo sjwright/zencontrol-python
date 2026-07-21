@@ -8,6 +8,7 @@ from typing import Any, Optional, Callable, Awaitable, cast, Self
 from collections.abc import Coroutine
 
 from ..api import ZenProtocol, ZenController as SuperZenController, ZenAddress, ZenInstance, ZenAddressType, ZenColour, ZenColourType, ZenInstanceType
+from ..api.models import DiscoveredController
 from ..api.protocol import ZenCallbacks
 from ..api.types import Const
 
@@ -217,6 +218,18 @@ class ZenControl:
     def system_variable_change(self, func: "CallbackSystemVariableChange | None") -> None:
         self.protocol.callbacks.system_variable_change = func
 
+    @property
+    def controller_discovered(self) -> "CallbackControllerDiscovered | None":
+        return self.protocol.callbacks.controller_discovered
+    @controller_discovered.setter
+    def controller_discovered(self, func: "CallbackControllerDiscovered | None") -> None:
+        self.protocol.callbacks.controller_discovered = func
+
+    @property
+    def discovered_controllers(self) -> list[DiscoveredController]:
+        """Controllers identified from multicast but not yet registered."""
+        return list(self.protocol.identified_controllers)
+
     # ============================
     # Setup / Start / Stop
     # ============================
@@ -227,6 +240,31 @@ class ZenControl:
         # list is invariant; protocol expects the API-level ZenController type
         self.protocol.set_controllers(cast(list[SuperZenController], self.controllers))
         return controller
+
+    async def discover(self, timeout: float = 5.0) -> list[DiscoveredController]:
+        """Listen for multicast and return controllers identified within ``timeout`` seconds.
+
+        Starts event monitoring if needed. Works with zero registered controllers
+        and also reports controllers that are not already registered while running.
+        """
+        before = {
+            (d.mac.upper().replace("-", ":"), d.host)
+            for d in self.protocol.identified_controllers
+        }
+        started_here = False
+        if self._supervisor_task is None or self._supervisor_task.done():
+            await self.start()
+            started_here = True
+        try:
+            await asyncio.sleep(timeout)
+        finally:
+            if started_here:
+                await self.stop()
+        return [
+            d
+            for d in self.protocol.identified_controllers
+            if (d.mac.upper().replace("-", ":"), d.host) not in before
+        ]
 
     async def start(self) -> None:
         """Start event monitoring with automatic reconnect on unexpected loss."""
@@ -1577,3 +1615,4 @@ CallbackButtonPress = Callable[[ZenButton], Awaitable[None]]
 CallbackButtonLongPress = Callable[[ZenButton], Awaitable[None]]
 CallbackMotionEvent = Callable[[ZenMotionSensor, bool], Awaitable[None]]
 CallbackSystemVariableChange = Callable[[ZenSystemVariable, int, bool, bool], Awaitable[None]]
+CallbackControllerDiscovered = Callable[[DiscoveredController], Awaitable[None]]

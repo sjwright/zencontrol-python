@@ -11,10 +11,28 @@ from colorama import Fore, Back, Style
 from dataclasses import dataclass, field
 
 from ..io import ZenClient, ZenListener, ZenEvent, Request, Response, ResponseType, RequestType, EventConst, ClientConst
-from .models import ZenController, ZenAddress, ZenInstance, ZenColour, ZenProfile
+from .models import (
+    DEFAULT_CONTROLLER_PORT,
+    DiscoveredController,
+    ZenController,
+    ZenAddress,
+    ZenInstance,
+    ZenColour,
+    ZenProfile,
+)
 from .types import ZenAddressType, ZenInstanceType, ZenColourType, ZenEventCode, ZenEventMask, ZenEventMode, ZenErrorCode, Const
 from ..exceptions import ZenError, ZenTimeoutError, ZenResponseError
 from ..utils import local_ip_for_remote
+
+
+def _mac_bytes_to_str(mac: bytes) -> str:
+    """Format MAC bytes as uppercase colon-separated hex."""
+    return ":".join(f"{b:02X}" for b in mac)
+
+
+def _mac_str_to_key(mac: str) -> str:
+    """Normalize a MAC string to uppercase hex without separators."""
+    return mac.upper().replace(":", "").replace("-", "")
 
 """
 ===================================================================================
@@ -40,6 +58,9 @@ class ZenCallbacks:
         self.button_long_press: Optional[Callable[..., Awaitable[None]]] = None
         self.motion_event: Optional[Callable[..., Awaitable[None]]] = None
         self.system_variable_change: Optional[Callable[..., Awaitable[None]]] = None
+        self.controller_discovered: Optional[
+            Callable[[DiscoveredController], Awaitable[None]]
+        ] = None
 
 
 class EntityRegistry:
@@ -216,6 +237,13 @@ class ZenProtocol:
         
         # Controllers will be assigned later
         self.controllers = []
+        # Controllers identified via multicast but not yet registered
+        self.identified_controllers: list[DiscoveredController] = []
+        self._discovery_pending_macs: set[str] = set()
+        self._discovery_pending_ips: set[str] = set()
+        self.controller_discovered_callback: Optional[
+            Callable[[DiscoveredController], Awaitable[None]]
+        ] = None
         # High-level callback registry (replaced per ZenControl instance)
         self.callbacks = ZenCallbacks()
         # Interface-layer entity identity (scoped to this protocol)
@@ -275,6 +303,39 @@ class ZenProtocol:
 
     def set_controllers(self, controllers: list[ZenController]):
         self.controllers = controllers # Used to match events to controllers, and include controller objects in callbacks
+        # Drop identified entries that are now registered
+        for ctrl in controllers:
+            self.forget_identified(host=ctrl.host, mac=ctrl.mac)
+
+    def get_identified_by_ip_mac(
+        self, ip: Optional[str] = None, mac: Optional[bytes | str] = None
+    ) -> Optional[DiscoveredController]:
+        """Find an already-identified (discovered) controller by IP or MAC."""
+        mac_key: Optional[str] = None
+        if isinstance(mac, bytes):
+            mac_key = _mac_str_to_key(_mac_bytes_to_str(mac))
+        elif isinstance(mac, str):
+            mac_key = _mac_str_to_key(mac)
+        for discovered in self.identified_controllers:
+            if ip is not None and discovered.host == ip:
+                return discovered
+            if mac_key is not None and _mac_str_to_key(discovered.mac) == mac_key:
+                return discovered
+        return None
+
+    def forget_identified(
+        self, *, host: Optional[str] = None, mac: Optional[str] = None
+    ) -> None:
+        """Remove matching entries from the identified-controller cache."""
+        mac_key = _mac_str_to_key(mac) if mac else None
+        self.identified_controllers = [
+            d
+            for d in self.identified_controllers
+            if not (
+                (host is not None and d.host == host)
+                or (mac_key is not None and _mac_str_to_key(d.mac) == mac_key)
+            )
+        ]
 
     # ============================
     # PACKET SENDING
@@ -657,7 +718,88 @@ class ZenProtocol:
                 if ctrl.mac_bytes == mac:
                     return ctrl
         return None
-    
+
+    async def _handle_unknown_controller(self, event: ZenEvent) -> None:
+        """Identify a new controller from multicast, query its label, and remember it."""
+        mac_str = _mac_bytes_to_str(event.mac_address)
+        mac_key = _mac_str_to_key(mac_str)
+        host = event.ip_address
+
+        if self.get_identified_by_ip_mac(host, event.mac_address) is not None:
+            return
+        if mac_key in self._discovery_pending_macs or host in self._discovery_pending_ips:
+            return
+
+        self._discovery_pending_macs.add(mac_key)
+        self._discovery_pending_ips.add(host)
+        label: Optional[str] = None
+        temp: Optional[ZenController] = None
+        try:
+            temp = ZenController(
+                id=f"discover-{mac_key}",
+                name=f"_discover_{mac_key}",
+                label="",
+                host=host,
+                port=DEFAULT_CONTROLLER_PORT,
+                mac=mac_str,
+                protocol=self,
+            )
+            try:
+                label = await self.query_controller_label(temp)
+            except ZenTimeoutError:
+                self.logger.info(
+                    "Discovered controller %s (%s) but label query timed out",
+                    host,
+                    mac_str,
+                )
+            except Exception as err:
+                self.logger.warning(
+                    "Discovered controller %s (%s) but label query failed: %s",
+                    host,
+                    mac_str,
+                    err,
+                )
+
+            # Re-check in case a race registered the controller meanwhile
+            if self.get_controller_by_ip_mac(host, event.mac_address) is not None:
+                return
+            if self.get_identified_by_ip_mac(host, event.mac_address) is not None:
+                return
+
+            discovered = DiscoveredController(
+                host=host,
+                mac=mac_str,
+                label=label,
+                port=DEFAULT_CONTROLLER_PORT,
+            )
+            self.identified_controllers.append(discovered)
+            self.logger.info(
+                "Identified controller %s mac=%s label=%r",
+                host,
+                mac_str,
+                label,
+            )
+
+            callback = self.controller_discovered_callback
+            if callback is None and callable(self.callbacks.controller_discovered):
+                callback = self.callbacks.controller_discovered
+            if callable(callback):
+                try:
+                    await callback(discovered)
+                except Exception as err:
+                    self.logger.error(
+                        "controller_discovered callback error: %s", err, exc_info=err
+                    )
+        finally:
+            self._discovery_pending_macs.discard(mac_key)
+            self._discovery_pending_ips.discard(host)
+            if temp is not None and temp.client is not None:
+                try:
+                    await temp.client.close()
+                except Exception:
+                    pass
+                temp.client = None
+
     async def _process_zen_event(self, event: ZenEvent):
         """Process received ZenEvent from ZenListener"""
         typecast = "unicast" if self.unicast else "multicast"
@@ -665,7 +807,7 @@ class ZenProtocol:
         # Find the controller that sent this event
         controller = self.get_controller_by_ip_mac(event.ip_address, event.mac_address)
         if not controller:
-            self.logger.warning(f"Received {typecast} packet from unknown controller: {event.ip_address}: [{' '.join(f'0x{b:02X}' for b in event.raw_data)}]")
+            await self._handle_unknown_controller(event)
             return
 
         ip_address = event.ip_address

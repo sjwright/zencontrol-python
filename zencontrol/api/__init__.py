@@ -8,7 +8,7 @@ This module contains models and types that belong to the API layer:
 - Types and enums used by the API layer
 """
 
-from .models import ZenController, ZenAddress, ZenInstance, ZenColour, ZenProfile
+from .models import ZenController, ZenAddress, ZenInstance, ZenColour, ZenProfile, DiscoveredController
 from .protocol import ZenProtocol
 from .types import ZenAddressType, ZenInstanceType, ZenColourType, ZenEventMask, ZenEventMode
 
@@ -19,6 +19,7 @@ __all__ = [
     "ZenInstance",
     "ZenColour",
     "ZenProfile",
+    "DiscoveredController",
     "ZenProtocol",
     
     # API-level types

@@ -45,7 +45,7 @@ from .interface import (
 )
 
 # API-level models (used by zen_api)
-from .api.models import ZenAddress, ZenInstance, ZenColour
+from .api.models import ZenAddress, ZenInstance, ZenColour, DiscoveredController
 from .api.protocol import ZenProtocol
 
 # Low-level models (used by zen_io)
@@ -80,6 +80,7 @@ __all__ = [
     "ZenInstance",
     "ZenProtocol",
     "ZenColour",
+    "DiscoveredController",
 
     # Low-level models (for advanced users)
     "ZenClient",
