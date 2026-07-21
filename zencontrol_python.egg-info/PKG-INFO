@@ -3,7 +3,7 @@ Name: zencontrol-python
 Version: 0.1.0
 Summary: Python implementation of the Zencontrol TPI Advanced protocol for DALI lighting controllers.
 Author: Simon Wright
-License-Expression: LGPL-2.1-only
+License-Expression: MIT
 Project-URL: Homepage, https://github.com/sjwright/zencontrol-python
 Project-URL: Repository, https://github.com/sjwright/zencontrol-python
 Project-URL: Issues, https://github.com/sjwright/zencontrol-python/issues
@@ -73,6 +73,10 @@ Not implemented:
 * Command to list active system variables _(As a workaround, you can query every number for its label. This assumes no system variables of interest are unlabelled.)_
 * Command to read an ambient light sensor's lux value. _(As a workaround, you can target a light sensor to a system variable. Not elegant but it works.)_
 * Event notification for ambient light sensor lux values. _(Same workaround as above.)_
+
+## License
+
+[MIT](LICENSE)
 
 ## Links
 
