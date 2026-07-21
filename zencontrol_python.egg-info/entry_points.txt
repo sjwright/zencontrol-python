@@ -1,2 +1,0 @@
-[console_scripts]
-zencontrol-mqtt = examples.mqtt_bridge:main
