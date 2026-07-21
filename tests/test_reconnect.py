@@ -122,3 +122,45 @@ async def test_stop_does_not_reconnect() -> None:
         await zen.stop()
         await asyncio.sleep(0.1)
         assert create_count == 1
+
+
+@pytest.mark.asyncio
+async def test_supervisor_cancel_does_not_reconnect() -> None:
+    """HA cancels tasks on shutdown before unload sets _stopping — no reconnect."""
+    zen = ZenControl()
+    zen.reconnect_min_delay = 0.01
+    started = asyncio.Event()
+    create_count = 0
+
+    class _BlockingListener(_ControllableListener):
+        async def events(self):
+            started.set()
+            try:
+                while True:
+                    await asyncio.sleep(3600)
+                    yield  # pragma: no cover
+            except asyncio.CancelledError:
+                raise
+
+    async def fake_create(*args, **kwargs):
+        nonlocal create_count
+        create_count += 1
+        return _BlockingListener()
+
+    with patch(
+        "zencontrol.api.protocol.ZenListener.create",
+        new=AsyncMock(side_effect=fake_create),
+    ):
+        await zen.start()
+        await asyncio.wait_for(started.wait(), timeout=1.0)
+        assert create_count == 1
+        assert zen._supervisor_task is not None
+
+        zen._supervisor_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await zen._supervisor_task
+
+        await asyncio.sleep(0.1)
+        assert create_count == 1
+        # Mimic unload after task cancel
+        await zen.aclose()

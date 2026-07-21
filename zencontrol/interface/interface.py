@@ -353,8 +353,9 @@ class ZenControl:
             try:
                 await event_task
             except asyncio.CancelledError:
-                if self._stopping:
-                    return
+                # HA (and asyncio) cancel tasks on shutdown before unload can set
+                # _stopping. Never reconnect on cancel — always exit.
+                raise
             except Exception as err:
                 self.logger.error(f"Event monitor task error: {err}")
 
@@ -374,7 +375,7 @@ class ZenControl:
             try:
                 await asyncio.sleep(delay)
             except asyncio.CancelledError:
-                return
+                raise
 
     async def _prepare_for_reconnect(self) -> None:
         """Drop stale clients and refresh DNS before binding the listener again."""
