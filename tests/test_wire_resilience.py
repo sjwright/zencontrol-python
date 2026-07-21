@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+import socket
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -42,6 +43,65 @@ async def test_event_queue_drop_oldest_under_backpressure() -> None:
     second = listener._event_queue.get_nowait()
     assert first.event_code == 2
     assert second.event_code == 3
+
+
+@pytest.mark.asyncio
+async def test_multicast_listener_joins_before_endpoint_and_drops_on_stop() -> None:
+    """Reuse/join must happen before asyncio owns the socket; DROP before close."""
+    fake_sock = MagicMock()
+    fake_transport = MagicMock()
+    fake_transport.is_closing.return_value = False
+    fake_transport.get_extra_info.return_value = fake_sock
+
+    with patch("zencontrol.io.event.socket.socket", return_value=fake_sock):
+        loop = asyncio.get_running_loop()
+        with patch.object(
+            loop,
+            "create_datagram_endpoint",
+            new_callable=AsyncMock,
+            return_value=(fake_transport, MagicMock()),
+        ) as create_endpoint:
+            listener = await ZenListener.create(unicast=False)
+
+    create_endpoint.assert_awaited_once()
+    assert create_endpoint.await_args.kwargs["sock"] is fake_sock
+    assert listener._mreq is not None
+
+    # First setsockopt should be SO_REUSEADDR (before bind); ADD_MEMBERSHIP after bind
+    first_opt = fake_sock.setsockopt.call_args_list[0].args[:2]
+    assert first_opt == (socket.SOL_SOCKET, socket.SO_REUSEADDR)
+    assert fake_sock.bind.call_args_list[0] == call(
+        ("0.0.0.0", EventConst.MULTICAST_PORT)
+    )
+    add_call = next(
+        c
+        for c in fake_sock.setsockopt.call_args_list
+        if c.args[:2] == (socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP)
+    )
+    assert add_call.args[2] == listener._mreq
+    bind_pos = next(
+        i for i, (name, *_) in enumerate(fake_sock.method_calls) if name == "bind"
+    )
+    add_pos = next(
+        i
+        for i, (name, args, _) in enumerate(fake_sock.method_calls)
+        if name == "setsockopt"
+        and args[:2] == (socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP)
+    )
+    assert bind_pos < add_pos
+
+    joined_mreq = add_call.args[2]
+    await listener.stop_listening()
+
+    drop_calls = [
+        c
+        for c in fake_sock.setsockopt.call_args_list
+        if c.args[:2] == (socket.IPPROTO_IP, socket.IP_DROP_MEMBERSHIP)
+    ]
+    assert len(drop_calls) == 1
+    assert drop_calls[0].args[2] == joined_mreq
+    fake_transport.close.assert_called_once()
+    assert listener._mreq is None
 
 
 def test_local_ip_for_remote_returns_ipv4() -> None:

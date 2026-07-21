@@ -99,6 +99,8 @@ class ZenListener:
         self.transport: Optional[asyncio.DatagramTransport] = None
         self.protocol: Optional[ZenEventProtocol] = None
         self._stop_event = asyncio.Event()
+        # Exact IP_ADD_MEMBERSHIP bytes so DROP can leave the same group on unload/reload
+        self._mreq: Optional[bytes] = None
 
         # Bounded queue: drop-oldest under backpressure so the UDP path never stalls
         self._event_queue: asyncio.Queue[ZenEvent] = asyncio.Queue(maxsize=self.max_queue_size)
@@ -132,10 +134,12 @@ class ZenListener:
     async def stop_listening(self):
         if self.transport and not self.transport.is_closing():
             self._stop_event.set()
+            self._drop_multicast_membership()
             self.transport.close()
             self.transport = None
             self.protocol = None
-            
+            self._mreq = None
+
             # Clear any remaining events in queue
             while not self._event_queue.empty():
                 try:
@@ -143,7 +147,7 @@ class ZenListener:
                     self._event_queue.task_done()
                 except asyncio.QueueEmpty:
                     break
-        
+
         self.logger.info("Stopped event listener")
 
     async def close(self):
@@ -154,9 +158,37 @@ class ZenListener:
         """Check if the listener is active and ready"""
         return self.transport is not None and not self.transport.is_closing()
 
+    def _drop_multicast_membership(self) -> None:
+        """Leave the IGMP group before close to reduce reload bind races."""
+        if self.unicast or self._mreq is None or self.transport is None:
+            return
+        try:
+            sock = self.transport.get_extra_info("socket")
+            if sock:
+                sock.setsockopt(socket.IPPROTO_IP, socket.IP_DROP_MEMBERSHIP, self._mreq)
+        except OSError as err:
+            self.logger.debug(f"Error dropping multicast membership: {err}")
+
+    def _create_multicast_socket(self) -> socket.socket:
+        """Bind a reusable UDP socket and join the ZenControl event group."""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        except (AttributeError, OSError):
+            pass
+
+        bind_ip = self.listen_ip or "0.0.0.0"
+        sock.bind((bind_ip, EventConst.MULTICAST_PORT))
+
+        group = socket.inet_aton(EventConst.MULTICAST_GROUP)
+        self._mreq = struct.pack("=4sI", group, socket.INADDR_ANY)
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, self._mreq)
+        return sock
+
     async def _create_datagram_endpoint(self):
         loop = asyncio.get_running_loop()
-        
+
         if self.unicast:
             # Unicast mode
             self.transport, _ = await loop.create_datagram_endpoint(
@@ -168,27 +200,30 @@ class ZenListener:
             if sockname:
                 self.listen_port = sockname[1]
             self.logger.info(f"Listening for unicast events on {self.listen_ip}:{self.listen_port}")
-        else:  
-            # Multicast mode
+        else:
+            # Multicast: reuse + join before asyncio owns the socket
+            sock = self._create_multicast_socket()
             try:
                 self.transport, _ = await loop.create_datagram_endpoint(
                     lambda: ZenEventProtocol(self._receive_event, self.logger),
-                    local_addr=('0.0.0.0', EventConst.MULTICAST_PORT),
-                    reuse_port=True
+                    sock=sock,
                 )
-                self.logger.info(f"Listening for multicast events on {EventConst.MULTICAST_GROUP}:{EventConst.MULTICAST_PORT}")
-
-                # Join the multicast group
-                sock = self.transport.get_extra_info('socket')
-                if sock:
-                    # Set socket options for multicast
-                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                    group = socket.inet_aton(EventConst.MULTICAST_GROUP)
-                    mreq = struct.pack('=4sI', group, socket.INADDR_ANY)
-                    sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
             except Exception as e:
                 self.logger.critical(f"Failed to create multicast endpoint: {e}")
+                try:
+                    if self._mreq is not None:
+                        sock.setsockopt(
+                            socket.IPPROTO_IP, socket.IP_DROP_MEMBERSHIP, self._mreq
+                        )
+                except OSError:
+                    pass
+                sock.close()
+                self._mreq = None
                 raise
+            self.logger.info(
+                f"Listening for multicast events on "
+                f"{EventConst.MULTICAST_GROUP}:{EventConst.MULTICAST_PORT}"
+            )
 
     async def _receive_event(self, data: bytes, addr: Tuple[str, int]):
         """Process received event data"""
