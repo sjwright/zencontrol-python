@@ -43,6 +43,9 @@ mqtt = [
     "aiomqtt>=2.1.0",
     "PyYAML>=6.0",
 ]
+# Simulator integration tests (tests/test_sim_*.py) need zencontrol-simulator
+# (pip install -e ../zencontrol-simulator, or a sibling ../zencontrol-simulator
+# checkout) plus PyYAML.
 
 [project.scripts]
 zencontrol-mqtt = "examples.mqtt_bridge:main"
@@ -102,3 +105,6 @@ python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = "-v --tb=short"
 asyncio_mode = "auto"
+markers = [
+    "simulator: integration tests that start zencontrol-simulator (installed or sibling ../zencontrol-simulator checkout)",
+]

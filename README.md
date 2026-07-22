@@ -18,19 +18,33 @@ Built on top of this is an example MQTT bridge for Home Assistant. See [examples
 Refer to zencontrol-tpi project for now.
 For integrators, the library is also published on PyPI.
 
+## Testing
+
+Integration tests start [zencontrol-simulator](https://github.com/sjwright/zencontrol-simulator) on an ephemeral local port and exercise the real UDP TPI path. Either install the simulator, or check it out as a sibling directory (`../zencontrol-simulator`); tests will pick it up automatically. PyYAML is a simulator dependency.
+
+```bash
+pip install -e ".[dev]"
+pip install PyYAML
+# optional if not using a sibling checkout:
+# pip install -e ../zencontrol-simulator
+pytest -m simulator
+pytest -m "not simulator"
+# or run everything:
+pytest
+```
+
 ## Limitations
 
 Implemented but untested:
-  
-* Dealing with multiple controllers (I only have one controller)
+
 * RGB+ and XY colour commands (I don't have any compatible lights)
 * Numerical (absolute) instances (I don't have any such ECDs)
-* Event filtering (I haven't tested it)
 
 Not implemented:
 
 * Any commands involving DMX, Control4, or virtual instances (I don't have licenses for any of these so I couldn't test them even if I wanted to, but the scaffolding is there if anyone wishes to add support)
 * Any commands described in the documentation as "legacy" (they aren't useful)
+
 ## TPI Advanced wishlist
 
 * Command to return a controller's MAC address used for multicast packets _(There are other ways to get or infer the MAC access, but they're unreliable.)_
