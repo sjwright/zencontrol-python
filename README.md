@@ -4,23 +4,24 @@ This is an implementation of the **Zencontrol TPI Advanced** protocol, written i
 
 - zencontrol.io: Implementation of the raw TPI Advanced UDP packet specification;
 - zencontrol.api: Implementation of most TPI Advanced API commands and events;
-- zencontrol.interface: An opinionated abstraction layer suitable for integration into smart building control software. It provides methods, objects, and callbacks for managing lights, groups, profiles, buttons, motion sensors, and system variables. This code is still undergoing significant refinement.
+- zencontrol.interface: An opinionated abstraction layer suitable for integration into smart building control software. It provides methods, objects, and callbacks for managing lights, groups, profiles, buttons, motion sensors, and system variables.
 
-Built on top of this is an example MQTT bridge for Home Assistant. See [examples/mqtt_bridge.md](examples/mqtt_bridge.md).
+This library has now undergone validation in multiple environments. There is an extensive test suite, some of which uses
+[zencontrol-simulator](https://github.com/sjwright/zencontrol-simulator), a nearly feature-complete simulator of zencontrol hardware.
+A practical demonstration is [zencontrol-tpi](https://github.com/sjwright/zencontrol-tpi), a comprehensive Home Assistant integration.
 
 ## Requirements
 
 * Python 3.11 (or later)
-* Controller firmware 2.2.11 (or later)
+* Controller firmware 2.2.130 or later is strongly recommended (minimum 2.2.11 required)
 
 ## Install
 
-Refer to zencontrol-tpi project for now.
-For integrators, the library is also published on PyPI.
+This library is available on PyPI.
 
 ## Testing
 
-Integration tests start [zencontrol-simulator](https://github.com/sjwright/zencontrol-simulator) on an ephemeral local port and exercise the real UDP TPI path. Either install the simulator, or check it out as a sibling directory (`../zencontrol-simulator`); tests will pick it up automatically. PyYAML is a simulator dependency.
+Integration tests start [zencontrol-simulator](https://github.com/sjwright/zencontrol-simulator) on an ephemeral local port and exercise a real UDP TPI protocol path. Either install the simulator, or check it out as a sibling directory (`../zencontrol-simulator`); tests will pick it up automatically. Note that PyYAML is a simulator dependency.
 
 ```bash
 pip install -e ".[dev]"
@@ -35,12 +36,10 @@ pytest
 
 ## Limitations
 
-Implemented but untested:
+* RGB+ and XY colour commands are not tested (I don't have any compatible lights)
+* Numerical (absolute) instances are not tested (I don't have any such ECDs)
 
-* RGB+ and XY colour commands (I don't have any compatible lights)
-* Numerical (absolute) instances (I don't have any such ECDs)
-
-Not implemented:
+## Out of scope
 
 * Any commands involving DMX, Control4, or virtual instances (I don't have licenses for any of these so I couldn't test them even if I wanted to, but the scaffolding is there if anyone wishes to add support)
 * Any commands described in the documentation as "legacy" (they aren't useful)
