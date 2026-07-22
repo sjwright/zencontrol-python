@@ -8,7 +8,7 @@ This is an implementation of the **Zencontrol TPI Advanced** protocol, written i
 
 This library has now undergone validation in multiple environments. There is an extensive test suite, some of which uses
 [zencontrol-simulator](https://github.com/sjwright/zencontrol-simulator), a nearly feature-complete simulator of zencontrol hardware.
-A practical demonstration is [zencontrol-tpi](https://github.com/sjwright/zencontrol-tpi), a comprehensive Home Assistant integration.
+A practical demonstration is [zencontrol-homeassistant](https://github.com/sjwright/zencontrol-homeassistant), a comprehensive Home Assistant integration.
 
 ## Requirements
 
