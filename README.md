@@ -10,6 +10,30 @@ This library has now undergone validation in multiple environments. There is an 
 [zencontrol-simulator](https://github.com/sjwright/zencontrol-simulator), a nearly feature-complete simulator of zencontrol hardware.
 A practical demonstration is [zencontrol-homeassistant](https://github.com/sjwright/zencontrol-homeassistant), a comprehensive Home Assistant integration.
 
+## Features
+
+Beyond basic lighting control, this library supports:
+
+* **Broad command surface** — inhibit, custom fade, step/up/down helpers, colour scene membership queries, EAN/serial, and most related TPI Advanced commands
+* **Object-based entity model** — Optional. Expresses lights, groups, profiles, buttons, motion sensors, and system variables as rich objects with interview/discovery helpers
+* **UDP transport resilience** — request retries and queue-failure backoff
+* **Multicast controller discovery** — find controllers on the LAN without a preconfigured host
+* **Button events** — discovery of control-device button instances, plus press and long-press event callbacks
+* **Event filtering** — configure which TPI events the controller emits
+* **System variables** — labelled SV discovery, read/write, and change events
+* **Profiles** — query, change, and return to the scheduled profile
+* **Simulator-backed tests** — protocol path exercised against [zencontrol-simulator](https://github.com/sjwright/zencontrol-simulator)
+
+## Known limitations
+
+* RGB+ and XY colour commands have not been tested with hardware
+* Numerical (absolute) instances have not been tested with hardware
+
+## Out of scope
+
+* Any commands involving DMX, Control4, or virtual instances (I don't have licenses for any of these so I couldn't test them even if I wanted to, but the scaffolding is there if anyone wishes to add support)
+* Any commands described in the documentation as "legacy" (they aren't useful)
+
 ## Requirements
 
 * Python 3.14 (or later)
@@ -33,16 +57,6 @@ pytest -m "not simulator"
 # or run everything:
 pytest
 ```
-
-## Limitations
-
-* RGB+ and XY colour commands are not tested (I don't have any compatible lights)
-* Numerical (absolute) instances are not tested (I don't have any such ECDs)
-
-## Out of scope
-
-* Any commands involving DMX, Control4, or virtual instances (I don't have licenses for any of these so I couldn't test them even if I wanted to, but the scaffolding is there if anyone wishes to add support)
-* Any commands described in the documentation as "legacy" (they aren't useful)
 
 ## TPI Advanced wishlist
 
