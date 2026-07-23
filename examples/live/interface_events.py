@@ -3,7 +3,6 @@ from zencontrol import ZenControl, ZenProfile, ZenGroup, ZenLight, ZenButton, Ze
 import yaml
 from pathlib import Path
 import time
-from typing import Optional
 
 async def main():
     config = yaml.safe_load(open(Path(__file__).resolve().parents[2] / "tests" / "config.yaml"))
@@ -21,11 +20,11 @@ async def main():
         ms()
         print(f"Profile Change Event     - {profile}")
 
-    async def _zen_group_change(group: ZenGroup, level: Optional[int] = None, colour: Optional[ZenColour] = None, scene: Optional[int] = None, discoordinated: bool = False) -> None:
+    async def _zen_group_change(group: ZenGroup, level: int | None = None, colour: ZenColour | None = None, scene: int | None = None, discoordinated: bool = False) -> None:
         ms()
         print(f"Group Change Event       - {group} level {level} colour {colour} scene {scene} {'discoordinated' if discoordinated else ''}")
 
-    async def _zen_light_change(light: ZenLight, level: Optional[int] = None, colour: Optional[ZenColour] = None, scene: Optional[int] = None) -> None:
+    async def _zen_light_change(light: ZenLight, level: int | None = None, colour: ZenColour | None = None, scene: int | None = None) -> None:
         ms()
         print(f"Light Change Event       - {light} level {level} colour {colour} scene {scene}")
 

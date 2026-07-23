@@ -7,7 +7,7 @@ name = "zencontrol-python"
 dynamic = ["version"]
 description = "Python implementation of the Zencontrol TPI Advanced protocol for DALI lighting controllers."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.14"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [
@@ -19,9 +19,7 @@ classifiers = [
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Home Automation",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed",
@@ -67,7 +65,7 @@ zencontrol = ["py.typed"]
 
 [tool.black]
 line-length = 88
-target-version = ['py311']
+target-version = ['py314']
 include = '\.pyi?$'
 extend-exclude = '''
 /(
@@ -84,7 +82,7 @@ extend-exclude = '''
 '''
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.14"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
@@ -108,3 +106,10 @@ asyncio_mode = "auto"
 markers = [
     "simulator: integration tests that start zencontrol-simulator (installed or sibling ../zencontrol-simulator checkout)",
 ]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["ASYNC", "B", "E", "F", "I", "UP"]

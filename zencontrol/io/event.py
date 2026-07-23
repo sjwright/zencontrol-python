@@ -23,12 +23,11 @@ import socket
 import struct
 import logging
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, AsyncGenerator
 from dataclasses import dataclass, field
-from typing import Optional, Tuple, AsyncGenerator
 
 # Event classes
-@dataclass
+@dataclass(slots=True)
 class ZenEvent:
     """Represents a Zen TPI event"""
     raw_data: bytes
@@ -51,8 +50,8 @@ class EventConst:
 class ZenEventProtocol(asyncio.DatagramProtocol):
     def __init__(
         self,
-        event_handler: Callable[[bytes, Tuple[str, int]], Awaitable[None]],
-        logger: Optional[logging.Logger] = None,
+        event_handler: Callable[[bytes, tuple[str, int]], Awaitable[None]],
+        logger: logging.Logger | None = None,
     ):
         self.event_handler = event_handler
         self.logger = logger or logging.getLogger(__name__)
@@ -86,7 +85,7 @@ class ZenListener:
         unicast: bool = False,
         listen_ip: str = "0.0.0.0",
         listen_port: int = 0,
-        logger: Optional[logging.Logger] = None,
+        logger: logging.Logger | None = None,
         max_queue_size: int = EventConst.DEFAULT_MAX_QUEUE_SIZE,
     ):
         self.unicast = unicast
@@ -96,11 +95,11 @@ class ZenListener:
         self.max_queue_size = max(1, max_queue_size)
 
         # Modern asyncio components
-        self.transport: Optional[asyncio.DatagramTransport] = None
-        self.protocol: Optional[ZenEventProtocol] = None
+        self.transport: asyncio.DatagramTransport | None = None
+        self.protocol: ZenEventProtocol | None = None
         self._stop_event = asyncio.Event()
         # Exact IP_ADD_MEMBERSHIP bytes so DROP can leave the same group on unload/reload
-        self._mreq: Optional[bytes] = None
+        self._mreq: bytes | None = None
 
         # Bounded queue: drop-oldest under backpressure so the UDP path never stalls
         self._event_queue: asyncio.Queue[ZenEvent] = asyncio.Queue(maxsize=self.max_queue_size)
@@ -113,7 +112,7 @@ class ZenListener:
         unicast: bool = False,
         listen_ip: str = "0.0.0.0",
         listen_port: int = 0,
-        logger: Optional[logging.Logger] = None,
+        logger: logging.Logger | None = None,
         max_queue_size: int = EventConst.DEFAULT_MAX_QUEUE_SIZE,
     ) -> "ZenListener":
         """Create and start a ZenListener instance"""
@@ -225,7 +224,7 @@ class ZenListener:
                 f"{EventConst.MULTICAST_GROUP}:{EventConst.MULTICAST_PORT}"
             )
 
-    async def _receive_event(self, data: bytes, addr: Tuple[str, int]):
+    async def _receive_event(self, data: bytes, addr: tuple[str, int]):
         """Process received event data"""
         typecast = "unicast" if self.unicast else "multicast"
         
@@ -299,7 +298,7 @@ class ZenListener:
                 self.dropped_events,
             )
 
-    async def events(self, timeout: Optional[float] = None) -> AsyncGenerator[ZenEvent, None]:
+    async def events(self, timeout: float | None = None) -> AsyncGenerator[ZenEvent, None]:
         """Async generator yielding events as they arrive"""
         while not self._stop_event.is_set():
             try:
@@ -314,7 +313,7 @@ class ZenListener:
                     break
                 continue
     
-    async def get_event(self, timeout: Optional[float] = None) -> Optional[ZenEvent]:
+    async def get_event(self, timeout: float | None = None) -> ZenEvent | None:
         """Get next event from queue"""
         try:
             event = await asyncio.wait_for(self._event_queue.get(), timeout=timeout)
@@ -323,7 +322,7 @@ class ZenListener:
         except asyncio.TimeoutError:
             return None
     
-    async def get_events(self, count: int, timeout: Optional[float] = None) -> list[ZenEvent]:
+    async def get_events(self, count: int, timeout: float | None = None) -> list[ZenEvent]:
         """Get multiple events from queue"""
         events = []
         for _ in range(count):

@@ -4,8 +4,7 @@ ZenControl library exceptions.
 This module defines all custom exceptions used throughout the library.
 """
 
-from typing import Any, Optional
-
+from typing import Any
 
 class ZenError(Exception):
     """Base exception for Zen protocol errors"""
@@ -24,7 +23,7 @@ class ZenResponseError(ZenError):
         self,
         message: str,
         *,
-        code: Optional[int] = None,
+        code: int | None = None,
         error_code: Any = None,
     ) -> None:
         super().__init__(message)

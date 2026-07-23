@@ -5,7 +5,7 @@ import json
 import yaml
 import re
 from pathlib import Path
-from typing import Optional, Any
+from typing import Any
 import zencontrol
 from zencontrol import ZenController, ZenProtocol, ZenClient, ZenColour, ZenColourType, ZenProfile, ZenLight, ZenGroup, ZenButton, ZenMotionSensor, ZenSystemVariable, ZenTimeoutError, ZenAddressType
 from zencontrol.api.types import Const as ApiConst
@@ -814,9 +814,9 @@ class ZenMQTTBridge:
     async def _mqtt_light_change(self, light: ZenLight|ZenGroup, payload: dict[str, Any]) -> None:
         addr = light.address
         ctrl = addr.controller
-        state: Optional[str] = payload.get("state", None)
-        brightness: Optional[int] = payload.get("brightness", None)
-        mireds: Optional[int] = payload.get("color_temp", None)
+        state: str | None = payload.get("state", None)
+        brightness: int | None = payload.get("brightness", None)
+        mireds: int | None = payload.get("color_temp", None)
 
         # If brightness or temperature is set
         if brightness is not None or mireds is not None:
@@ -835,7 +835,7 @@ class ZenMQTTBridge:
             self.logger.info(f"♥️💡 Command from HA: {ctrl.name} turning gear {addr.number} ON")
             await light.on()
 
-    async def _zen_light_change(self, light: ZenLight, level: Optional[int] = None, colour: Optional[ZenColour] = None, scene: Optional[int] = None) -> None:
+    async def _zen_light_change(self, light: ZenLight, level: int | None = None, colour: ZenColour | None = None, scene: int | None = None) -> None:
         typestr = "group" if light.address.type == ZenAddressType.GROUP else "light"
         emoji = "👥" if light.address.type == ZenAddressType.GROUP else "💡"
         self.logger.info(f"🩵{emoji} Event from Zen: {typestr} {light.address.number}  level {level if level is not None else '--'}  colour {colour if colour is not None else '--'}  scene {scene if scene is not None else '--'}")
@@ -930,7 +930,7 @@ class ZenMQTTBridge:
     
     # mqtt group light change calls _mqtt_light_change
         
-    async def _zen_group_change(self, group: ZenGroup, level: Optional[int] = None, colour: Optional[ZenColour] = None, scene: Optional[int] = None, discoordinated: Optional[bool] = None) -> None:
+    async def _zen_group_change(self, group: ZenGroup, level: int | None = None, colour: ZenColour | None = None, scene: int | None = None, discoordinated: bool | None = None) -> None:
         select_mqtt_topic = group.client_data.get("select", {}).get('mqtt_topic', None)
 
         # Get the scene label for the ID from the group

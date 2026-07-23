@@ -12,7 +12,7 @@ import socket
 import struct
 import time
 from dataclasses import dataclass, field
-from typing import Any, Optional, Self
+from typing import Any, Self
 
 from ..io import ZenClient
 from .types import ZenAddressType, ZenInstanceType, ZenColourType, Const
@@ -21,13 +21,13 @@ from .types import ZenAddressType, ZenInstanceType, ZenColourType, Const
 DEFAULT_CONTROLLER_PORT = 5108
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class DiscoveredController:
     """A controller identified from multicast events (not yet registered)."""
 
     host: str
     mac: str
-    label: Optional[str] = None
+    label: str | None = None
     port: int = DEFAULT_CONTROLLER_PORT
 
 
@@ -43,17 +43,17 @@ class ZenController:
     label: str
     host: str
     port: int
-    mac: Optional[str] = None
-    mac_bytes: Optional[bytes] = field(init=False, default=None)
+    mac: str | None = None
+    mac_bytes: bytes | None = field(init=False, default=None)
     # Any avoids an import cycle with protocol.py (which imports this module).
-    protocol: Optional[Any] = None
-    version: Optional[str] = None
+    protocol: Any | None = None
+    version: str | None = None
     startup_complete: bool = False
     dali_ready: bool = False
     filtering: bool = False
     last_seen: float = field(default_factory=time.time)
-    client: Optional[ZenClient] = None
-    _ip: Optional[str] = field(init=False, repr=False, default=None)
+    client: ZenClient | None = None
+    _ip: str | None = field(init=False, repr=False, default=None)
 
     def __post_init__(self):
         self._update_mac_bytes(self.mac)
@@ -64,7 +64,7 @@ class ZenController:
         if name == "mac" and "mac_bytes" in self.__dict__:
             self._update_mac_bytes(value if isinstance(value, str) or value is None else None)
 
-    def _update_mac_bytes(self, value: Optional[str]) -> None:
+    def _update_mac_bytes(self, value: str | None) -> None:
         """Update mac_bytes from a MAC string (or clear it)."""
         if value is not None:
             try:
@@ -101,14 +101,14 @@ class ZenController:
         return self.ip
 
 
-@dataclass
+@dataclass(slots=True)
 class ZenAddress:
     """Represents a DALI address"""
     controller: ZenController
     type: ZenAddressType
     number: int
-    label: Optional[str] = field(default=None, init=False)
-    serial: Optional[str] = field(default=None, init=False)
+    label: str | None = field(default=None, init=False)
+    serial: str | None = field(default=None, init=False)
     
     @classmethod
     def broadcast(cls, controller: ZenController) -> Self:
@@ -168,14 +168,14 @@ class ZenAddress:
                     raise ValueError(f"Group address must be 0-15, got {self.number}")
 
 
-@dataclass
+@dataclass(slots=True)
 class ZenInstance:
     """Represents a DALI ECD instance"""
     address: ZenAddress
     type: ZenInstanceType
     number: int
-    active: Optional[bool] = None
-    error: Optional[bool] = None
+    active: bool | None = None
+    error: bool | None = None
     def __post_init__(self):
         if not 0 <= self.number < Const.MAX_INSTANCE: 
             raise ValueError(f"Instance number must be between 0 and {Const.MAX_INSTANCE-1}, received {self.number}")
@@ -185,100 +185,125 @@ class ZenInstance:
         return f"{self.address.entity_id_string()}_{self.number}"
 
 
-@dataclass
+@dataclass(slots=True)
 class ZenColour:
     """Represents a DALI color"""
-    type: Optional[ZenColourType] = None
-    kelvin: Optional[int] = None
-    r: Optional[int] = None
-    g: Optional[int] = None
-    b: Optional[int] = None
-    w: Optional[int] = None
-    a: Optional[int] = None
-    f: Optional[int] = None
-    x: Optional[int] = None
-    y: Optional[int] = None
+    type: ZenColourType | None = None
+    kelvin: int | None = None
+    r: int | None = None
+    g: int | None = None
+    b: int | None = None
+    w: int | None = None
+    a: int | None = None
+    f: int | None = None
+    x: int | None = None
+    y: int | None = None
     
     @classmethod
-    def from_bytes(cls, bytes: bytes) -> Optional[Self]:
-        if not bytes: # If bytes is empty, return None
-            return None
-        if bytes[0] == ZenColourType.RGBWAF.value and len(bytes) == 7:
-            return cls(type=ZenColourType.RGBWAF, r=bytes[1], g=bytes[2], b=bytes[3], w=bytes[4], a=bytes[5], f=bytes[6])
-        if bytes[0] == ZenColourType.TC.value and (len(bytes) == 3 or len(bytes) == 7):
-            kelvin = (bytes[1] << 8) | bytes[2]
-            return cls(type=ZenColourType.TC, kelvin=kelvin)
-        if bytes[0] == ZenColourType.XY.value and (len(bytes) == 5 or len(bytes) == 7):
-            x = (bytes[1] << 8) | bytes[2]
-            y = (bytes[3] << 8) | bytes[4]
-            return cls(type=ZenColourType.XY, x=x, y=y)
-        return None
+    def from_bytes(cls, data: bytes) -> Self | None:
+        match list(data):
+            case [ZenColourType.RGBWAF.value, r, g, b, w, a, f]:
+                return cls(type=ZenColourType.RGBWAF, r=r, g=g, b=b, w=w, a=a, f=f)
+            case [ZenColourType.TC.value, hi, lo] | [ZenColourType.TC.value, hi, lo, *_]:
+                if len(data) not in (3, 7):
+                    return None
+                return cls(type=ZenColourType.TC, kelvin=(hi << 8) | lo)
+            case [ZenColourType.XY.value, xh, xl, yh, yl] | [ZenColourType.XY.value, xh, xl, yh, yl, *_]:
+                if len(data) not in (5, 7):
+                    return None
+                return cls(type=ZenColourType.XY, x=(xh << 8) | xl, y=(yh << 8) | yl)
+            case _:
+                return None
     
     def __post_init__(self):
-        if self.type == ZenColourType.TC:
-            kelvin = self.kelvin
-            if kelvin is None:
-                raise ValueError("Kelvin is required for TC colour type")
-            if not Const.MIN_KELVIN <= kelvin <= Const.MAX_KELVIN:
-                #raise ValueError(f"Kelvin must be between {Const.MIN_KELVIN} and {Const.MAX_KELVIN}, received {self.kelvin}")
-                logging.getLogger(__name__).warning(
-                    "Kelvin %s out of range [%s, %s]; clamping",
-                    kelvin, Const.MIN_KELVIN, Const.MAX_KELVIN,
-                )
-                # set to the nearest valid value
-                self.kelvin = max(Const.MIN_KELVIN, min(Const.MAX_KELVIN, kelvin))
-        if self.type == ZenColourType.RGBWAF:
-            r, g, b = self.r, self.g, self.b
-            if r is None or not 0 <= r <= 255:
-                raise ValueError(f"R must be between 0 and 255, received {self.r}")
-            if g is None or not 0 <= g <= 255:
-                raise ValueError(f"G must be between 0 and 255, received {self.g}")
-            if b is None or not 0 <= b <= 255:
-                raise ValueError(f"B must be between 0 and 255, received {self.b}")
-            if self.w is not None and not 0 <= self.w <= 255:
-                raise ValueError(f"W must be between 0 and 255, received {self.w}")
-            if self.a is not None and not 0 <= self.a <= 255:
-                raise ValueError(f"A must be between 0 and 255, received {self.a}")
-            if self.f is not None and not 0 <= self.f <= 255:
-                raise ValueError(f"F must be between 0 and 255, received {self.f}")
-        if self.type == ZenColourType.XY:
-            x, y = self.x, self.y
-            if x is None or not 0 <= x <= 65535:
-                raise ValueError(f"X must be between 0 and 65535, received {self.x}")
-            if y is None or not 0 <= y <= 65535:
-                raise ValueError(f"Y must be between 0 and 65535, received {self.y}")
+        match self.type:
+            case ZenColourType.TC:
+                kelvin = self.kelvin
+                if kelvin is None:
+                    raise ValueError("Kelvin is required for TC colour type")
+                if not Const.MIN_KELVIN <= kelvin <= Const.MAX_KELVIN:
+                    logging.getLogger(__name__).warning(
+                        "Kelvin %s out of range [%s, %s]; clamping",
+                        kelvin, Const.MIN_KELVIN, Const.MAX_KELVIN,
+                    )
+                    self.kelvin = max(Const.MIN_KELVIN, min(Const.MAX_KELVIN, kelvin))
+            case ZenColourType.RGBWAF:
+                r, g, b = self.r, self.g, self.b
+                if r is None or not 0 <= r <= 255:
+                    raise ValueError(f"R must be between 0 and 255, received {self.r}")
+                if g is None or not 0 <= g <= 255:
+                    raise ValueError(f"G must be between 0 and 255, received {self.g}")
+                if b is None or not 0 <= b <= 255:
+                    raise ValueError(f"B must be between 0 and 255, received {self.b}")
+                if self.w is not None and not 0 <= self.w <= 255:
+                    raise ValueError(f"W must be between 0 and 255, received {self.w}")
+                if self.a is not None and not 0 <= self.a <= 255:
+                    raise ValueError(f"A must be between 0 and 255, received {self.a}")
+                if self.f is not None and not 0 <= self.f <= 255:
+                    raise ValueError(f"F must be between 0 and 255, received {self.f}")
+            case ZenColourType.XY:
+                x, y = self.x, self.y
+                if x is None or not 0 <= x <= 65535:
+                    raise ValueError(f"X must be between 0 and 65535, received {self.x}")
+                if y is None or not 0 <= y <= 65535:
+                    raise ValueError(f"Y must be between 0 and 65535, received {self.y}")
+            case _:
+                pass
     
     def __repr__(self) -> str:
-        if self.type == ZenColourType.TC:
-            return f"ZenColour(kelvin={self.kelvin})"
-        if self.type == ZenColourType.RGBWAF:
-            return f"ZenColour(r={self.r}, g={self.g}, b={self.b}, w={self.w}, a={self.a}, f={self.f})"
-        if self.type == ZenColourType.XY:
-            return f"ZenColour(x={self.x}, y={self.y})"
-        return f"ZenColour(type={self.type})"
-    
-    def __eq__(self, other):
-        if isinstance(other, self.__class__):
-            return self.__dict__ == other.__dict__
-        else:
-            return False
+        match self.type:
+            case ZenColourType.TC:
+                return f"ZenColour(kelvin={self.kelvin})"
+            case ZenColourType.RGBWAF:
+                return f"ZenColour(r={self.r}, g={self.g}, b={self.b}, w={self.w}, a={self.a}, f={self.f})"
+            case ZenColourType.XY:
+                return f"ZenColour(x={self.x}, y={self.y})"
+            case _:
+                return f"ZenColour(type={self.type})"
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, ZenColour):
+            return NotImplemented
+        return (
+            self.type == other.type
+            and self.kelvin == other.kelvin
+            and self.r == other.r
+            and self.g == other.g
+            and self.b == other.b
+            and self.w == other.w
+            and self.a == other.a
+            and self.f == other.f
+            and self.x == other.x
+            and self.y == other.y
+        )
     
     def to_bytes(self, level: int = 255) -> bytes:
         """Encode colour data as returned by QUERY_DALI_COLOUR (no address or arc level)."""
-        if self.type == ZenColourType.TC:
-            return struct.pack('>BH', 0x20, self.kelvin)
-        if self.type == ZenColourType.RGBWAF:
-            return struct.pack('BBBBBBB', 0x80, self.r, self.g, self.b, self.w if self.w is not None else 0, self.a if self.a is not None else 0, self.f if self.f is not None else 0)
-        if self.type == ZenColourType.XY:
-            return struct.pack('>BHH', 0x10, self.x, self.y)
-        return b''
+        match self.type:
+            case ZenColourType.TC:
+                return struct.pack(">BH", 0x20, self.kelvin)
+            case ZenColourType.RGBWAF:
+                return struct.pack(
+                    "BBBBBBB",
+                    0x80,
+                    self.r,
+                    self.g,
+                    self.b,
+                    self.w if self.w is not None else 0,
+                    self.a if self.a is not None else 0,
+                    self.f if self.f is not None else 0,
+                )
+            case ZenColourType.XY:
+                return struct.pack(">BHH", 0x10, self.x, self.y)
+            case _:
+                return b""
 
     def command_payload(self) -> bytes:
         """Colour type and channel bytes for DALI_COLOUR (follows address and arc level)."""
         return self.to_bytes()
 
 
-@dataclass
+@dataclass(slots=True)
 class ZenProfile:
     """Represents a DALI profile"""
     controller: ZenController

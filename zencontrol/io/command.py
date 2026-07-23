@@ -31,7 +31,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import Dict, Optional, Self, Tuple
+from typing import Self
 
 # Constants
 class ClientConst:
@@ -54,14 +54,14 @@ class RequestType(IntEnum):
     DALI_COLOUR = 0x03
     COMMAND = 0x04
 
-@dataclass
+@dataclass(slots=True)
 class Request:
     """Represents a request to be sent to the controller"""
     command: int
     data: bytes | list[int]
     request_type: RequestType = RequestType.BASIC
-    seq: Optional[int] = None
-    raw_sent: Optional[bytes] = None
+    seq: int | None = None
+    raw_sent: bytes | None = None
     timestamp: float = field(default_factory=time.time)
 
     def __post_init__(self):
@@ -107,28 +107,28 @@ class ResponseType(IntEnum):
     TIMEOUT = 0xAE
     INVALID = 0xAF
 
-@dataclass()
+@dataclass(slots=True)
 class Response:
     response_type: ResponseType
-    seq: Optional[int] = None
-    data: Optional[bytes] = None # empty for TIMEOUT and INVALID
-    raw_rcvd: Optional[bytes] = None
-    request: Optional[Request] = None
-    addr: Optional[Tuple[str, int]] = None
+    seq: int | None = None
+    data: bytes | None = None # empty for TIMEOUT and INVALID
+    raw_rcvd: bytes | None = None
+    request: Request | None = None
+    addr: tuple[str, int] | None = None
     timestamp: float = field(default_factory=time.time)
 
 # Protocol classes
 class ZenRequestProtocol(asyncio.DatagramProtocol):
     def __init__(
         self,
-        response_handler: Callable[[bytes, Tuple[str, int]], Awaitable[None]],
-        logger: Optional[logging.Logger] = None,
-        on_transport_lost: Optional[Callable[[Optional[Exception]], None]] = None,
+        response_handler: Callable[[bytes, tuple[str, int]], Awaitable[None]],
+        logger: logging.Logger | None = None,
+        on_transport_lost: Callable[[Exception | None], None] | None = None,
     ):
         self.response_handler = response_handler
         self.logger = logger or logging.getLogger(__name__)
         self.on_transport_lost = on_transport_lost
-        self.transport: Optional[asyncio.transports.DatagramTransport] = None
+        self.transport: asyncio.transports.DatagramTransport | None = None
         
     def connection_made(self, transport):
         self.transport = transport
@@ -169,19 +169,19 @@ class ZenClient:
       - On any non-catastrophic parse problem, deliver ResponseType.INVALID instead of raising.
     """
 
-    def __init__(self, server: Tuple[str, int], logger: Optional[logging.Logger] = None):
+    def __init__(self, server: tuple[str, int], logger: logging.Logger | None = None):
         self.server = server
         self.logger = logger or logging.getLogger(__name__)
-        self._transport: Optional[asyncio.transports.DatagramTransport] = None
-        self._protocol: Optional[ZenRequestProtocol] = None
-        self._pending: Dict[int, Tuple[asyncio.Future[Response], Request]] = {}
+        self._transport: asyncio.transports.DatagramTransport | None = None
+        self._protocol: ZenRequestProtocol | None = None
+        self._pending: dict[int, tuple[asyncio.Future[Response], Request]] = {}
         self._next_seq: int = 0
         self._closed = False
         self._stop_event = asyncio.Event()
         self._lock = asyncio.Lock()
     
     @classmethod
-    async def create(cls, server: Tuple[str, int], logger: Optional[logging.Logger] = None) -> Self:
+    async def create(cls, server: tuple[str, int], logger: logging.Logger | None = None) -> Self:
         self = cls(server, logger)
         loop = asyncio.get_running_loop()
         transport, protocol = await loop.create_datagram_endpoint(
@@ -197,7 +197,7 @@ class ZenClient:
         self.logger.info(f"Connected to Zen server at {server[0]}:{server[1]}")
         return self
 
-    def _mark_disconnected(self, exc: Optional[Exception] = None) -> None:
+    def _mark_disconnected(self, exc: Exception | None = None) -> None:
         """Mark the client dead after transport loss (must not await or take _lock)."""
         if self._closed:
             return
@@ -218,7 +218,7 @@ class ZenClient:
         self,
         req: Request,
         *,
-        timeout: Optional[float] = None,
+        timeout: float | None = None,
         retries: int = ClientConst.DEFAULT_RETRIES,
     ) -> Response:
         if self._closed: raise RuntimeError("Client is closed")
@@ -270,7 +270,7 @@ class ZenClient:
         self,
         req: Request,
         *,
-        timeout: Optional[float] = None,
+        timeout: float | None = None,
         retries: int = ClientConst.DEFAULT_RETRIES,
         queue_retries: int = ClientConst.QUEUE_FAILURE_RETRIES,
     ) -> Response:
@@ -296,7 +296,7 @@ class ZenClient:
         assert response is not None
         return response
 
-    async def _receive_response(self, datagram: bytes, addr: Tuple[str, int]):
+    async def _receive_response(self, datagram: bytes, addr: tuple[str, int]):
         
         # Too short to be a valid packet
         if len(datagram) < 4:

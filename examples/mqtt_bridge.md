@@ -4,7 +4,7 @@ Example Home Assistant bridge via MQTT auto-discovery. It reads settings from `c
 
 ## Requirements
 
-* Python 3.11 (or later)
+* Python 3.14 (or later)
 * Controller firmware 2.2.11 (or later)
 * An MQTT broker reachable from this host
 

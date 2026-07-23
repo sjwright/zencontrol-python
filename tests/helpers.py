@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
-from typing import Callable
+from collections.abc import Callable
 
+import asyncio
 
 async def wait_until(
     predicate: Callable[[], bool],

@@ -12,7 +12,7 @@ A practical demonstration is [zencontrol-homeassistant](https://github.com/sjwri
 
 ## Requirements
 
-* Python 3.11 (or later)
+* Python 3.14 (or later)
 * Controller firmware 2.2.130 or later is strongly recommended (minimum 2.2.11 required)
 
 ## Install

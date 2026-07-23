@@ -8,7 +8,7 @@ This module contains types and enums that belong to the API layer:
 """
 
 from enum import Enum
-from typing import Optional, Self
+from typing import Self
 from dataclasses import dataclass
 
 
@@ -49,7 +49,7 @@ class ZenErrorCode(Enum):
     UNKNOWN_TARGET = 0xB8
 
 
-@dataclass
+@dataclass(slots=True)
 class ZenEventMode:
     enabled: bool = False
     filtering: bool = False
@@ -89,7 +89,7 @@ class ZenEventCode(Enum):
     LEVEL_CHANGE_V2 = 0x0B
 
 
-@dataclass
+@dataclass(slots=True)
 class ZenEventMask:
     button_press: bool = False
     button_hold: bool = False

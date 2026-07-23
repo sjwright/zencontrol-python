@@ -1,11 +1,13 @@
 """
 Utility functions for the ZenControl library
 """
+
 import asyncio
 import signal
 import socket
 import sys
-from typing import Callable, Any
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 
 def local_ip_for_remote(remote_host: str) -> str:
@@ -31,7 +33,7 @@ def local_ip_for_remote(remote_host: str) -> str:
             return "127.0.0.1"
 
 
-def run_with_keyboard_interrupt(main_func: Callable[[], Any]) -> None:
+def run_with_keyboard_interrupt(main_func: Callable[[], Awaitable[Any]]) -> None:
     """
     Run an async main function with graceful KeyboardInterrupt handling.
     

@@ -4,8 +4,8 @@ import asyncio
 import json
 import time
 import logging
-from typing import Any, Optional, Callable, Awaitable, cast, Self
-from collections.abc import Coroutine
+from typing import Any, cast, Self
+from collections.abc import Coroutine, Callable, Awaitable
 
 from ..api import ZenProtocol, ZenController as SuperZenController, ZenAddress, ZenInstance, ZenAddressType, ZenColour, ZenColourType, ZenInstanceType
 from ..api.models import DiscoveredController
@@ -37,7 +37,7 @@ ZenInstance = Represents a DALI ECD instance.
 # Callback type definitions moved to end of file after class definitions
 
 
-def _assign_light_sub_labels(lights: list["ZenLight"] | set["ZenLight"]) -> None:
+def _assign_light_sub_labels(lights: list[ZenLight] | set[ZenLight]) -> None:
     """Derive ``sub_label`` for lights that share a comma-separated label.
 
     Controllers sometimes store one label string across several ECGs that share
@@ -69,44 +69,47 @@ def _assign_light_sub_labels(lights: list["ZenLight"] | set["ZenLight"]) -> None
             light.sub_label = part if part else f"Unused {light.address.number}"
 
 
-def _serialize_colour(colour: Optional[ZenColour]) -> Optional[dict[str, int | str | None]]:
+def _serialize_colour(colour: ZenColour | None) -> dict[str, int | str | None] | None:
     if colour is None or colour.type is None:
         return None
     data: dict[str, int | str | None] = {"type": colour.type.name.lower()}
-    if colour.type == ZenColourType.TC:
-        data["kelvin"] = colour.kelvin
-    elif colour.type == ZenColourType.RGBWAF:
-        data["r"] = colour.r
-        data["g"] = colour.g
-        data["b"] = colour.b
-        data["w"] = colour.w
-        data["a"] = colour.a
-        data["f"] = colour.f
-    elif colour.type == ZenColourType.XY:
-        data["x"] = colour.x
-        data["y"] = colour.y
+    match colour.type:
+        case ZenColourType.TC:
+            data["kelvin"] = colour.kelvin
+        case ZenColourType.RGBWAF:
+            data["r"] = colour.r
+            data["g"] = colour.g
+            data["b"] = colour.b
+            data["w"] = colour.w
+            data["a"] = colour.a
+            data["f"] = colour.f
+        case ZenColourType.XY:
+            data["x"] = colour.x
+            data["y"] = colour.y
     return data
 
 
-def _hydrate_colour(data: Optional[dict[str, Any]]) -> Optional[ZenColour]:
+def _hydrate_colour(data: dict[str, Any] | None) -> ZenColour | None:
     if data is None:
         return None
     colour_type = ZenColourType[str(data["type"]).upper()]
-    if colour_type == ZenColourType.TC:
-        return ZenColour(type=colour_type, kelvin=data.get("kelvin"))
-    if colour_type == ZenColourType.RGBWAF:
-        return ZenColour(
-            type=colour_type,
-            r=data.get("r"),
-            g=data.get("g"),
-            b=data.get("b"),
-            w=data.get("w"),
-            a=data.get("a"),
-            f=data.get("f"),
-        )
-    if colour_type == ZenColourType.XY:
-        return ZenColour(type=colour_type, x=data.get("x"), y=data.get("y"))
-    return None
+    match colour_type:
+        case ZenColourType.TC:
+            return ZenColour(type=colour_type, kelvin=data.get("kelvin"))
+        case ZenColourType.RGBWAF:
+            return ZenColour(
+                type=colour_type,
+                r=data.get("r"),
+                g=data.get("g"),
+                b=data.get("b"),
+                w=data.get("w"),
+                a=data.get("a"),
+                f=data.get("f"),
+            )
+        case ZenColourType.XY:
+            return ZenColour(type=colour_type, x=data.get("x"), y=data.get("y"))
+        case _:
+            return None
 
 
 def _serialize_group_address(address: ZenAddress) -> dict[str, int]:
@@ -125,8 +128,8 @@ class ZenControl:
                  logger: logging.Logger | None = None,
                  print_traffic: bool = False,
                  unicast: bool = False,
-                 listen_ip: Optional[str] = None,
-                 listen_port: Optional[int] = None,
+                 listen_ip: str | None = None,
+                 listen_port: int | None = None,
                  cache: dict[bytes, dict[str, Any]] | None = None
                  ):
         self.logger = logger or logging.getLogger(__name__)
@@ -136,7 +139,7 @@ class ZenControl:
         # instances (e.g. an integration and a test connection) cannot interfere.
         self.protocol.callbacks = ZenCallbacks()
         self._stopping = False
-        self._supervisor_task: Optional[asyncio.Task[None]] = None
+        self._supervisor_task: asyncio.Task[None] | None = None
         self._first_connected = asyncio.Event()
         self.reconnect_min_delay = Const.RECONNECT_MIN_DELAY
         self.reconnect_max_delay = Const.RECONNECT_MAX_DELAY
@@ -157,73 +160,73 @@ class ZenControl:
         return self.protocol.cache
 
     @property
-    def on_connect(self) -> "CallbackOnConnect | None":
+    def on_connect(self) -> CallbackOnConnect | None:
         return self.protocol.callbacks.on_connect
     @on_connect.setter
-    def on_connect(self, func: "CallbackOnConnect | None") -> None:
+    def on_connect(self, func: CallbackOnConnect | None) -> None:
         self.protocol.callbacks.on_connect = func
 
     @property
-    def on_disconnect(self) -> "CallbackOnDisconnect | None":
+    def on_disconnect(self) -> CallbackOnDisconnect | None:
         return self.protocol.callbacks.on_disconnect
     @on_disconnect.setter
-    def on_disconnect(self, func: "CallbackOnDisconnect | None") -> None:
+    def on_disconnect(self, func: CallbackOnDisconnect | None) -> None:
         self.protocol.callbacks.on_disconnect = func
 
     @property
-    def profile_change(self) -> "CallbackProfileChange | None":
+    def profile_change(self) -> CallbackProfileChange | None:
         return self.protocol.callbacks.profile_change
     @profile_change.setter
-    def profile_change(self, func: "CallbackProfileChange | None") -> None:
+    def profile_change(self, func: CallbackProfileChange | None) -> None:
         self.protocol.callbacks.profile_change = func
 
     @property
-    def group_change(self) -> "CallbackGroupChange | None":
+    def group_change(self) -> CallbackGroupChange | None:
         return self.protocol.callbacks.group_change
     @group_change.setter
-    def group_change(self, func: "CallbackGroupChange | None") -> None:
+    def group_change(self, func: CallbackGroupChange | None) -> None:
         self.protocol.callbacks.group_change = func
 
     @property
-    def light_change(self) -> "CallbackLightChange | None":
+    def light_change(self) -> CallbackLightChange | None:
         return self.protocol.callbacks.light_change
     @light_change.setter
-    def light_change(self, func: "CallbackLightChange | None") -> None:
+    def light_change(self, func: CallbackLightChange | None) -> None:
         self.protocol.callbacks.light_change = func
 
     @property
-    def button_press(self) -> "CallbackButtonPress | None":
+    def button_press(self) -> CallbackButtonPress | None:
         return self.protocol.callbacks.button_press
     @button_press.setter
-    def button_press(self, func: "CallbackButtonPress | None") -> None:
+    def button_press(self, func: CallbackButtonPress | None) -> None:
         self.protocol.callbacks.button_press = func
     
     @property
-    def button_long_press(self) -> "CallbackButtonLongPress | None":
+    def button_long_press(self) -> CallbackButtonLongPress | None:
         return self.protocol.callbacks.button_long_press
     @button_long_press.setter
-    def button_long_press(self, func: "CallbackButtonLongPress | None") -> None:
+    def button_long_press(self, func: CallbackButtonLongPress | None) -> None:
         self.protocol.callbacks.button_long_press = func
     
     @property
-    def motion_event(self) -> "CallbackMotionEvent | None":
+    def motion_event(self) -> CallbackMotionEvent | None:
         return self.protocol.callbacks.motion_event
     @motion_event.setter
-    def motion_event(self, func: "CallbackMotionEvent | None") -> None:
+    def motion_event(self, func: CallbackMotionEvent | None) -> None:
         self.protocol.callbacks.motion_event = func
     
     @property
-    def system_variable_change(self) -> "CallbackSystemVariableChange | None":
+    def system_variable_change(self) -> CallbackSystemVariableChange | None:
         return self.protocol.callbacks.system_variable_change
     @system_variable_change.setter
-    def system_variable_change(self, func: "CallbackSystemVariableChange | None") -> None:
+    def system_variable_change(self, func: CallbackSystemVariableChange | None) -> None:
         self.protocol.callbacks.system_variable_change = func
 
     @property
-    def controller_discovered(self) -> "CallbackControllerDiscovered | None":
+    def controller_discovered(self) -> CallbackControllerDiscovered | None:
         return self.protocol.callbacks.controller_discovered
     @controller_discovered.setter
-    def controller_discovered(self, func: "CallbackControllerDiscovered | None") -> None:
+    def controller_discovered(self, func: CallbackControllerDiscovered | None) -> None:
         self.protocol.callbacks.controller_discovered = func
 
     @property
@@ -235,7 +238,7 @@ class ZenControl:
     # Setup / Start / Stop
     # ============================
 
-    def add_controller(self, id: int, name: str, label: str, host: str, port: int = 5108, mac: Optional[str] = None, filtering: bool = False) -> "ZenController":
+    def add_controller(self, id: int, name: str, label: str, host: str, port: int = 5108, mac: str | None = None, filtering: bool = False) -> ZenController:
         controller = ZenController(protocol=self.protocol, id=id, name=name, label=label, host=host, port=port, mac=mac, filtering=filtering)
         self.controllers.append(controller)
         # list is invariant; protocol expects the API-level ZenController type
@@ -442,7 +445,7 @@ class ZenControl:
             # for light in group.lights:
             #     await light._event_received(level=arc_level, cascaded_from=group)
 
-    async def colour_change_event(self, address: ZenAddress, colour: Optional[ZenColour], payload: bytes) -> None:
+    async def colour_change_event(self, address: ZenAddress, colour: ZenColour | None, payload: bytes) -> None:
         # Protocol already parses payload via ZenColour.from_bytes before calling us
         if colour is None:
             return
@@ -484,7 +487,7 @@ class ZenControl:
     # Abstraction layer commands
     # ============================ 
 
-    async def get_profiles(self, controller: Optional["ZenController"] = None) -> set["ZenProfile"]:
+    async def get_profiles(self, controller: ZenController | None = None) -> set[ZenProfile]:
         """Return a set of all profiles."""
         profiles: set[ZenProfile] = set()
         controllers = [controller] if controller else self.controllers
@@ -497,7 +500,7 @@ class ZenControl:
                 profiles.add(profile)
         return profiles
 
-    async def get_groups(self) -> set["ZenGroup"]:
+    async def get_groups(self) -> set[ZenGroup]:
         """Return a set of all groups."""
         groups: set[ZenGroup] = set()
         for controller in self.controllers:
@@ -507,7 +510,7 @@ class ZenControl:
                 groups.add(group)
         return groups
     
-    async def get_lights(self) -> set["ZenLight"]:
+    async def get_lights(self) -> set[ZenLight]:
         """Return a set of all lights available."""
         lights: set[ZenLight] = set()
         for controller in self.controllers:
@@ -519,7 +522,7 @@ class ZenControl:
         _assign_light_sub_labels(lights)
         return lights
     
-    async def _get_addresses_with_instances(self, controller: "ZenController") -> list[ZenAddress]:
+    async def _get_addresses_with_instances(self, controller: ZenController) -> list[ZenAddress]:
         """Return all DALI addresses that have instances, scanning all address ranges.
 
         ``query_dali_addresses_with_instances`` can only return up to 60 addresses
@@ -539,7 +542,7 @@ class ZenControl:
                     addresses.append(addr)
         return addresses
 
-    async def get_buttons(self) -> set["ZenButton"]:
+    async def get_buttons(self) -> set[ZenButton]:
         """Return a set of all buttons available."""
         buttons: set[ZenButton] = set()
         for controller in self.controllers:
@@ -552,7 +555,7 @@ class ZenControl:
                         buttons.add(button)
         return buttons
     
-    async def get_motion_sensors(self) -> set["ZenMotionSensor"]:
+    async def get_motion_sensors(self) -> set[ZenMotionSensor]:
         """Return a set of all motion sensors available."""
         motion_sensors: set[ZenMotionSensor] = set()
         for controller in self.controllers:
@@ -565,7 +568,7 @@ class ZenControl:
                         motion_sensors.add(motion_sensor)
         return motion_sensors
 
-    async def get_system_variables(self, give_up_after: int = 10) -> set["ZenSystemVariable"]:
+    async def get_system_variables(self, give_up_after: int = 10) -> set[ZenSystemVariable]:
         """Return a set of all system variables. Variables must have a label. Searching will give_up_after [x] sequential IDs without a label."""
         sysvars: set[ZenSystemVariable] = set()
         failed_attempts = 0
@@ -589,19 +592,19 @@ class ZenControl:
 class ZenController(SuperZenController):
     # Narrow/override dataclass fields used by the interface layer
     protocol: ZenProtocol
-    version: Optional[str] = None
+    version: str | None = None
 
     connected: bool = False
-    profile: Optional["ZenProfile"] = None
-    profiles: set["ZenProfile"] = set()
-    lights: set["ZenLight"] = set()
-    groups: set["ZenGroup"] = set()
-    buttons: set["ZenButton"] = set()
-    motion_sensors: set["ZenMotionSensor"] = set()
-    sysvars: set["ZenSystemVariable"] = set()
+    profile: ZenProfile | None = None
+    profiles: set[ZenProfile] = set()
+    lights: set[ZenLight] = set()
+    groups: set[ZenGroup] = set()
+    buttons: set[ZenButton] = set()
+    motion_sensors: set[ZenMotionSensor] = set()
+    sysvars: set[ZenSystemVariable] = set()
     client_data: dict[str, Any] = {}
 
-    def __new__(cls, protocol: ZenProtocol, id: int, name: str, label: str, host: str, port: int = 5108, mac: Optional[str] = None, filtering: bool = False) -> "ZenController":
+    def __new__(cls, protocol: ZenProtocol, id: int, name: str, label: str, host: str, port: int = 5108, mac: str | None = None, filtering: bool = False) -> ZenController:
         # Unique per protocol + controller name
         registry = protocol.entity_registry.controllers
         if name not in registry:
@@ -627,7 +630,7 @@ class ZenController(SuperZenController):
         inst._update_mac_bytes(mac)
         return inst
 
-    def __init__(self, protocol: ZenProtocol, id: int, name: str, label: str, host: str, port: int = 5108, mac: Optional[str] = None, filtering: bool = False) -> None:
+    def __init__(self, protocol: ZenProtocol, id: int, name: str, label: str, host: str, port: int = 5108, mac: str | None = None, filtering: bool = False) -> None:
         # Dataclass __init__ resets client/version/etc. Run only once per singleton.
         if getattr(self, "_dataclass_initialized", False):
             return
@@ -644,7 +647,7 @@ class ZenController(SuperZenController):
         object.__setattr__(self, "_dataclass_initialized", True)
     
     @classmethod
-    async def create(cls, protocol: ZenProtocol, id: int, name: str, label: str, host: str, port: int = 5108, mac: Optional[str] = None, filtering: bool = False) -> "ZenController":
+    async def create(cls, protocol: ZenProtocol, id: int, name: str, label: str, host: str, port: int = 5108, mac: str | None = None, filtering: bool = False) -> ZenController:
         """Async factory method for ZenController"""
         controller = cls(protocol=protocol, id=id, name=name, label=label, host=host, port=port, mac=mac, filtering=filtering)
         await controller.interview()
@@ -674,18 +677,18 @@ class ZenController(SuperZenController):
             self.profile = ZenProfile(protocol=protocol, controller=self, number=current_profile)
         self.connected = True
         return True
-    async def _event_received(self, profile: Optional[int] = None):
+    async def _event_received(self, profile: int | None = None):
         protocol = self.protocol
         if profile is not None:
             self.profile = ZenProfile(protocol=protocol, controller=self, number=profile)
             cb = protocol.callbacks.profile_change
             if callable(cb):
                 await cb(profile=self.profile)
-    def get_sysvar(self, id: int) -> "ZenSystemVariable":
+    def get_sysvar(self, id: int) -> ZenSystemVariable:
         return ZenSystemVariable(protocol=self.protocol, controller=self, id=id)
-    async def is_controller_ready(self) -> Optional[bool]:
+    async def is_controller_ready(self) -> bool | None:
         return await self.protocol.query_controller_startup_complete(self)
-    async def is_dali_ready(self) -> Optional[bool]:
+    async def is_dali_ready(self) -> bool | None:
         return await self.protocol.query_is_dali_ready(self)
     async def switch_to_profile(self, profile: "ZenProfile|int|str") -> bool:
         zp = None
@@ -703,7 +706,7 @@ class ZenController(SuperZenController):
             return bool(result)
         else:
             return False
-    async def return_to_scheduled_profile(self) -> Optional[bool]:
+    async def return_to_scheduled_profile(self) -> bool | None:
         return await self.protocol.return_to_scheduled_profile(self)
 
 
@@ -711,10 +714,10 @@ class ZenProfile:
     protocol: ZenProtocol
     controller: ZenController
     number: int
-    label: Optional[str] = None
+    label: str | None = None
     client_data: dict[str, Any] = {}
 
-    def __new__(cls, protocol: ZenProtocol, controller: ZenController, number: int) -> "ZenProfile":
+    def __new__(cls, protocol: ZenProtocol, controller: ZenController, number: int) -> ZenProfile:
         # Unique per protocol + controller + profile number
         compound_id = f"{controller.name} {number}"
         registry = protocol.entity_registry.profiles
@@ -734,7 +737,7 @@ class ZenProfile:
         self.number = number
     
     @classmethod
-    async def create(cls, protocol: ZenProtocol, controller: ZenController, number: int) -> "ZenProfile":
+    async def create(cls, protocol: ZenProtocol, controller: ZenController, number: int) -> ZenProfile:
         """Async factory method for ZenProfile"""
         profile = cls(protocol, controller, number)
         await profile.interview()
@@ -770,11 +773,11 @@ class ZenProfile:
 class ZenLight:
     protocol: ZenProtocol
     address: ZenAddress
-    label: Optional[str] = None
-    sub_label: Optional[str] = None
-    serial: Optional[int | str] = None
+    label: str | None = None
+    sub_label: str | None = None
+    serial: (int | str) | None = None
     cgtype: list[int] = []
-    groups: set["ZenGroup"] = set()
+    groups: set[ZenGroup] = set()
     group_membership: list[ZenAddress] = []
     features: dict[str, bool] = {
         "brightness": False,
@@ -783,18 +786,18 @@ class ZenLight:
         "RGBW": False,
         "RGBWW": False,
     }
-    properties: dict[str, Optional[int]] = {
+    properties: dict[str, int | None] = {
         "min_kelvin": Const.DEFAULT_WARMEST_TEMP,
         "max_kelvin": Const.DEFAULT_COOLEST_TEMP,
     }
-    _scene_labels: list[Optional[str]] = [None] * Const.MAX_SCENE
-    _scene_levels: list[Optional[int]] = [None] * Const.MAX_SCENE
-    _scene_colours: list[Optional[ZenColour]] = [None] * Const.MAX_SCENE
-    level: Optional[int] = None
-    colour: Optional[ZenColour] = None
-    scene: Optional[int] = None
+    _scene_labels: list[str | None] = [None] * Const.MAX_SCENE
+    _scene_levels: list[int | None] = [None] * Const.MAX_SCENE
+    _scene_colours: list[ZenColour | None] = [None] * Const.MAX_SCENE
+    level: int | None = None
+    colour: ZenColour | None = None
+    scene: int | None = None
     client_data: dict[str, Any] = {}
-    _refresh_timer: Optional[asyncio.Task[None]] = None
+    _refresh_timer: asyncio.Task[None] | None = None
 
     def __new__(cls, protocol: ZenProtocol, address: ZenAddress) -> Self:
         # Inherited classes should bypass ZenLight __new__
@@ -817,7 +820,7 @@ class ZenLight:
         self.address = address
     
     @classmethod
-    async def create(cls, protocol: ZenProtocol, address: ZenAddress) -> "ZenLight":
+    async def create(cls, protocol: ZenProtocol, address: ZenAddress) -> ZenLight:
         """Async factory method for ZenLight"""
         instance = cls(protocol, address)
         await instance.interview()
@@ -993,10 +996,10 @@ class ZenLight:
 
     async def _event_received(self,
             level: int|None = 255,
-            colour: Optional["ZenColour"] = None,
-            scene: Optional[int] = None,
-            active: Optional[bool] = None,
-            cascaded_from: Optional["ZenGroup"] = None,
+            colour: ZenColour | None = None,
+            scene: int | None = None,
+            active: bool | None = None,
+            cascaded_from: ZenGroup | None = None,
             verifying: bool = False
         ):
         # Called by ZenProtocol when a query command is issued or an event is received
@@ -1098,15 +1101,15 @@ class ZenLight:
     #   These methods send commands to the controller. The controller sends events back.
     #   The events update the internal state.
     # -----------------------------------------------------------------------------------------
-    async def on(self, fade: bool = True) -> Optional[bool]:
+    async def on(self, fade: bool = True) -> bool | None:
         self._start_refresh_timer()
         if not fade: await self.protocol.dali_enable_dapc_sequence(self.address)
         return await self.protocol.dali_go_to_last_active_level(self.address)
-    async def off(self, fade: bool = True) -> Optional[bool]:
+    async def off(self, fade: bool = True) -> bool | None:
         self._start_refresh_timer()
         if fade: return await self.protocol.dali_arc_level(self.address, 0)
         else: return await self.protocol.dali_off(self.address)
-    async def set_scene(self, scene: int|str|dict[str, Any], fade: bool = True) -> Optional[bool]:
+    async def set_scene(self, scene: int|str|dict[str, Any], fade: bool = True) -> bool | None:
         self._start_refresh_timer()
         if type(scene) == str:
             scene = next((i for i, s in enumerate(self._scene_labels) if s == scene), False)
@@ -1114,7 +1117,7 @@ class ZenLight:
             if not fade: await self.protocol.dali_enable_dapc_sequence(self.address)
             return await self.protocol.dali_scene(self.address, scene)
         return False
-    async def set(self, level: int = 255, colour: Optional["ZenColour"] = None, fade: bool = True) -> Optional[bool]:
+    async def set(self, level: int = 255, colour: ZenColour | None = None, fade: bool = True) -> bool | None:
         self._start_refresh_timer()
         if colour is not None and self.supports_colour(colour):
             if not fade: await self.protocol.dali_enable_dapc_sequence(self.address)
@@ -1125,39 +1128,39 @@ class ZenLight:
             else:
                 return await self.protocol.dali_custom_fade(self.address, level, 0)
         return False
-    async def dali_on_step_up(self) -> Optional[bool]:
+    async def dali_on_step_up(self) -> bool | None:
         self._start_refresh_timer()
         return await self.protocol.dali_on_step_up(self.address)
-    async def dali_step_down_off(self) -> Optional[bool]:
+    async def dali_step_down_off(self) -> bool | None:
         self._start_refresh_timer()
         return await self.protocol.dali_step_down_off(self.address)
-    async def dali_up(self) -> Optional[bool]:
+    async def dali_up(self) -> bool | None:
         self._start_refresh_timer()
         return await self.protocol.dali_up(self.address)
-    async def dali_down(self) -> Optional[bool]:
+    async def dali_down(self) -> bool | None:
         self._start_refresh_timer()
         return await self.protocol.dali_down(self.address)
-    async def dali_recall_max(self) -> Optional[bool]:
+    async def dali_recall_max(self) -> bool | None:
         self._start_refresh_timer()
         return await self.protocol.dali_recall_max(self.address)
-    async def dali_recall_min(self) -> Optional[bool]:
+    async def dali_recall_min(self) -> bool | None:
         self._start_refresh_timer()
         return await self.protocol.dali_recall_min(self.address)
-    async def dali_go_to_last_active_level(self) -> Optional[bool]:
+    async def dali_go_to_last_active_level(self) -> bool | None:
         self._start_refresh_timer()
         return await self.protocol.dali_go_to_last_active_level(self.address)
-    async def dali_off(self) -> Optional[bool]:
+    async def dali_off(self) -> bool | None:
         self._start_refresh_timer()
         return await self.protocol.dali_off(self.address)
-    async def dali_custom_fade(self, level: int, duration: int) -> Optional[bool]:
+    async def dali_custom_fade(self, level: int, duration: int) -> bool | None:
         self._start_refresh_timer()
         return await self.protocol.dali_custom_fade(self.address, level, duration)
-    async def dali_stop_fade(self) -> Optional[bool]:
+    async def dali_stop_fade(self) -> bool | None:
         self._start_refresh_timer()
         return await self.protocol.dali_stop_fade(self.address)
-    async def dali_enable_dapc_sequence(self) -> Optional[bool]:
+    async def dali_enable_dapc_sequence(self) -> bool | None:
         return await self.protocol.dali_enable_dapc_sequence(self.address)
-    async def dali_inhibit(self, inhibit: bool = True) -> Optional[bool]:
+    async def dali_inhibit(self, inhibit: bool = True) -> bool | None:
         time_seconds = 65535 if inhibit else 0
         return await self.protocol.dali_inhibit(self.address, time_seconds)
         
@@ -1165,7 +1168,7 @@ class ZenLight:
 class ZenGroup(ZenLight):
     lights: set[ZenLight] = set()
 
-    def __new__(cls, protocol: ZenProtocol, address: ZenAddress) -> "ZenGroup":
+    def __new__(cls, protocol: ZenProtocol, address: ZenAddress) -> ZenGroup:
         # Unique per protocol + controller + group address
         compound_id = f"{address.controller.name} g{address.number}"
         registry = protocol.entity_registry.groups
@@ -1183,7 +1186,7 @@ class ZenGroup(ZenLight):
         super().__init__(protocol, address)
     
     @classmethod
-    async def create(cls, protocol: ZenProtocol, address: ZenAddress) -> "ZenGroup":
+    async def create(cls, protocol: ZenProtocol, address: ZenAddress) -> ZenGroup:
         """Async factory method for ZenGroup"""
         group = cls(protocol, address)
         await group.interview()
@@ -1216,13 +1219,13 @@ class ZenGroup(ZenLight):
             if light.supports_colour(colour):
                 return True
         return False
-    def get_scene_number_from_label(self, label: str) -> Optional[int]:
+    def get_scene_number_from_label(self, label: str) -> int | None:
         # return list index of label in self._scene_labels
         return next((i for i, s in enumerate(self._scene_labels) if s == label), None)
-    def get_scene_label_from_number(self, number: int) -> Optional[str]:
+    def get_scene_label_from_number(self, number: int) -> str | None:
         # return label at index number in self._scene_labels
         return self._scene_labels[number]
-    def get_scene_labels(self, exclude_none: bool = False) -> list[Optional[str]]:
+    def get_scene_labels(self, exclude_none: bool = False) -> list[str | None]:
         if exclude_none:
             return [label for label in self._scene_labels if label is not None]
         else:
@@ -1259,14 +1262,14 @@ class ZenGroup(ZenLight):
 class ZenButton:
     protocol: ZenProtocol
     instance: ZenInstance
-    serial: Optional[int | str] = None
-    label: Optional[str] = None
-    instance_label: Optional[str] = None
+    serial: (int | str) | None = None
+    label: str | None = None
+    instance_label: str | None = None
     last_press_time: float = 0.0
     long_press_count: int = 0
     client_data: dict[str, Any] = {}
 
-    def __new__(cls, protocol: ZenProtocol, instance: ZenInstance) -> "ZenButton":
+    def __new__(cls, protocol: ZenProtocol, instance: ZenInstance) -> ZenButton:
         # Unique per protocol + controller + address + instance
         compound_id = f"{instance.address.controller.name} {instance.address.number} {instance.number}"
         registry = protocol.entity_registry.buttons
@@ -1284,7 +1287,7 @@ class ZenButton:
         self.instance = instance
     
     @classmethod
-    async def create(cls, protocol: ZenProtocol, instance: ZenInstance) -> "ZenButton":
+    async def create(cls, protocol: ZenProtocol, instance: ZenInstance) -> ZenButton:
         """Async factory method for ZenButton"""
         button = cls(protocol, instance)
         await button.interview()
@@ -1311,7 +1314,7 @@ class ZenButton:
             self.label = data.get("label")
             self.instance_label = data.get("instance_label")
             self.instance.address.label = self.label
-            self.instance.address.serial = cast(Optional[str], self.serial)
+            self.instance.address.serial = cast(str | None, self.serial)
             cast(ZenController, self.instance.address.controller).buttons.add(self)
             return True
         except Exception:
@@ -1321,7 +1324,7 @@ class ZenButton:
         addr = inst.address
         ctrl = cast(ZenController, addr.controller)
         if addr.label is None: addr.label = await self.protocol.query_dali_device_label(addr, generic_if_none=True)
-        if addr.serial is None: addr.serial = cast(Optional[str], await self.protocol.query_dali_serial(addr))
+        if addr.serial is None: addr.serial = cast(str | None, await self.protocol.query_dali_serial(addr))
         self.label = addr.label
         self.serial = addr.serial
         self.instance_label = await self.protocol.query_dali_instance_label(inst, generic_if_none=True)
@@ -1351,16 +1354,16 @@ class ZenMotionSensor:
     protocol: ZenProtocol
     instance: ZenInstance
     hold_time: int = Const.DEFAULT_HOLD_TIME
-    hold_expiry_task: Optional[asyncio.Task[None]] = None
-    serial: Optional[int | str] = None
-    label: Optional[str] = None
-    instance_label: Optional[str] = None
-    deadtime: Optional[int] = None
-    last_detect: Optional[float] = None
-    _occupied: Optional[bool] = None
+    hold_expiry_task: asyncio.Task[None] | None = None
+    serial: (int | str) | None = None
+    label: str | None = None
+    instance_label: str | None = None
+    deadtime: int | None = None
+    last_detect: float | None = None
+    _occupied: bool | None = None
     client_data: dict[str, Any] = {}
 
-    def __new__(cls, protocol: ZenProtocol, instance: ZenInstance) -> "ZenMotionSensor":
+    def __new__(cls, protocol: ZenProtocol, instance: ZenInstance) -> ZenMotionSensor:
         # Unique per protocol + controller + address + instance
         compound_id = f"{instance.address.controller.name} {instance.address.number} {instance.number}"
         registry = protocol.entity_registry.motion_sensors
@@ -1378,7 +1381,7 @@ class ZenMotionSensor:
         self.instance = instance
     
     @classmethod
-    async def create(cls, protocol: ZenProtocol, instance: ZenInstance) -> "ZenMotionSensor":
+    async def create(cls, protocol: ZenProtocol, instance: ZenInstance) -> ZenMotionSensor:
         """Async factory method for ZenMotionSensor"""
         sensor = cls(protocol, instance)
         await sensor.interview()
@@ -1415,7 +1418,7 @@ class ZenMotionSensor:
             self.hold_time = data.get("hold_time", Const.DEFAULT_HOLD_TIME)
             self._occupied = None
             self.instance.address.label = self.label
-            self.instance.address.serial = cast(Optional[str], self.serial)
+            self.instance.address.serial = cast(str | None, self.serial)
             cast(ZenController, self.instance.address.controller).motion_sensors.add(self)
             return True
         except Exception:
@@ -1518,12 +1521,12 @@ class ZenSystemVariable:
     protocol: ZenProtocol
     controller: ZenController
     id: int
-    label: Optional[str] = None
-    _value: Optional[int] = None
-    _future_value: Optional[int] = None
+    label: str | None = None
+    _value: int | None = None
+    _future_value: int | None = None
     client_data: dict[str, Any] = {}
 
-    def __new__(cls, protocol: ZenProtocol, controller: ZenController, id: int, value: Optional[int] = None, label: Optional[str] = None) -> "ZenSystemVariable":
+    def __new__(cls, protocol: ZenProtocol, controller: ZenController, id: int, value: int | None = None, label: str | None = None) -> ZenSystemVariable:
         # Unique per protocol + controller + id
         compound_id = f"{controller.name} {id}"
         registry = protocol.entity_registry.system_variables
@@ -1539,7 +1542,7 @@ class ZenSystemVariable:
             # Don't call interview() here - it will be called async later
         return registry[compound_id]
 
-    def __init__(self, protocol: ZenProtocol, controller: ZenController, id: int, value: Optional[int] = None, label: Optional[str] = None) -> None:
+    def __init__(self, protocol: ZenProtocol, controller: ZenController, id: int, value: int | None = None, label: str | None = None) -> None:
         self.protocol = protocol
         self.controller = controller
         self.id = id
@@ -1549,7 +1552,7 @@ class ZenSystemVariable:
             self.label = label
     
     @classmethod
-    async def create(cls, protocol: ZenProtocol, controller: ZenController, id: int, value: Optional[int] = None, label: Optional[str] = None) -> "ZenSystemVariable":
+    async def create(cls, protocol: ZenProtocol, controller: ZenController, id: int, value: int | None = None, label: str | None = None) -> ZenSystemVariable:
         """Async factory method for ZenSystemVariable"""
         sysvar = cls(protocol, controller, id, value, label)
         await sysvar.interview()
@@ -1583,7 +1586,7 @@ class ZenSystemVariable:
         # Add to controller's set of system variables
         ctrl.sysvars.add(self)
         return True
-    async def _event_received(self, new_value: Optional[int]):
+    async def _event_received(self, new_value: int | None):
         changed = (new_value != self._value)
         by_me = (new_value == self._future_value)
         self._value = new_value
@@ -1600,11 +1603,11 @@ class ZenSystemVariable:
     #   The events update the internal state.
     # -----------------------------------------------------------------------------------------
     @property
-    def value(self) -> Optional[int]:
+    def value(self) -> int | None:
         """Return the last-known value without querying the controller."""
         return self._value
 
-    async def get_value(self) -> Optional[int]:
+    async def get_value(self) -> int | None:
         """Get the current value of the system variable, querying the controller if unknown."""
         if self._value is None:
             self._value = await self.protocol.query_system_variable(self.controller, self.id)
@@ -1622,13 +1625,13 @@ class ZenSystemVariable:
 
 
 # Callback type definitions (moved here after class definitions)
-CallbackOnConnect = Callable[[], Awaitable[None]]
-CallbackOnDisconnect = Callable[[], Awaitable[None]]
-CallbackProfileChange = Callable[[ZenProfile], Awaitable[None]]
-CallbackGroupChange = Callable[[ZenGroup, int], Awaitable[None]]
-CallbackLightChange = Callable[[ZenLight, int, ZenColour, int], Awaitable[None]]
-CallbackButtonPress = Callable[[ZenButton], Awaitable[None]]
-CallbackButtonLongPress = Callable[[ZenButton], Awaitable[None]]
-CallbackMotionEvent = Callable[[ZenMotionSensor, bool], Awaitable[None]]
-CallbackSystemVariableChange = Callable[[ZenSystemVariable, int, bool, bool], Awaitable[None]]
-CallbackControllerDiscovered = Callable[[DiscoveredController], Awaitable[None]]
+type CallbackOnConnect = Callable[[], Awaitable[None]]
+type CallbackOnDisconnect = Callable[[], Awaitable[None]]
+type CallbackProfileChange = Callable[[ZenProfile], Awaitable[None]]
+type CallbackGroupChange = Callable[[ZenGroup, int], Awaitable[None]]
+type CallbackLightChange = Callable[[ZenLight, int, ZenColour, int], Awaitable[None]]
+type CallbackButtonPress = Callable[[ZenButton], Awaitable[None]]
+type CallbackButtonLongPress = Callable[[ZenButton], Awaitable[None]]
+type CallbackMotionEvent = Callable[[ZenMotionSensor, bool], Awaitable[None]]
+type CallbackSystemVariableChange = Callable[[ZenSystemVariable, int, bool, bool], Awaitable[None]]
+type CallbackControllerDiscovered = Callable[[DiscoveredController], Awaitable[None]]
