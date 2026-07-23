@@ -87,6 +87,21 @@ class EntityRegistry:
         self.motion_sensors.clear()
         self.system_variables.clear()
 
+    def purge_controller(self, controller_name: str) -> None:
+        """Drop cached entities that belong to ``controller_name``."""
+        self.controllers.pop(controller_name, None)
+        prefix = f"{controller_name} "
+        for store in (
+            self.profiles,
+            self.lights,
+            self.groups,
+            self.buttons,
+            self.motion_sensors,
+            self.system_variables,
+        ):
+            for key in [k for k in store if k == controller_name or k.startswith(prefix)]:
+                store.pop(key, None)
+
 
 class ZenProtocol:
 
@@ -259,6 +274,10 @@ class ZenProtocol:
     def clear_entity_cache(self) -> None:
         """Drop all interface entity singletons owned by this protocol."""
         self.entity_registry.clear()
+
+    def purge_controller_entities(self, controller_name: str) -> None:
+        """Drop interface-layer singletons for one controller."""
+        self.entity_registry.purge_controller(controller_name)
 
     def track_task(self, coro: Coroutine[Any, Any, Any]) -> asyncio.Task[Any]:
         """Schedule a background task and track it for cancellation on aclose."""

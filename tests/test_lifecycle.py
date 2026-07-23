@@ -11,7 +11,6 @@ from zencontrol.api.models import ZenAddress
 from zencontrol.api.types import ZenAddressType
 from zencontrol.interface.interface import (
     ZenControl,
-    ZenController,
     ZenLight,
 )
 
@@ -22,6 +21,34 @@ async def test_zencontrol_async_context_manager_calls_aclose() -> None:
         async with ZenControl() as zen:
             assert isinstance(zen, ZenControl)
         aclose.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_remove_controller_closes_client_and_purges_cache() -> None:
+    zen = ZenControl()
+    ctrl_a = zen.add_controller(
+        id=1, name="ctrl-a", label="A", host="127.0.0.1", port=5108
+    )
+    ctrl_b = zen.add_controller(
+        id=2, name="ctrl-b", label="B", host="127.0.0.2", port=5108
+    )
+    fake_client = MagicMock()
+    fake_client.close = AsyncMock()
+    ctrl_a.client = fake_client
+    address = ZenAddress(controller=ctrl_a, type=ZenAddressType.ECG, number=1)
+    ZenLight(protocol=zen.protocol, address=address)
+    assert "ctrl-a 1" in zen.protocol.entity_registry.lights
+
+    await zen.remove_controller(ctrl_a)
+
+    fake_client.close.assert_awaited()
+    assert ctrl_a.client is None
+    assert zen.controllers == [ctrl_b]
+    assert "ctrl-a" not in zen.protocol.entity_registry.controllers
+    assert "ctrl-a 1" not in zen.protocol.entity_registry.lights
+    assert "ctrl-b" in zen.protocol.entity_registry.controllers
+
+    await zen.aclose()
 
 
 @pytest.mark.asyncio

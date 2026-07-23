@@ -10,7 +10,7 @@ from collections.abc import Coroutine, Callable, Awaitable
 from ..api import ZenProtocol, ZenController as SuperZenController, ZenAddress, ZenInstance, ZenAddressType, ZenColour, ZenColourType, ZenInstanceType
 from ..api.models import DiscoveredController
 from ..api.protocol import ZenCallbacks
-from ..api.types import Const
+from ..api.types import Const, ZenEventMode
 from ..exceptions import ZenConnectionError
 
 """
@@ -244,6 +244,51 @@ class ZenControl:
         # list is invariant; protocol expects the API-level ZenController type
         self.protocol.set_controllers(cast(list[SuperZenController], self.controllers))
         return controller
+
+    async def remove_controller(self, controller: ZenController | str) -> None:
+        """Detach a controller and close its command client.
+
+        Safe to call while event monitoring is running. Does not stop the shared
+        listener; callers that own the last controller should ``aclose()``.
+        """
+        name = controller if isinstance(controller, str) else controller.name
+        removed = [c for c in self.controllers if c.name == name]
+        self.controllers = [c for c in self.controllers if c.name != name]
+        self.protocol.set_controllers(cast(list[SuperZenController], self.controllers))
+        self.protocol.purge_controller_entities(name)
+        for ctrl in removed:
+            client = ctrl.client
+            ctrl.client = None
+            if client is None:
+                continue
+            try:
+                await client.close()
+            except Exception:
+                pass
+
+    async def configure_controller_events(self, controller: ZenController) -> None:
+        """Enable TPI event emit for one controller using this client's listen mode.
+
+        Call after ``add_controller`` when event monitoring is already running so a
+        newly attached controller joins the shared listener.
+        """
+        if self.protocol.event_listener is None:
+            return
+        unicast = self.protocol.unicast
+        await self.protocol.set_tpi_event_unicast_address(
+            controller,
+            ipaddr=self.protocol.local_ip if unicast else None,
+            port=self.protocol.listen_port if unicast else None,
+        )
+        await self.protocol.tpi_event_emit(
+            controller,
+            ZenEventMode(
+                enabled=True,
+                filtering=controller.filtering,
+                unicast=unicast,
+                multicast=not unicast,
+            ),
+        )
 
     async def discover(self, timeout: float = 5.0) -> list[DiscoveredController]:
         """Listen for multicast and return controllers identified within ``timeout`` seconds.
@@ -500,21 +545,23 @@ class ZenControl:
                 profiles.add(profile)
         return profiles
 
-    async def get_groups(self) -> set[ZenGroup]:
-        """Return a set of all groups."""
+    async def get_groups(self, controller: ZenController | None = None) -> set[ZenGroup]:
+        """Return a set of all groups (optionally for one controller)."""
         groups: set[ZenGroup] = set()
-        for controller in self.controllers:
-            addresses = await self.protocol.query_group_numbers(controller=controller)
+        controllers = [controller] if controller else self.controllers
+        for ctrl in controllers:
+            addresses = await self.protocol.query_group_numbers(controller=ctrl)
             for address in addresses:
                 group = await ZenGroup.create(protocol=self.protocol, address=address)
                 groups.add(group)
         return groups
     
-    async def get_lights(self) -> set[ZenLight]:
-        """Return a set of all lights available."""
+    async def get_lights(self, controller: ZenController | None = None) -> set[ZenLight]:
+        """Return a set of all lights available (optionally for one controller)."""
         lights: set[ZenLight] = set()
-        for controller in self.controllers:
-            addresses = await self.protocol.query_control_gear_dali_addresses(controller=controller)
+        controllers = [controller] if controller else self.controllers
+        for ctrl in controllers:
+            addresses = await self.protocol.query_control_gear_dali_addresses(controller=ctrl)
             for address in addresses:
                 light = await ZenLight.create(protocol=self.protocol, address=address)
                 lights.add(light)
@@ -542,11 +589,12 @@ class ZenControl:
                     addresses.append(addr)
         return addresses
 
-    async def get_buttons(self) -> set[ZenButton]:
-        """Return a set of all buttons available."""
+    async def get_buttons(self, controller: ZenController | None = None) -> set[ZenButton]:
+        """Return a set of all buttons available (optionally for one controller)."""
         buttons: set[ZenButton] = set()
-        for controller in self.controllers:
-            addresses = await self._get_addresses_with_instances(controller)
+        controllers = [controller] if controller else self.controllers
+        for ctrl in controllers:
+            addresses = await self._get_addresses_with_instances(ctrl)
             for address in addresses:
                 instances = await self.protocol.query_instances_by_address(address=address)
                 for instance in instances:
@@ -555,11 +603,12 @@ class ZenControl:
                         buttons.add(button)
         return buttons
     
-    async def get_motion_sensors(self) -> set[ZenMotionSensor]:
-        """Return a set of all motion sensors available."""
+    async def get_motion_sensors(self, controller: ZenController | None = None) -> set[ZenMotionSensor]:
+        """Return a set of all motion sensors available (optionally for one controller)."""
         motion_sensors: set[ZenMotionSensor] = set()
-        for controller in self.controllers:
-            addresses = await self._get_addresses_with_instances(controller)
+        controllers = [controller] if controller else self.controllers
+        for ctrl in controllers:
+            addresses = await self._get_addresses_with_instances(ctrl)
             for address in addresses:
                 instances = await self.protocol.query_instances_by_address(address=address)
                 for instance in instances:
@@ -568,16 +617,21 @@ class ZenControl:
                         motion_sensors.add(motion_sensor)
         return motion_sensors
 
-    async def get_system_variables(self, give_up_after: int = 10) -> set[ZenSystemVariable]:
-        """Return a set of all system variables. Variables must have a label. Searching will give_up_after [x] sequential IDs without a label."""
+    async def get_system_variables(
+        self,
+        give_up_after: int = 10,
+        controller: ZenController | None = None,
+    ) -> set[ZenSystemVariable]:
+        """Return labelled system variables (optionally for one controller)."""
         sysvars: set[ZenSystemVariable] = set()
-        failed_attempts = 0
-        for controller in self.controllers:
+        controllers = [controller] if controller else self.controllers
+        for ctrl in controllers:
+            failed_attempts = 0
             for variable in range(Const.MAX_SYSVAR):
-                label = await self.protocol.query_system_variable_name(controller=controller, variable=variable)
+                label = await self.protocol.query_system_variable_name(controller=ctrl, variable=variable)
                 if label:
                     failed_attempts = 0
-                    sysvar = await ZenSystemVariable.create(protocol=self.protocol, controller=controller, id=variable, label=label)
+                    sysvar = await ZenSystemVariable.create(protocol=self.protocol, controller=ctrl, id=variable, label=label)
                     sysvars.add(sysvar)
                 else:
                     failed_attempts += 1

@@ -58,7 +58,7 @@ from .exceptions import ZenError, ZenTimeoutError, ZenResponseError, ZenConnecti
 # Utilities
 from .utils import run_with_keyboard_interrupt
 
-__version__ = "0.1.3"
+__version__ = "0.1.4"
 __author__ = "Simon Wright"
 
 # Public API - these are the main classes users should import
