@@ -4,7 +4,7 @@ import asyncio
 import json
 import time
 import logging
-from typing import Any, cast, Self
+from typing import Any, Literal, cast, Self
 from collections.abc import Coroutine, Callable, Awaitable
 
 from ..api import ZenProtocol, ZenController as SuperZenController, ZenAddress, ZenInstance, ZenAddressType, ZenColour, ZenColourType, ZenInstanceType
@@ -140,10 +140,13 @@ class ZenControl:
         self.protocol.callbacks = ZenCallbacks()
         self._stopping = False
         self._supervisor_task: asyncio.Task[None] | None = None
+        self._keepalive_task: asyncio.Task[None] | None = None
         self._first_connected = asyncio.Event()
+        self._controller_status_change: CallbackControllerStatusChange | None = None
         self.reconnect_min_delay = Const.RECONNECT_MIN_DELAY
         self.reconnect_max_delay = Const.RECONNECT_MAX_DELAY
         self.reconnect_healthy_seconds = Const.RECONNECT_HEALTHY_SECONDS
+        self.event_keepalive_interval = Const.EVENT_KEEPALIVE_INTERVAL
 
     async def __aenter__(self) -> Self:
         return self
@@ -207,7 +210,14 @@ class ZenControl:
     @button_long_press.setter
     def button_long_press(self, func: CallbackButtonLongPress | None) -> None:
         self.protocol.callbacks.button_long_press = func
-    
+
+    @property
+    def absolute_input_change(self) -> CallbackAbsoluteInputChange | None:
+        return self.protocol.callbacks.absolute_input_change
+    @absolute_input_change.setter
+    def absolute_input_change(self, func: CallbackAbsoluteInputChange | None) -> None:
+        self.protocol.callbacks.absolute_input_change = func
+
     @property
     def motion_event(self) -> CallbackMotionEvent | None:
         return self.protocol.callbacks.motion_event
@@ -228,6 +238,15 @@ class ZenControl:
     @controller_discovered.setter
     def controller_discovered(self, func: CallbackControllerDiscovered | None) -> None:
         self.protocol.callbacks.controller_discovered = func
+
+    @property
+    def controller_status_change(self) -> CallbackControllerStatusChange | None:
+        return self._controller_status_change
+    @controller_status_change.setter
+    def controller_status_change(
+        self, func: CallbackControllerStatusChange | None
+    ) -> None:
+        self._controller_status_change = func
 
     @property
     def discovered_controllers(self) -> list[DiscoveredController]:
@@ -266,29 +285,115 @@ class ZenControl:
             except Exception:
                 pass
 
-    async def configure_controller_events(self, controller: ZenController) -> None:
+    async def configure_controller_events(self, controller: ZenController) -> bool:
         """Enable TPI event emit for one controller using this client's listen mode.
 
         Call after ``add_controller`` when event monitoring is already running so a
-        newly attached controller joins the shared listener.
+        newly attached controller joins the shared listener. Returns True when the
+        emit-enable command succeeds.
         """
         if self.protocol.event_listener is None:
-            return
+            return False
         unicast = self.protocol.unicast
         await self.protocol.set_tpi_event_unicast_address(
             controller,
             ipaddr=self.protocol.local_ip if unicast else None,
             port=self.protocol.listen_port if unicast else None,
         )
-        await self.protocol.tpi_event_emit(
-            controller,
-            ZenEventMode(
-                enabled=True,
-                filtering=controller.filtering,
-                unicast=unicast,
-                multicast=not unicast,
-            ),
+        return bool(
+            await self.protocol.tpi_event_emit(
+                controller,
+                ZenEventMode(
+                    enabled=True,
+                    filtering=controller.filtering,
+                    unicast=unicast,
+                    multicast=not unicast,
+                ),
+            )
         )
+
+    async def assert_controller_events(self, controller: ZenController) -> bool:
+        """Ping event emit state and re-assert config if the controller lost it.
+
+        Controllers that reboot while our listener stays up typically come back
+        with events disabled (or with a stale unicast target). Returns True when
+        the controller is reachable and events are confirmed/enabled, False when
+        the ping timed out / failed or re-assert could not enable emit.
+
+        Never re-asserts while ``is_controller_ready()`` is false — the startup
+        sequence can take several minutes after a reboot.
+        """
+        if self.protocol.event_listener is None:
+            return False
+
+        ready = await controller.is_controller_ready()
+        if ready is None:
+            self.logger.debug(
+                "No response from %s during event keepalive ping",
+                controller.name,
+            )
+            await self._notify_controller_status(controller, "unreachable")
+            return False
+        if ready is not True:
+            self.logger.debug(
+                "Controller %s still starting — deferring event re-assert",
+                controller.name,
+            )
+            await self._notify_controller_status(controller, "starting")
+            return True
+
+        unicast = self.protocol.unicast
+        needs_reassert = False
+        info = await self.protocol.query_tpi_event_unicast_address(controller)
+        if info is not None:
+            mode = info["mode"]
+            if not mode.enabled or bool(mode.unicast) != unicast:
+                needs_reassert = True
+            elif unicast and (
+                info.get("port") != self.protocol.listen_port
+                or info.get("ip") != self.protocol.local_ip
+            ):
+                needs_reassert = True
+        else:
+            enabled = await self.protocol.query_tpi_event_emit_state(controller)
+            if enabled is None:
+                self.logger.debug(
+                    "No response from %s during event keepalive ping",
+                    controller.name,
+                )
+                await self._notify_controller_status(controller, "unreachable")
+                return False
+            needs_reassert = not enabled
+
+        if needs_reassert:
+            self.logger.info(
+                "Controller %s TPI events not correctly enabled — re-asserting",
+                controller.name,
+            )
+            if not await self.configure_controller_events(controller):
+                self.logger.warning(
+                    "Failed to re-assert TPI events for %s",
+                    controller.name,
+                )
+                await self._notify_controller_status(controller, "unreachable")
+                return False
+        await self._notify_controller_status(controller, "online")
+        return True
+
+    async def _notify_controller_status(
+        self, controller: ZenController, status: ControllerRuntimeStatus
+    ) -> None:
+        """Notify listeners of online / starting / unreachable."""
+        if not callable(self._controller_status_change):
+            return
+        try:
+            await self._controller_status_change(controller, status)
+        except Exception as err:
+            self.logger.debug(
+                "controller_status_change error for %s: %s",
+                controller.name,
+                err,
+            )
 
     async def discover(self, timeout: float = 5.0) -> list[DiscoveredController]:
         """Listen for multicast and return controllers identified within ``timeout`` seconds.
@@ -334,6 +439,8 @@ class ZenControl:
         )
         if self._supervisor_task is None or self._supervisor_task.done():
             self._supervisor_task = asyncio.create_task(self._event_monitor_supervisor())
+        if self._keepalive_task is None or self._keepalive_task.done():
+            self._keepalive_task = asyncio.create_task(self._event_keepalive_loop())
         try:
             await asyncio.wait_for(
                 self._first_connected.wait(),
@@ -351,7 +458,7 @@ class ZenControl:
         was_running = bool(
             self.protocol.event_task and not self.protocol.event_task.done()
         )
-        await self._cancel_supervisor()
+        await self._cancel_background_tasks()
         await self.protocol.stop_event_monitoring()
         if was_running:
             await self.protocol.notify_disconnect()
@@ -362,15 +469,19 @@ class ZenControl:
         was_running = bool(
             self.protocol.event_task and not self.protocol.event_task.done()
         )
-        await self._cancel_supervisor()
+        await self._cancel_background_tasks()
         await self.protocol.aclose()
         if was_running:
             await self.protocol.notify_disconnect()
         self.clear_entity_caches()
 
-    async def _cancel_supervisor(self) -> None:
-        task = self._supervisor_task
-        self._supervisor_task = None
+    async def _cancel_background_tasks(self) -> None:
+        await self._cancel_task("_supervisor_task")
+        await self._cancel_task("_keepalive_task")
+
+    async def _cancel_task(self, attr: str) -> None:
+        task: asyncio.Task[None] | None = getattr(self, attr)
+        setattr(self, attr, None)
         if task is None or task.done():
             return
         task.cancel()
@@ -448,6 +559,33 @@ class ZenControl:
             except Exception:
                 pass
 
+    async def _event_keepalive_loop(self) -> None:
+        """Periodically ping controllers and re-enable TPI events if needed."""
+        try:
+            await self._first_connected.wait()
+        except asyncio.CancelledError:
+            raise
+        while not self._stopping:
+            try:
+                await asyncio.sleep(self.event_keepalive_interval)
+            except asyncio.CancelledError:
+                raise
+            if self._stopping or self.protocol.event_listener is None:
+                continue
+            for controller in list(self.controllers):
+                if self._stopping:
+                    return
+                try:
+                    await self.assert_controller_events(controller)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as err:
+                    self.logger.debug(
+                        "Event keepalive failed for %s: %s",
+                        controller.name,
+                        err,
+                    )
+
     async def _protocol_disconnect_event(self) -> None:
         """Forward protocol-level disconnect to the high-level on_disconnect hook."""
         if callable(self.protocol.callbacks.on_disconnect):
@@ -464,7 +602,9 @@ class ZenControl:
         await ZenButton(protocol=self.protocol, instance=instance)._event_received(held=True)
 
     async def absolute_input_event(self, instance: ZenInstance, payload: bytes) -> None:
-        pass
+        await ZenAbsoluteInput(protocol=self.protocol, instance=instance)._event_received(
+            payload
+        )
 
     async def is_occupied_event(self, instance: ZenInstance, payload: bytes) -> None:
         await ZenMotionSensor(protocol=self.protocol, instance=instance)._event_received()
@@ -617,6 +757,24 @@ class ZenControl:
                         motion_sensors.add(motion_sensor)
         return motion_sensors
 
+    async def get_absolute_inputs(
+        self, controller: ZenController | None = None
+    ) -> set[ZenAbsoluteInput]:
+        """Return absolute (numerical) ECD instances (optionally for one controller)."""
+        absolute_inputs: set[ZenAbsoluteInput] = set()
+        controllers = [controller] if controller else self.controllers
+        for ctrl in controllers:
+            addresses = await self._get_addresses_with_instances(ctrl)
+            for address in addresses:
+                instances = await self.protocol.query_instances_by_address(address=address)
+                for instance in instances:
+                    if instance.type == ZenInstanceType.ABSOLUTE_INPUT:
+                        absolute_input = await ZenAbsoluteInput.create(
+                            protocol=self.protocol, instance=instance
+                        )
+                        absolute_inputs.add(absolute_input)
+        return absolute_inputs
+
     async def get_system_variables(
         self,
         give_up_after: int = 10,
@@ -654,6 +812,7 @@ class ZenController(SuperZenController):
     lights: set[ZenLight] = set()
     groups: set[ZenGroup] = set()
     buttons: set[ZenButton] = set()
+    absolute_inputs: set[ZenAbsoluteInput] = set()
     motion_sensors: set[ZenMotionSensor] = set()
     sysvars: set[ZenSystemVariable] = set()
     client_data: dict[str, Any] = {}
@@ -716,6 +875,7 @@ class ZenController(SuperZenController):
         self.lights = set()
         self.groups = set()
         self.buttons = set()
+        self.absolute_inputs = set()
         self.motion_sensors = set()
         self.sysvars = set()
         self.client_data = {}
@@ -839,6 +999,7 @@ class ZenLight:
         "RGB": False,
         "RGBW": False,
         "RGBWW": False,
+        "XY": False,
     }
     properties: dict[str, int | None] = {
         "min_kelvin": Const.DEFAULT_WARMEST_TEMP,
@@ -894,6 +1055,7 @@ class ZenLight:
             "RGB": False,
             "RGBW": False,
             "RGBWW": False,
+            "XY": False,
         }
         self.properties = {
             "min_kelvin": Const.DEFAULT_WARMEST_TEMP,
@@ -963,6 +1125,10 @@ class ZenLight:
             # If cgtype contains 8, it supports some kind of colour
             if 8 in self.cgtype:
                 cgtype = await self.protocol.query_dali_colour_features(self.address)
+                # XY is independent of TC/RGBWAF; a fixture may support more than one.
+                if cgtype and cgtype.get("supports_xy", False) is True:
+                    self.features["brightness"] = True
+                    self.features["XY"] = True
                 if cgtype and cgtype.get("supports_tunable", False) is True:
                     self.features["brightness"] = True
                     self.features["temperature"] = True
@@ -1006,7 +1172,13 @@ class ZenLight:
         refreshed_scene = None
         if await self.protocol.dali_query_last_scene_is_current(self.address):
             refreshed_scene = await self.protocol.dali_query_last_scene(self.address)
-        if self.features["temperature"] or self.features["RGB"] or self.features["RGBW"] or self.features["RGBWW"]:
+        if (
+            self.features.get("temperature")
+            or self.features.get("RGB")
+            or self.features.get("RGBW")
+            or self.features.get("RGBWW")
+            or self.features.get("XY")
+        ):
             refreshed_colour = await self.protocol.query_dali_colour(self.address)
         
         if verifying:
@@ -1144,10 +1316,11 @@ class ZenLight:
             colour_type = colour
         else:
             return False;
-        if (colour_type == ZenColourType.TC and self.features["temperature"]) or \
-            (colour_type == ZenColourType.RGBWAF and self.features["RGB"]) or \
-            (colour_type == ZenColourType.RGBWAF and self.features["RGBW"]) or \
-            (colour_type == ZenColourType.RGBWAF and self.features["RGBWW"]):
+        if (colour_type == ZenColourType.TC and self.features.get("temperature")) or \
+            (colour_type == ZenColourType.RGBWAF and self.features.get("RGB")) or \
+            (colour_type == ZenColourType.RGBWAF and self.features.get("RGBW")) or \
+            (colour_type == ZenColourType.RGBWAF and self.features.get("RGBWW")) or \
+            (colour_type == ZenColourType.XY and self.features.get("XY")):
             return True
         return False
     # -----------------------------------------------------------------------------------------
@@ -1402,6 +1575,110 @@ class ZenButton:
                 if callable(self.protocol.callbacks.button_long_press):
                     await self.protocol.callbacks.button_long_press(button=self)
 
+
+class ZenAbsoluteInput:
+    """DALI ECD absolute (numerical) input instance — dials, sliders, etc.
+
+    Controllers emit value-change events only; TPI has no query/set command for
+    the current value, so ``value`` stays ``None`` until the first event.
+    Payload matches ``_protocol.txt``: ``[instance, value_hi, value_lo]``.
+    """
+
+    protocol: ZenProtocol
+    instance: ZenInstance
+    serial: (int | str) | None = None
+    label: str | None = None
+    instance_label: str | None = None
+    _value: int | None = None
+    client_data: dict[str, Any] = {}
+
+    def __new__(cls, protocol: ZenProtocol, instance: ZenInstance) -> ZenAbsoluteInput:
+        compound_id = f"{instance.address.controller.name} {instance.address.number} {instance.number}"
+        registry = protocol.entity_registry.absolute_inputs
+        if compound_id not in registry:
+            inst = super().__new__(cls)
+            registry[compound_id] = inst
+            inst.protocol = protocol
+            inst.instance = instance
+            inst._reset()
+        return registry[compound_id]
+
+    def __init__(self, protocol: ZenProtocol, instance: ZenInstance) -> None:
+        self.protocol = protocol
+        self.instance = instance
+
+    @classmethod
+    async def create(cls, protocol: ZenProtocol, instance: ZenInstance) -> ZenAbsoluteInput:
+        """Async factory method for ZenAbsoluteInput."""
+        absolute_input = cls(protocol, instance)
+        await absolute_input.interview()
+        return absolute_input
+
+    def __repr__(self) -> str:
+        return (
+            f"ZenAbsoluteInput<{self.instance.address.controller.name} "
+            f"ecd {self.instance.address.number} inst {self.instance.number}: "
+            f"{self.label} / {self.instance_label}>"
+        )
+
+    def _reset(self) -> None:
+        self.serial = None
+        self.label = None
+        self.instance_label = None
+        self._value = None
+        self.client_data = {}
+
+    def interview_serialize(self) -> str:
+        return json.dumps({
+            "serial": self.serial,
+            "label": self.label,
+            "instance_label": self.instance_label,
+        })
+
+    def interview_hydrate(self, data: str | dict[str, Any]) -> bool:
+        try:
+            data = _loads_interview_data(data)
+            self.serial = data.get("serial")
+            self.label = data.get("label")
+            self.instance_label = data.get("instance_label")
+            self.instance.address.label = self.label
+            self.instance.address.serial = cast(str | None, self.serial)
+            cast(ZenController, self.instance.address.controller).absolute_inputs.add(self)
+            return True
+        except Exception:
+            return False
+
+    async def interview(self) -> bool:
+        inst = self.instance
+        addr = inst.address
+        ctrl = cast(ZenController, addr.controller)
+        if addr.label is None:
+            addr.label = await self.protocol.query_dali_device_label(addr, generic_if_none=True)
+        if addr.serial is None:
+            addr.serial = cast(str | None, await self.protocol.query_dali_serial(addr))
+        self.label = addr.label
+        self.serial = addr.serial
+        self.instance_label = await self.protocol.query_dali_instance_label(
+            inst, generic_if_none=True
+        )
+        ctrl.absolute_inputs.add(self)
+        return True
+
+    @property
+    def value(self) -> int | None:
+        """Last-known 16-bit value from an absolute-input event, or None."""
+        return self._value
+
+    async def _event_received(self, payload: bytes) -> None:
+        if len(payload) < 3:
+            return
+        new_value = (payload[1] << 8) | payload[2]
+        changed = new_value != self._value
+        self._value = new_value
+        if changed and callable(self.protocol.callbacks.absolute_input_change):
+            await self.protocol.callbacks.absolute_input_change(
+                absolute_input=self, value=new_value
+            )
 
 
 class ZenMotionSensor:
@@ -1679,6 +1956,7 @@ class ZenSystemVariable:
 
 
 # Callback type definitions (moved here after class definitions)
+type ControllerRuntimeStatus = Literal["online", "starting", "unreachable"]
 type CallbackOnConnect = Callable[[], Awaitable[None]]
 type CallbackOnDisconnect = Callable[[], Awaitable[None]]
 type CallbackProfileChange = Callable[[ZenProfile], Awaitable[None]]
@@ -1686,6 +1964,10 @@ type CallbackGroupChange = Callable[[ZenGroup, int], Awaitable[None]]
 type CallbackLightChange = Callable[[ZenLight, int, ZenColour, int], Awaitable[None]]
 type CallbackButtonPress = Callable[[ZenButton], Awaitable[None]]
 type CallbackButtonLongPress = Callable[[ZenButton], Awaitable[None]]
+type CallbackAbsoluteInputChange = Callable[[ZenAbsoluteInput, int], Awaitable[None]]
 type CallbackMotionEvent = Callable[[ZenMotionSensor, bool], Awaitable[None]]
 type CallbackSystemVariableChange = Callable[[ZenSystemVariable, int, bool, bool], Awaitable[None]]
 type CallbackControllerDiscovered = Callable[[DiscoveredController], Awaitable[None]]
+type CallbackControllerStatusChange = Callable[
+    [ZenController, ControllerRuntimeStatus], Awaitable[None]
+]

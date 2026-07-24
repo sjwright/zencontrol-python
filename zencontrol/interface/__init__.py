@@ -14,6 +14,7 @@ from .interface import (
     ZenLight,
     ZenGroup,
     ZenButton,
+    ZenAbsoluteInput,
     ZenMotionSensor,
     ZenSystemVariable,
 )
@@ -28,6 +29,7 @@ __all__ = [
     "ZenLight",
     "ZenGroup",
     "ZenButton",
+    "ZenAbsoluteInput",
     "ZenMotionSensor",
     "ZenSystemVariable",
 ]

@@ -159,6 +159,28 @@ async def test_button_hold_and_occupancy_inject(live_sim):
 
 
 @pytest.mark.asyncio
+async def test_absolute_input_inject(live_sim):
+    p = live_sim.protocol
+    events: list[tuple[int, int, bytes]] = []
+
+    async def on_absolute(*, instance, payload):
+        events.append((instance.address.number, instance.number, bytes(payload)))
+
+    p.set_callbacks(absolute_input_callback=on_absolute)
+    await p.start_event_monitoring()
+
+    live_sim.sim.inject_absolute_input(13, 0, 0xABCD)
+    await wait_until(
+        lambda: any(
+            ecd == 13 and inst == 0 and payload == bytes([0, 0xAB, 0xCD])
+            for ecd, inst, payload in events
+        ),
+        message="expected absolute-input inject event for ECD 13",
+    )
+    assert live_sim.world.instance(13, 0).value == 0xABCD
+
+
+@pytest.mark.asyncio
 async def test_inject_level_scene_colour_profile_events(live_sim):
     from zencontrol_simulator.world import Colour
 

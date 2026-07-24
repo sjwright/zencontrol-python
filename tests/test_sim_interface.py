@@ -22,6 +22,7 @@ async def test_interview_discovers_entities(live_zen):
     lights = await zen.get_lights()
     groups = await zen.get_groups()
     buttons = await zen.get_buttons()
+    absolute_inputs = await zen.get_absolute_inputs()
     sensors = await zen.get_motion_sensors()
     profiles = await zen.get_profiles()
     sysvars = await zen.get_system_variables(give_up_after=5)
@@ -29,6 +30,7 @@ async def test_interview_discovers_entities(live_zen):
     assert len(lights) == 12
     assert len(groups) == 6
     assert len(buttons) >= 9
+    assert len(absolute_inputs) >= 1
     assert len(sensors) >= 2
     assert len(profiles) == 3
     assert len(sysvars) >= 2
@@ -42,6 +44,13 @@ async def test_interview_discovers_entities(live_zen):
     assert any(getattr(s, "instance_label", None) == "Motion" for s in sensors)
     assert any(getattr(b, "label", None) == "Living Room Switch" for b in buttons)
     assert any(getattr(s, "label", None) == "Porch Sensor" for s in sensors)
+    slider = next(
+        a
+        for a in absolute_inputs
+        if a.instance.address.number == 13 and a.instance.number == 0
+    )
+    assert slider.instance_label == "Slider"
+    assert slider.value is None
 
     # World state still matches what we interviewed
     assert live_sim.world.lights[0].label == "Living Room Ceiling"
@@ -121,6 +130,7 @@ async def test_start_receives_injected_and_control_events(live_zen):
     button_events: list = []
     hold_events: list = []
     motion_events: list = []
+    absolute_events: list = []
     profile_events: list = []
     sysvar_events: list = []
     colour_events: list = []
@@ -135,6 +145,9 @@ async def test_start_receives_injected_and_control_events(live_zen):
 
     async def on_motion(sensor, occupied):
         motion_events.append((sensor, occupied))
+
+    async def on_absolute(absolute_input, value):
+        absolute_events.append((absolute_input, value))
 
     async def on_profile(profile):
         profile_events.append(profile)
@@ -153,6 +166,7 @@ async def test_start_receives_injected_and_control_events(live_zen):
     zen.button_press = on_button
     zen.button_long_press = on_hold
     zen.motion_event = on_motion
+    zen.absolute_input_change = on_absolute
     zen.profile_change = on_profile
     zen.system_variable_change = on_sysvar
     zen.light_change = on_light
@@ -201,14 +215,18 @@ async def test_start_receives_injected_and_control_events(live_zen):
     live_sim.sim.inject_button_hold(0, 1)
     live_sim.sim.inject_button_hold(0, 1)
     live_sim.sim.inject_occupancy(0, 2, occupied=True)
+    live_sim.sim.inject_absolute_input(13, 0, 0x1234)
     await wait_until(
         lambda: (
             len(button_events) >= 1
             and len(hold_events) >= 1
             and len(motion_events) >= 1
+            and any(value == 0x1234 for _, value in absolute_events)
         ),
-        message="expected injected button/hold/motion callbacks",
+        message="expected injected button/hold/motion/absolute-input callbacks",
     )
+    assert absolute_events[0][0].value == 0x1234
+    assert absolute_events[0][0].instance.address.number == 13
 
     await zen.stop()
 
@@ -226,19 +244,12 @@ async def test_rgb_and_xy_via_interface(live_zen):
     assert live_sim.world.lights[2].colour.r == 1
     assert live_sim.world.lights[2].level == 100
 
-    assert lights[3].features.get("temperature") is False or lights[3].features.get(
-        "RGB"
-    ) is False
+    assert lights[3].features.get("XY") is True
     xy = ZenColour(type=ZenColourType.XY, x=15000, y=16000)
-    # XY spotlight may expose via colour support rather than RGB feature flag
-    if lights[3].supports_colour(xy):
-        assert await lights[3].set(colour=xy, level=90) is True
-        assert live_sim.world.lights[3].colour.x == 15000
-        assert live_sim.world.lights[3].level == 90
-    else:
-        # Fall back to protocol path still reachable through interface protocol
-        assert await zen.protocol.dali_colour(lights[3].address, xy, level=90) is True
-        assert live_sim.world.lights[3].colour.x == 15000
+    assert lights[3].supports_colour(xy) is True
+    assert await lights[3].set(colour=xy, level=90) is True
+    assert live_sim.world.lights[3].colour.x == 15000
+    assert live_sim.world.lights[3].level == 90
 
 
 @pytest.mark.asyncio

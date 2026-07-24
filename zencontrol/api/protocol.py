@@ -57,6 +57,7 @@ class ZenCallbacks:
         self.light_change: Callable[..., Awaitable[None]] | None = None
         self.button_press: Callable[..., Awaitable[None]] | None = None
         self.button_long_press: Callable[..., Awaitable[None]] | None = None
+        self.absolute_input_change: Callable[..., Awaitable[None]] | None = None
         self.motion_event: Callable[..., Awaitable[None]] | None = None
         self.system_variable_change: Callable[..., Awaitable[None]] | None = None
         self.controller_discovered: Callable[[DiscoveredController], Awaitable[None]] | None = None
@@ -75,6 +76,7 @@ class EntityRegistry:
         self.lights: dict[str, Any] = {}
         self.groups: dict[str, Any] = {}
         self.buttons: dict[str, Any] = {}
+        self.absolute_inputs: dict[str, Any] = {}
         self.motion_sensors: dict[str, Any] = {}
         self.system_variables: dict[str, Any] = {}
 
@@ -84,6 +86,7 @@ class EntityRegistry:
         self.lights.clear()
         self.groups.clear()
         self.buttons.clear()
+        self.absolute_inputs.clear()
         self.motion_sensors.clear()
         self.system_variables.clear()
 
@@ -96,6 +99,7 @@ class EntityRegistry:
             self.lights,
             self.groups,
             self.buttons,
+            self.absolute_inputs,
             self.motion_sensors,
             self.system_variables,
         ):
@@ -873,7 +877,7 @@ class ZenProtocol:
         min_payload = {
             ZenEventCode.BUTTON_PRESS: 1,
             ZenEventCode.BUTTON_HOLD: 1,
-            ZenEventCode.ABSOLUTE_INPUT: 1,
+            ZenEventCode.ABSOLUTE_INPUT: 3,
             ZenEventCode.LEVEL_CHANGE: 1,
             ZenEventCode.LEVEL_CHANGE_V2: 2,
             ZenEventCode.GROUP_LEVEL_CHANGE: 1,
@@ -921,10 +925,10 @@ class ZenProtocol:
                     await self.button_hold_callback(instance=instance, payload=payload)
 
             case ZenEventCode.ABSOLUTE_INPUT:
+                value = (payload[1] << 8) | payload[2]
                 if self.print_traffic: 
                     print(Fore.MAGENTA + f"{typecast.upper()} {ip_address}:" +
-                        Fore.CYAN + f" Absolute {target-64}" +
-                        Style.DIM + f" [{' '.join(f'0x{b:02X}' for b in payload)}]" +
+                        Fore.CYAN + f" Absolute {target-64}.{payload[0]} = {value}" +
                         Style.RESET_ALL)
                 if self.absolute_input_callback:
                     address = self._ecd_address_from_target(controller, target)

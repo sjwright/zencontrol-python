@@ -15,10 +15,12 @@ A practical demonstration is [zencontrol-homeassistant](https://github.com/sjwri
 Beyond basic lighting control, this library supports:
 
 * **Broad command surface** — inhibit, custom fade, step/up/down helpers, colour scene membership queries, EAN/serial, and most related TPI Advanced commands
-* **Object-based entity model** — Optional. Expresses lights, groups, profiles, buttons, motion sensors, and system variables as rich objects with interview/discovery helpers
+* **Object-based entity model** — Optional. Expresses lights, groups, profiles, buttons, motion sensors, absolute inputs, and system variables as rich objects with interview/discovery helpers
 * **UDP transport resilience** — request retries and queue-failure backoff
+* **Event keepalive** — periodic emit-state ping; re-enables TPI events (and unicast target) if a controller reboots while the listener stays up
 * **Multicast controller discovery** — find controllers on the LAN without a preconfigured host
 * **Button events** — discovery of control-device button instances, plus press and long-press event callbacks
+* **Absolute inputs** — discovery of numerical ECD instances (dials/sliders) with 16-bit value-change event callbacks
 * **Event filtering** — configure which TPI events the controller emits
 * **System variables** — labelled SV discovery, read/write, and change events
 * **Profiles** — query, change, and return to the scheduled profile

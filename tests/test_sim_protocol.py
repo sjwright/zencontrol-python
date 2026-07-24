@@ -231,6 +231,41 @@ async def test_injected_button_and_occupancy_events(live_sim):
 
 
 @pytest.mark.asyncio
+async def test_injected_absolute_input_event(live_sim):
+    p = live_sim.protocol
+    events: list[tuple[int, int, bytes]] = []
+
+    async def on_absolute(*, instance, payload):
+        events.append((instance.address.number, instance.number, bytes(payload)))
+
+    p.set_callbacks(absolute_input_callback=on_absolute)
+    await p.start_event_monitoring()
+    live_sim.sim.inject_absolute_input(13, 0, 4660)
+    await wait_until(
+        lambda: any(
+            ecd == 13 and inst == 0 and payload == bytes([0, 0x12, 0x34])
+            for ecd, inst, payload in events
+        ),
+        message="expected injected absolute-input event",
+    )
+
+
+@pytest.mark.asyncio
+async def test_query_absolute_input_instance(live_sim):
+    """Demo ECD 13 exposes a discoverable absolute_input instance."""
+    from zencontrol import ZenAddress, ZenAddressType, ZenInstanceType
+
+    p = live_sim.protocol
+    c = live_sim.controller
+    addr = ZenAddress(controller=c, type=ZenAddressType.ECD, number=13)
+    instances = await p.query_instances_by_address(address=addr)
+    assert any(
+        inst.number == 0 and inst.type == ZenInstanceType.ABSOLUTE_INPUT
+        for inst in instances
+    )
+
+
+@pytest.mark.asyncio
 async def test_timeout_when_simulator_stopped(live_sim):
     from zencontrol import ZenTimeoutError
 

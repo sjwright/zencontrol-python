@@ -203,3 +203,7 @@ class Const:
     RECONNECT_MIN_DELAY = 1.0
     RECONNECT_MAX_DELAY = 30.0
     RECONNECT_HEALTHY_SECONDS = 60.0
+    
+    # Periodic emit-state check — controllers that reboot while our listener
+    # stays up lose TPI event config until we re-assert it.
+    EVENT_KEEPALIVE_INTERVAL = 30.0
