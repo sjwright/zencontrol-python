@@ -1,6 +1,6 @@
 # MQTT bridge example
 
-Example Home Assistant bridge via MQTT auto-discovery. It reads settings from `config.yaml` and prints debug messages to the console.
+Example Home Assistant bridge via MQTT auto-discovery. It reads settings from `config.yaml` and prints debug messages to the console. This example is deprecated in favour of [zencontrol-homeassistant](https://github.com/sjwright/zencontrol-homeassistant), but serves as an example for how to implement the full-featured `interface.py` layer of this library.
 
 ## Requirements
 
