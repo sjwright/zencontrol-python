@@ -11,7 +11,13 @@ import pytest
 from zencontrol import ZenController
 from zencontrol.api.protocol import ZenProtocol
 from zencontrol.exceptions import ZenTimeoutError
-from zencontrol.io.command import ClientConst, Request, Response, ResponseType, ZenClient
+from zencontrol.io.command import (
+    ClientConst,
+    Request,
+    Response,
+    ResponseType,
+    ZenClient,
+)
 from zencontrol.io.event import EventConst, ZenEvent, ZenListener
 from zencontrol.utils import local_ip_for_remote
 

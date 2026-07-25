@@ -33,28 +33,48 @@ Example usage:
 """
 
 # High-level interface (recommended for most users)
+# API-level models (used by zen_api)
+from .api.models import DiscoveredController, ZenAddress, ZenColour, ZenInstance
+from .api.protocol import ZenProtocol
+
+# Shared types and exceptions
+from .api.types import (
+    ZenAddressType,
+    ZenColourType,
+    ZenEventCode,
+    ZenEventMask,
+    ZenEventMode,
+    ZenInstanceType,
+)
+from .exceptions import (
+    ZenConfigurationError,
+    ZenConnectionError,
+    ZenError,
+    ZenResponseError,
+    ZenTimeoutError,
+)
 from .interface import (
+    ZenAbsoluteInput,
+    ZenButton,
     ZenControl,
     ZenController,
-    ZenProfile,
-    ZenLight,
     ZenGroup,
-    ZenButton,
-    ZenAbsoluteInput,
+    ZenLight,
     ZenMotionSensor,
+    ZenProfile,
     ZenSystemVariable,
 )
 
-# API-level models (used by zen_api)
-from .api.models import ZenAddress, ZenInstance, ZenColour, DiscoveredController
-from .api.protocol import ZenProtocol
-
 # Low-level models (used by zen_io)
-from .io import ZenClient, ZenListener, ZenEvent, Request, Response, ResponseType, RequestType
-
-# Shared types and exceptions
-from .api.types import ZenAddressType, ZenInstanceType, ZenColourType, ZenEventCode, ZenEventMask, ZenEventMode
-from .exceptions import ZenError, ZenTimeoutError, ZenResponseError, ZenConnectionError, ZenConfigurationError
+from .io import (
+    Request,
+    RequestType,
+    Response,
+    ResponseType,
+    ZenClient,
+    ZenEvent,
+    ZenListener,
+)
 
 # Utilities
 from .utils import run_with_keyboard_interrupt

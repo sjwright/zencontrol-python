@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Self
 
 from ..io import ZenClient
-from .types import ZenAddressType, ZenInstanceType, ZenColourType, Const
+from .types import Const, ZenAddressType, ZenColourType, ZenInstanceType
 
 if TYPE_CHECKING:
     # Addresses are only ever built from registered controllers, which are
@@ -66,7 +66,7 @@ class ZenController:
     client: ZenClient | None = None
     _ip: str | None = field(init=False, repr=False, default=None)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self._update_mac_bytes(self.mac)
 
     def __setattr__(self, name: str, value: object) -> None:
@@ -163,7 +163,7 @@ class ZenAddress:
         """Return a stable HA-friendly identifier for this address."""
         return f"{self.type.name.casefold()}{self.number}"
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         match self.type:
             case ZenAddressType.BROADCAST:
                 if self.number != 255:
@@ -187,7 +187,7 @@ class ZenInstance:
     number: int
     active: bool | None = None
     error: bool | None = None
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not 0 <= self.number < Const.MAX_INSTANCE: 
             raise ValueError(f"Instance number must be between 0 and {Const.MAX_INSTANCE-1}, received {self.number}")
 
@@ -230,7 +230,7 @@ class ZenColour:
             case _:
                 return None
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         match self.type:
             case ZenColourType.TC:
                 kelvin = self.kelvin
@@ -325,6 +325,6 @@ class ZenProfile:
     address: ZenAddress
     profile: int
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not (0 <= self.profile <= 255):
             raise ValueError(f"Profile must be 0-255, got {self.profile}")

@@ -67,7 +67,7 @@ async def test_aclose_closes_clients_and_clears_instances() -> None:
     ctrl.client = fake_client
 
     address = ZenAddress(controller=ctrl, type=ZenAddressType.ECG, number=1)
-    light = ZenLight(protocol=zen.protocol, address=address)
+    ZenLight(protocol=zen.protocol, address=address)
     assert "ctrl-a 1" in zen.protocol.entity_registry.lights
     assert "ctrl-a" in zen.protocol.entity_registry.controllers
 

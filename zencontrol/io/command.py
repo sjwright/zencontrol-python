@@ -31,7 +31,8 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import Self
+from typing import Self, cast
+
 
 # Constants
 class ClientConst:
@@ -64,7 +65,7 @@ class Request:
     raw_sent: bytes | None = None
     timestamp: float = field(default_factory=time.time)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self.timestamp = time.time()
         # If data is a list, convert it to a bytes object
         if isinstance(self.data, list):
@@ -124,35 +125,35 @@ class ZenRequestProtocol(asyncio.DatagramProtocol):
         response_handler: Callable[[bytes, tuple[str, int]], Awaitable[None]],
         logger: logging.Logger | None = None,
         on_transport_lost: Callable[[Exception | None], None] | None = None,
-    ):
+    ) -> None:
         self.response_handler = response_handler
         self.logger = logger or logging.getLogger(__name__)
         self.on_transport_lost = on_transport_lost
         self.transport: asyncio.transports.DatagramTransport | None = None
         
-    def connection_made(self, transport):
-        self.transport = transport
+    def connection_made(self, transport: asyncio.BaseTransport) -> None:
+        self.transport = cast(asyncio.DatagramTransport, transport)
         
-    def datagram_received(self, data, addr):
+    def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
         self._run_handler(self.response_handler(data, addr))
 
-    def _run_handler(self, coro: Awaitable[None]):
+    def _run_handler(self, coro: Awaitable[None]) -> None:
         task = asyncio.ensure_future(coro)
         task.add_done_callback(self._handler_done)
 
-    def _handler_done(self, task: asyncio.Task[None]):
+    def _handler_done(self, task: asyncio.Task[None]) -> None:
         if task.cancelled():
             return
         exc = task.exception()
         if exc:
             self.logger.error(f"Response handler failed: {exc}", exc_info=exc)
         
-    def error_received(self, exc):
+    def error_received(self, exc: Exception) -> None:
         self.logger.error(f"Request protocol error: {exc}")
         if self.on_transport_lost:
             self.on_transport_lost(exc)
         
-    def connection_lost(self, exc):
+    def connection_lost(self, exc: Exception | None) -> None:
         if exc:
             self.logger.error(f"Request connection lost: {exc}")
         else:
@@ -214,6 +215,9 @@ class ZenClient:
         if exc:
             self.logger.debug("ZenClient marked disconnected: %s", exc)
 
+    def _is_disconnected(self) -> bool:
+        return self._closed or self._transport is None
+
     async def send_request(
         self,
         req: Request,
@@ -233,7 +237,7 @@ class ZenClient:
 
         # Hold the lock only for seq allocation + pending registration (not RTT)
         async with self._lock:
-            if self._closed or self._transport is None:
+            if self._is_disconnected():
                 return Response(ResponseType.TIMEOUT, request=req)
             fut = loop.create_future()
             req.seq = self._alloc_seq()
@@ -247,7 +251,7 @@ class ZenClient:
 
         try:
             for i in range(retries + 1):
-                if self._closed or self._transport is None:
+                if self._is_disconnected():
                     return Response(ResponseType.TIMEOUT, request=req)
                 try:
                     req.timestamp = time.time()
@@ -296,7 +300,7 @@ class ZenClient:
         assert response is not None
         return response
 
-    async def _receive_response(self, datagram: bytes, addr: tuple[str, int]):
+    async def _receive_response(self, datagram: bytes, addr: tuple[str, int]) -> None:
         
         # Too short to be a valid packet
         if len(datagram) < 4:
@@ -381,10 +385,10 @@ class ZenClient:
             acc ^= byte
         return acc
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> Self:
         return self
     
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
         await self.close()
     
     def is_connected(self) -> bool:
@@ -395,7 +399,7 @@ class ZenClient:
             and not self._transport.is_closing()
         )
 
-    async def close(self):
+    async def close(self) -> None:
         """Close the client"""
         async with self._lock:
             if self._closed and self._transport is None:

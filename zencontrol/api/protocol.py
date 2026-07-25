@@ -1,28 +1,42 @@
-from collections.abc import Callable, Awaitable, Coroutine
 import asyncio
-import socket
+import logging
 import struct
 import time
-import logging
 import traceback
+from collections.abc import Awaitable, Callable, Coroutine
 from datetime import datetime as dt
-from typing import TYPE_CHECKING, Any, Self, Literal, overload
-from enum import Enum
-from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Literal, Self, overload
 
-from ..io import ZenClient, ZenListener, ZenEvent, Request, Response, ResponseType, RequestType, EventConst, ClientConst
+from ..exceptions import ZenTimeoutError
+from ..io import (
+    ClientConst,
+    EventConst,
+    Request,
+    RequestType,
+    Response,
+    ResponseType,
+    ZenClient,
+    ZenEvent,
+    ZenListener,
+)
+from ..utils import local_ip_for_remote
 from .models import (
     DEFAULT_CONTROLLER_PORT,
     DiscoveredController,
-    ZenController,
     ZenAddress,
-    ZenInstance,
     ZenColour,
-    ZenProfile,
+    ZenController,
+    ZenInstance,
 )
-from .types import ZenAddressType, ZenInstanceType, ZenColourType, ZenEventCode, ZenEventMask, ZenEventMode, ZenErrorCode, Const
-from ..exceptions import ZenError, ZenTimeoutError
-from ..utils import local_ip_for_remote
+from .types import (
+    Const,
+    ZenAddressType,
+    ZenErrorCode,
+    ZenEventCode,
+    ZenEventMask,
+    ZenEventMode,
+    ZenInstanceType,
+)
 
 # Magic import to avoid dependency on colorama
 try:
@@ -232,7 +246,7 @@ class ZenProtocol:
                  unicast: bool = False,
                  listen_ip: str | None = None,
                  listen_port: int | None = None,
-                 cache: dict[bytes, dict[str, Any]] | None = None):
+                 cache: dict[bytes, dict[str, Any]] | None = None) -> None:
         self.logger = logger or logging.getLogger('null')
         if logger is None:
             self.logger.addHandler(logging.NullHandler())
@@ -250,7 +264,7 @@ class ZenProtocol:
             self.local_ip = self.listen_ip
         # Setup event monitoring using ZenListener
         self.event_listener: ZenListener | None = None
-        self.event_task = None
+        self.event_task: asyncio.Task[None] | None = None
         # Prevents double on_disconnect if stop races with listener death
         self._disconnect_notified = False
 
@@ -281,11 +295,11 @@ class ZenProtocol:
         # Fire-and-forget work (delayed events, refresh timers, motion holds)
         self._bg_tasks: set[asyncio.Task[Any]] = set()
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> Self:
         """Async context manager entry"""
         return self
     
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
         """Async context manager exit"""
         await self.aclose()
     
@@ -320,7 +334,7 @@ class ZenProtocol:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._bg_tasks.clear()
 
-    async def aclose(self):
+    async def aclose(self) -> None:
         """Stop monitoring, cancel background tasks, and close UDP clients."""
         await self.stop_event_monitoring()
         await self._cancel_background_tasks()
@@ -335,7 +349,7 @@ class ZenProtocol:
                 pass
         self.clear_entity_cache()
 
-    def set_controllers(self, controllers: list[ZenInterfaceController]):
+    def set_controllers(self, controllers: list[ZenInterfaceController]) -> None:
         self.controllers = controllers # Used to match events to controllers, and include controller objects in callbacks
         # Drop identified entries that are now registered
         for ctrl in controllers:
@@ -452,8 +466,6 @@ class ZenProtocol:
                    ) -> (bytes | str | list[int] | int | bool) | None:
         request: Request = Request(command=command, data=[address] + (data or []), request_type=RequestType.BASIC)
         response_data, response_code = await self._send_packet(controller, request, cacheable=cacheable)
-        if response_data is None and response_code is None:
-            return None
         match response_code:
             case 0xA0: # OK
                 match return_type:
@@ -541,7 +553,7 @@ class ZenProtocol:
                 pass  # Answer is in data bytes
             case 0xA2: # NO_ANSWER
                 if response_data is not None and len(response_data) > 0:
-                    self.logger.error(f"No answer with code: {response_data}")
+                    self.logger.error("No answer with code: %r", response_data)
                 return None
             case 0xA3: # ERROR
                 self._log_response_error(response_data)
@@ -579,7 +591,7 @@ class ZenProtocol:
                     if self.print_traffic:
                         cached_packet = bytes([cached_response_type & 0xFF, len(cached_data) & 0xFF]) + cached_data
                         print(Fore.MAGENTA + f"FOUND:   [----, {' '.join(f'0x{b:02X}' for b in cache_key)}, ----]  "
-                            + Fore.RED + Style.DIM + f" CACHE HIT"
+                            + Fore.RED + Style.DIM + " CACHE HIT"
                             + Style.BRIGHT + Fore.CYAN + f"  [{' '.join(f'0x{b:02X}' for b in cached_packet)}, ----]"
                             + Style.RESET_ALL)
                     return cached_data, cached_response_type
@@ -675,7 +687,7 @@ class ZenProtocol:
                             profile_change_callback: Callable[..., Awaitable[None]] | None = None,
                             system_variable_change_callback: Callable[..., Awaitable[None]] | None = None,
                             disconnect_callback: Callable[[], Awaitable[None]] | None = None,
-                            ):
+                            ) -> None:
         self.button_press_callback = button_press_callback
         self.button_hold_callback = button_hold_callback
         self.absolute_input_callback = absolute_input_callback
@@ -688,7 +700,7 @@ class ZenProtocol:
         self.system_variable_change_callback = system_variable_change_callback
         self.disconnect_callback = disconnect_callback
         
-    async def start_event_monitoring(self):
+    async def start_event_monitoring(self) -> None:
         if self.event_task and not self.event_task.done():
             # Event monitoring already running
             return
@@ -728,7 +740,7 @@ class ZenProtocol:
         except Exception as err:
             self.logger.error(f"disconnect_callback error: {err}")
 
-    async def _async_event_listener(self):
+    async def _async_event_listener(self) -> None:
         """Async event listener using ZenListener"""
         # True unless stop_event_monitoring cancelled us intentionally
         unexpected = True
@@ -764,7 +776,7 @@ class ZenProtocol:
             if unexpected:
                 await self.notify_disconnect()
     
-    def get_controller_by_ip_mac(self, ip: str | None = None, mac: bytes | None = None):
+    def get_controller_by_ip_mac(self, ip: str | None = None, mac: bytes | None = None) -> ZenInterfaceController | None:
         """Find a controller by IP address or MAC address"""
         if ip is not None:
             for ctrl in self.controllers:
@@ -867,7 +879,7 @@ class ZenProtocol:
                     pass
                 temp.client = None
 
-    async def _process_zen_event(self, event: ZenEvent):
+    async def _process_zen_event(self, event: ZenEvent) -> None:
         """Process received ZenEvent from ZenListener"""
         typecast = "unicast" if self.unicast else "multicast"
         
@@ -878,7 +890,6 @@ class ZenProtocol:
             return
 
         ip_address = event.ip_address
-        ip_port = event.ip_port
         target = event.target
         payload = event.payload
         event_code = event.event_code
@@ -904,9 +915,6 @@ class ZenProtocol:
         if len(payload) < min_payload:
             self.logger.warning(f"Event {event_enum.name} payload too short: {len(payload)} < {min_payload}")
             return
-        # Get event name from ZenEventCode, with fallback to unknown, underscores replaced with spaces, and first letter capitalized
-        event_name = event_enum.name.replace("_", " ").title()
-
         # Print the raw packet
         # if self.print_traffic: 
         #     print(Fore.MAGENTA + f"{typecast.upper()} {ip_address}:" + 
@@ -1068,7 +1076,7 @@ class ZenProtocol:
                 pass
 
 
-    async def stop_event_monitoring(self):
+    async def stop_event_monitoring(self) -> None:
         """Stop listening for events"""
         if self.event_task:
             task = self.event_task
@@ -1128,8 +1136,9 @@ class ZenProtocol:
             return None
         return ZenEventMode.from_byte(response[0]).enabled
     
-    async def dali_add_tpi_event_filter(self, address: ZenAddress|ZenInstance, filter: ZenEventMask = ZenEventMask.all_events()) -> bool | None:
+    async def dali_add_tpi_event_filter(self, address: ZenAddress|ZenInstance, filter: ZenEventMask | None = None) -> bool | None:
         """Stop specific events from an address/instance from being sent. Events in mask will be muted. Returns true if filter was added successfully."""
+        if filter is None: filter = ZenEventMask.all_events()
         instance_number = 0xFF
         if isinstance(address, ZenInstance):
             instance: ZenInstance = address
@@ -1141,8 +1150,9 @@ class ZenProtocol:
                              [instance_number, filter.upper(), filter.lower()],
                              return_type='bool')
     
-    async def dali_clear_tpi_event_filter(self, address: ZenAddress|ZenInstance, unfilter: ZenEventMask = ZenEventMask.all_events()) -> bool | None:
+    async def dali_clear_tpi_event_filter(self, address: ZenAddress|ZenInstance, unfilter: ZenEventMask | None = None) -> bool | None:
         """Allow specific events from an address/instance to be sent again. Events in mask will be unmuted. Returns true if filter was cleared successfully."""
+        if unfilter is None: unfilter = ZenEventMask.all_events()
         instance_number = 0xFF
         if isinstance(address, ZenInstance):
             instance: ZenInstance = address
@@ -1199,8 +1209,9 @@ class ZenProtocol:
                 
         return results
 
-    async def tpi_event_emit(self, controller: ZenController, mode: ZenEventMode = ZenEventMode(enabled=True, filtering=False, unicast=False, multicast=True)) -> bool:
+    async def tpi_event_emit(self, controller: ZenController, mode: ZenEventMode | None = None) -> bool:
         """Enable or disable TPI Event emission. Returns True if successful, else False."""
+        if mode is None: mode = ZenEventMode(enabled=True, filtering=False, unicast=False, multicast=True)
         mask = mode.bitmask()
         # response = await self._send_basic(controller, self.CMD["ENABLE_TPI_EVENT_EMIT"], 0x00) # disable first to clear any existing state... I think this is a bug?
         response = await self._send_basic(controller, self.CMD["ENABLE_TPI_EVENT_EMIT"], mask)
@@ -1209,7 +1220,7 @@ class ZenProtocol:
                 return True
         return False
 
-    async def set_tpi_event_unicast_address(self, controller: ZenController, ipaddr: str | None = None, port: int | None = None):
+    async def set_tpi_event_unicast_address(self, controller: ZenController, ipaddr: str | None = None, port: int | None = None) -> bytes | None:
         """Configure TPI Events for Unicast mode with IP and port as defined in the ZenController instance."""
         data = [0,0,0,0,0,0]
         if port is not None:
@@ -1229,7 +1240,7 @@ class ZenProtocol:
                     raise ValueError
                 data[2:6] = ip_bytes
             except ValueError:
-                raise ValueError("Invalid IP address format")
+                raise ValueError("Invalid IP address format") from None
         
         return await self._send_dynamic(controller, self.CMD["SET_TPI_EVENT_UNICAST_ADDRESS"], data)
 

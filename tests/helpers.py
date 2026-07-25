@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-
 import asyncio
+from collections.abc import Callable
 
 # The first-generation DALI lighting commands (arc/scene/up/down/off/recall/
 # go-to-last-active) acknowledge with REPLY_NO_ANSWER rather than REPLY_OK, which

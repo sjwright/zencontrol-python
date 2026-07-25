@@ -6,6 +6,7 @@ This module defines all custom exceptions used throughout the library.
 
 from typing import Any
 
+
 class ZenError(Exception):
     """Base exception for Zen protocol errors"""
     pass

@@ -19,12 +19,14 @@ asyncio.run(listen_for_events())
 """
 
 import asyncio
+import logging
 import socket
 import struct
-import logging
 import time
-from collections.abc import Awaitable, Callable, AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass, field
+from typing import Self
+
 
 # Event classes
 @dataclass(slots=True)
@@ -52,28 +54,28 @@ class ZenEventProtocol(asyncio.DatagramProtocol):
         self,
         event_handler: Callable[[bytes, tuple[str, int]], Awaitable[None]],
         logger: logging.Logger | None = None,
-    ):
+    ) -> None:
         self.event_handler = event_handler
         self.logger = logger or logging.getLogger(__name__)
-        self.transport = None
-    def connection_made(self, transport):
+        self.transport: asyncio.BaseTransport | None = None
+    def connection_made(self, transport: asyncio.BaseTransport) -> None:
         self.transport = transport
-    def datagram_received(self, data, addr):
+    def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
         self._run_handler(self.event_handler(data, addr))
 
-    def _run_handler(self, coro: Awaitable[None]):
+    def _run_handler(self, coro: Awaitable[None]) -> None:
         task = asyncio.ensure_future(coro)
         task.add_done_callback(self._handler_done)
 
-    def _handler_done(self, task: asyncio.Task[None]):
+    def _handler_done(self, task: asyncio.Task[None]) -> None:
         if task.cancelled():
             return
         exc = task.exception()
         if exc:
             self.logger.error(f"Event handler failed: {exc}", exc_info=exc)
-    def error_received(self, exc):
+    def error_received(self, exc: Exception) -> None:
         self.logger.error(f"Event protocol error: {exc}")
-    def connection_lost(self, exc):
+    def connection_lost(self, exc: Exception | None) -> None:
         if exc:
             self.logger.error(f"Event connection lost: {exc}")
         else:
@@ -87,7 +89,7 @@ class ZenListener:
         listen_port: int = 0,
         logger: logging.Logger | None = None,
         max_queue_size: int = EventConst.DEFAULT_MAX_QUEUE_SIZE,
-    ):
+    ) -> None:
         self.unicast = unicast
         self.listen_ip = listen_ip
         self.listen_port = listen_port
@@ -114,14 +116,14 @@ class ZenListener:
         listen_port: int = 0,
         logger: logging.Logger | None = None,
         max_queue_size: int = EventConst.DEFAULT_MAX_QUEUE_SIZE,
-    ) -> "ZenListener":
+    ) -> ZenListener:
         """Create and start a ZenListener instance"""
         self = cls(unicast, listen_ip, listen_port, logger, max_queue_size=max_queue_size)
         await self._create_datagram_endpoint()
         self.logger.info(f"Started event listener in {'unicast' if self.unicast else 'multicast'} mode")
         return self
 
-    async def start_listening(self):
+    async def start_listening(self) -> None:
         if self.transport and not self.transport.is_closing():
             self.logger.warning("Event listener already running")
             return
@@ -130,7 +132,7 @@ class ZenListener:
         await self._create_datagram_endpoint()
         self.logger.info(f"Started event listener in {'unicast' if self.unicast else 'multicast'} mode")
 
-    async def stop_listening(self):
+    async def stop_listening(self) -> None:
         if self.transport and not self.transport.is_closing():
             self._stop_event.set()
             self._drop_multicast_membership()
@@ -149,7 +151,7 @@ class ZenListener:
 
         self.logger.info("Stopped event listener")
 
-    async def close(self):
+    async def close(self) -> None:
         """Close the listener (alias for stop_listening for async context manager compatibility)"""
         await self.stop_listening()
 
@@ -185,7 +187,7 @@ class ZenListener:
         sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, self._mreq)
         return sock
 
-    async def _create_datagram_endpoint(self):
+    async def _create_datagram_endpoint(self) -> None:
         loop = asyncio.get_running_loop()
 
         if self.unicast:
@@ -224,7 +226,7 @@ class ZenListener:
                 f"{EventConst.MULTICAST_GROUP}:{EventConst.MULTICAST_PORT}"
             )
 
-    async def _receive_event(self, data: bytes, addr: tuple[str, int]):
+    async def _receive_event(self, data: bytes, addr: tuple[str, int]) -> None:
         """Process received event data"""
         typecast = "unicast" if self.unicast else "multicast"
         
@@ -298,7 +300,7 @@ class ZenListener:
                 self.dropped_events,
             )
 
-    async def events(self, timeout: float | None = None) -> AsyncGenerator[ZenEvent, None]:
+    async def events(self, timeout: float | None = None) -> AsyncGenerator[ZenEvent]:
         """Async generator yielding events as they arrive"""
         while not self._stop_event.is_set():
             try:
@@ -308,7 +310,7 @@ class ZenListener:
                 )
                 yield event
                 self._event_queue.task_done()
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 if timeout is not None:
                     break
                 continue
@@ -319,7 +321,7 @@ class ZenListener:
             event = await asyncio.wait_for(self._event_queue.get(), timeout=timeout)
             self._event_queue.task_done()
             return event
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return None
     
     async def get_events(self, count: int, timeout: float | None = None) -> list[ZenEvent]:
@@ -332,14 +334,14 @@ class ZenListener:
             events.append(event)
         return events
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> Self:
         """Async context manager entry"""
         # If not already started, start listening
         if not self.transport or self.transport.is_closing():
             await self.start_listening()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
         """Async context manager exit"""
         await self.stop_listening()
 

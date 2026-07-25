@@ -33,9 +33,9 @@ colorama = [
 dev = [
     "pytest>=6.0",
     "pytest-asyncio>=0.18.0",
-    "black>=22.0",
-    "flake8>=4.0",
+    "ruff",
     "mypy>=0.950",
+    "types-colorama",
     "build>=1.0",
     "colorama>=0.4.6",
 ]
@@ -66,24 +66,6 @@ include = ["zencontrol*", "examples*"]
 [tool.setuptools.package-data]
 zencontrol = ["py.typed"]
 
-[tool.black]
-line-length = 88
-target-version = ['py314']
-include = '\.pyi?$'
-extend-exclude = '''
-/(
-  # directories
-  \.eggs
-  | \.git
-  | \.hg
-  | \.mypy_cache
-  | \.tox
-  | \.venv
-  | build
-  | dist
-)/
-'''
-
 [tool.mypy]
 python_version = "3.14"
 warn_return_any = true
@@ -112,7 +94,13 @@ markers = [
 
 [tool.ruff]
 target-version = "py314"
-line-length = 88
+line-length = 130
+exclude = ["examples"]
 
 [tool.ruff.lint]
 select = ["ASYNC", "B", "E", "F", "I", "UP"]
+ignore = [
+    "ASYNC109", # Timeout parameters are part of the public async API.
+    "E501",     # Preserve existing protocol logging and payload formatting.
+    "E701",     # Allow readable single-line conditionals.
+]

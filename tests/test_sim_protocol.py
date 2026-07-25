@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import pytest
+from helpers import LEGACY_ACK, wait_until
 
 from zencontrol import ZenColour, ZenColourType, ZenEventMask, ZenEventMode
-
-from helpers import LEGACY_ACK, wait_until
 
 pytestmark = pytest.mark.simulator
 

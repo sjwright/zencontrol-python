@@ -144,9 +144,10 @@ class LiveSimulator:
 async def live_sim() -> LiveSimulator:
     """Start zencontrol-simulator on an ephemeral port with a ZenProtocol client."""
     _require_simulator()
-    from zencontrol import ZenController, ZenProtocol
     from zencontrol_simulator.server import Simulator
     from zencontrol_simulator.world import load_world
+
+    from zencontrol import ZenController, ZenProtocol
 
     config = _simulator_config_path()
     world = load_world(config)

@@ -7,9 +7,9 @@ This module contains types and enums that belong to the API layer:
 - Constants used by the API layer
 """
 
+from dataclasses import dataclass
 from enum import Enum
 from typing import Self
-from dataclasses import dataclass
 
 
 class ZenAddressType(Enum):
@@ -105,7 +105,7 @@ class ZenEventMask:
     level_change_v2: bool = False
     
     @classmethod
-    def all_events(cls):
+    def all_events(cls) -> Self:
         # Exclude deprecated level_change / group_level_change — use level_change_v2 (spec V2.001.121+)
         return cls(
             button_press = True,

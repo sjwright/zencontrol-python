@@ -25,7 +25,7 @@ def local_ip_for_remote(remote_host: str) -> str:
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.connect((remote_ip, 1))
-            return sock.getsockname()[0]
+            return str(sock.getsockname()[0])
     except OSError:
         try:
             return socket.gethostbyname(socket.gethostname())
@@ -61,7 +61,7 @@ def setup_signal_handlers() -> None:
     This function sets up handlers for SIGINT (Ctrl+C) and SIGTERM to ensure
     clean shutdown of async operations.
     """
-    def signal_handler(signum, frame):
+    def signal_handler(signum: int, frame: Any) -> None:
         print(f"\n🛑 Received signal {signum}, shutting down gracefully...")
         sys.exit(0)
     

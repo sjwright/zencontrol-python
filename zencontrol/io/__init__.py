@@ -8,8 +8,15 @@ This module contains the lowest-level communication components:
 - Connection management
 """
 
-from .command import ZenClient, Request, Response, ResponseType, RequestType, ClientConst
-from .event import ZenListener, ZenEvent, EventConst
+from .command import (
+    ClientConst,
+    Request,
+    RequestType,
+    Response,
+    ResponseType,
+    ZenClient,
+)
+from .event import EventConst, ZenEvent, ZenListener
 
 __all__ = [
     "ZenClient",

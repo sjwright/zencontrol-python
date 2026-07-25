@@ -8,14 +8,14 @@ This module contains models that belong to the zen_interface layer:
 """
 
 from .interface import (
+    ZenAbsoluteInput,
+    ZenButton,
     ZenControl,
     ZenController,
-    ZenProfile,
-    ZenLight,
     ZenGroup,
-    ZenButton,
-    ZenAbsoluteInput,
+    ZenLight,
     ZenMotionSensor,
+    ZenProfile,
     ZenSystemVariable,
 )
 
