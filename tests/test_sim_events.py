@@ -6,7 +6,7 @@ import pytest
 
 from zencontrol import ZenColour, ZenColourType
 
-from helpers import wait_until
+from helpers import LEGACY_ACK, wait_until
 
 pytestmark = pytest.mark.simulator
 
@@ -26,7 +26,7 @@ async def test_scene_and_colour_events_via_protocol(live_sim):
     p.set_callbacks(scene_change_callback=on_scene, colour_change_callback=on_colour)
     await p.start_event_monitoring()
 
-    assert await p.dali_scene(live_sim.ecg(0), 1) is True
+    assert await p.dali_scene(live_sim.ecg(0), 1) is LEGACY_ACK
     await wait_until(
         lambda: any(t == "ECG" and n == 0 and s == 1 for t, n, s in scenes),
         message="expected scene-change event for ECG 0 → scene 1",
@@ -61,7 +61,7 @@ async def test_group_level_event_via_protocol(live_sim):
     )
     await p.start_event_monitoring()
 
-    assert await p.dali_arc_level(live_sim.group(0), 44) is True
+    assert await p.dali_arc_level(live_sim.group(0), 44) is LEGACY_ACK
     await wait_until(
         lambda: any(n == 0 and level == 44 for n, level in group_events),
         message="expected group level-change event for group 0 → 44",
@@ -83,7 +83,7 @@ async def test_member_events_on_group_scene(live_sim):
     p.set_callbacks(scene_change_callback=on_scene, level_change_callback=on_level)
     await p.start_event_monitoring()
 
-    assert await p.dali_scene(live_sim.group(0), 1) is True
+    assert await p.dali_scene(live_sim.group(0), 1) is LEGACY_ACK
     await wait_until(
         lambda: (
             any(t == "GROUP" and n == 0 and s == 1 for t, n, s in scenes)

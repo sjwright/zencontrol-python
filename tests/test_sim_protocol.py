@@ -6,7 +6,7 @@ import pytest
 
 from zencontrol import ZenColour, ZenColourType, ZenEventMask, ZenEventMode
 
-from helpers import wait_until
+from helpers import LEGACY_ACK, wait_until
 
 pytestmark = pytest.mark.simulator
 
@@ -73,13 +73,13 @@ async def test_arc_level_off_and_on(live_sim):
     p = live_sim.protocol
     addr = live_sim.ecg(1)
 
-    assert await p.dali_arc_level(addr, 77) is True
+    assert await p.dali_arc_level(addr, 77) is LEGACY_ACK
     assert await p.dali_query_level(addr) == 77
     assert live_sim.world.lights[1].level == 77
 
-    assert await p.dali_off(addr) is True
+    assert await p.dali_off(addr) is LEGACY_ACK
     assert await p.dali_query_level(addr) == 0
-    assert await p.dali_on_step_up(addr) is True
+    assert await p.dali_on_step_up(addr) is LEGACY_ACK
     assert await p.dali_query_level(addr) == live_sim.world.lights[1].min_level
 
 
@@ -88,7 +88,7 @@ async def test_group_arc_and_mixed_level_query(live_sim):
     p = live_sim.protocol
     g0 = live_sim.group(0)
 
-    assert await p.dali_arc_level(g0, 40) is True
+    assert await p.dali_arc_level(g0, 40) is LEGACY_ACK
     assert await p.dali_query_level(g0) == 40
     assert live_sim.world.lights[0].level == 40
     assert live_sim.world.lights[1].level == 40
@@ -103,7 +103,7 @@ async def test_scene_recall_and_queries(live_sim):
     p = live_sim.protocol
     addr = live_sim.ecg(0)
 
-    assert await p.dali_scene(addr, 1) is True
+    assert await p.dali_scene(addr, 1) is LEGACY_ACK
     assert await p.dali_query_last_scene(addr) == 1
     assert await p.dali_query_last_scene_is_current(addr) is True
     assert await p.dali_query_level(addr) == 80
@@ -123,7 +123,7 @@ async def test_group_scene_recall(live_sim):
     assert 0 in scenes and 1 in scenes
     assert await p.query_scene_label_for_group(g0, 1) == "Relax"
 
-    assert await p.dali_scene(g0, 1) is True
+    assert await p.dali_scene(g0, 1) is LEGACY_ACK
     assert live_sim.world.groups[0].last_scene == 1
     assert live_sim.world.lights[0].level == 80
     assert live_sim.world.lights[1].level == 100
@@ -197,7 +197,7 @@ async def test_level_change_event_via_protocol(live_sim):
 
     p.set_callbacks(level_change_callback=on_level)
     await p.start_event_monitoring()
-    assert await p.dali_arc_level(live_sim.ecg(1), 55) is True
+    assert await p.dali_arc_level(live_sim.ecg(1), 55) is LEGACY_ACK
     await wait_until(
         lambda: any(n == 1 and level == 55 for n, level in events),
         message="expected level-change event for ECG 1 → 55",
@@ -288,19 +288,19 @@ async def test_step_up_down_and_step_down_off(live_sim):
     addr = live_sim.ecg(1)
 
     await p.dali_arc_level(addr, 10)
-    assert await p.dali_up(addr) is True
+    assert await p.dali_up(addr) is LEGACY_ACK
     assert await p.dali_query_level(addr) == 11
-    assert await p.dali_down(addr) is True
+    assert await p.dali_down(addr) is LEGACY_ACK
     assert await p.dali_query_level(addr) == 10
 
     await p.dali_arc_level(addr, 1)
-    assert await p.dali_down(addr) is True  # stay at min
+    assert await p.dali_down(addr) is LEGACY_ACK  # stay at min
     assert await p.dali_query_level(addr) == 1
-    assert await p.dali_step_down_off(addr) is True
+    assert await p.dali_step_down_off(addr) is LEGACY_ACK
     assert await p.dali_query_level(addr) == 0
 
     # UP must not ignite from off
-    assert await p.dali_up(addr) is True
+    assert await p.dali_up(addr) is LEGACY_ACK
     assert await p.dali_query_level(addr) == 0
 
 
@@ -311,14 +311,14 @@ async def test_recall_max_min_and_last_active(live_sim):
     live_sim.world.lights[1].max_level = 200
     live_sim.world.lights[1].min_level = 5
 
-    assert await p.dali_recall_max(addr) is True
+    assert await p.dali_recall_max(addr) is LEGACY_ACK
     assert await p.dali_query_level(addr) == 200
-    assert await p.dali_recall_min(addr) is True
+    assert await p.dali_recall_min(addr) is LEGACY_ACK
     assert await p.dali_query_level(addr) == 5
 
     await p.dali_arc_level(addr, 88)
     await p.dali_off(addr)
-    assert await p.dali_go_to_last_active_level(addr) is True
+    assert await p.dali_go_to_last_active_level(addr) is LEGACY_ACK
     assert await p.dali_query_level(addr) == 88
 
 
@@ -425,7 +425,7 @@ async def test_colour_scenes_include_8_11(live_sim):
     assert levels[8] == 160
     assert levels[9] == 40
 
-    assert await p.dali_scene(addr, 8) is True
+    assert await p.dali_scene(addr, 8) is LEGACY_ACK
     assert await p.dali_query_level(addr) == 160
     queried = await p.query_dali_colour(addr)
     assert queried is not None and queried.kelvin == 4500
@@ -448,13 +448,13 @@ async def test_broadcast_arc_off_scene_and_colour(live_sim):
     p = live_sim.protocol
     bcast = live_sim.broadcast()
 
-    assert await p.dali_arc_level(bcast, 33) is True
+    assert await p.dali_arc_level(bcast, 33) is LEGACY_ACK
     assert all(lt.level == 33 for lt in live_sim.world.lights.values())
 
-    assert await p.dali_off(bcast) is True
+    assert await p.dali_off(bcast) is LEGACY_ACK
     assert all(lt.level == 0 for lt in live_sim.world.lights.values())
 
-    assert await p.dali_scene(bcast, 0) is True
+    assert await p.dali_scene(bcast, 0) is LEGACY_ACK
     assert live_sim.world.lights[0].level == 180
     assert live_sim.world.groups[0].last_scene == 0
 
@@ -469,7 +469,7 @@ async def test_broadcast_arc_off_scene_and_colour(live_sim):
 async def test_group_last_scene_and_status(live_sim):
     p = live_sim.protocol
     g0 = live_sim.group(0)
-    assert await p.dali_scene(g0, 1) is True
+    assert await p.dali_scene(g0, 1) is LEGACY_ACK
     assert await p.dali_query_last_scene(g0) == 1
     assert await p.dali_query_last_scene_is_current(g0) is True
 
@@ -617,7 +617,7 @@ async def test_query_profile_information(live_sim):
 async def test_colour_only_preserves_level(live_sim):
     p = live_sim.protocol
     addr = live_sim.ecg(0)
-    assert await p.dali_arc_level(addr, 77) is True
+    assert await p.dali_arc_level(addr, 77) is LEGACY_ACK
     colour = ZenColour(type=ZenColourType.TC, kelvin=4200)
     assert await p.dali_colour(addr, colour, level=255) is True
     assert await p.dali_query_level(addr) == 77

@@ -6,7 +6,7 @@ import pytest
 
 from zencontrol import ZenColour, ZenColourType
 
-from helpers import wait_until
+from helpers import LEGACY_ACK, wait_until
 
 pytestmark = pytest.mark.simulator
 
@@ -65,11 +65,11 @@ async def test_light_set_and_query(live_zen):
     lights = {lt.address.number: lt for lt in await zen.get_lights()}
     light = lights[1]
 
-    assert await light.set(level=50, fade=True) is True
+    assert await light.set(level=50, fade=True) is LEGACY_ACK
     assert await zen.protocol.dali_query_level(light.address) == 50
     assert live_sim.world.lights[1].level == 50
 
-    assert await light.off(fade=False) is True
+    assert await light.off(fade=False) is LEGACY_ACK
     assert await zen.protocol.dali_query_level(light.address) == 0
 
 
@@ -99,7 +99,7 @@ async def test_group_scene_and_profile_switch(live_zen):
 
     groups = await zen.get_groups()
     group = next(g for g in groups if g.address.number == 0)
-    assert await group.set_scene(1) is True
+    assert await group.set_scene(1) is LEGACY_ACK
     assert live_sim.world.groups[0].last_scene == 1
     assert live_sim.world.lights[0].level == 80
     assert live_sim.world.lights[1].level == 100
@@ -176,7 +176,7 @@ async def test_start_receives_injected_and_control_events(live_zen):
     await zen.get_profiles()
 
     lights = {lt.address.number: lt for lt in await zen.get_lights()}
-    assert await lights[1].set(level=66) is True
+    assert await lights[1].set(level=66) is LEGACY_ACK
     await wait_until(
         lambda: any(n == 1 and level == 66 for n, level, _, _ in light_events),
         message="expected light_change for ECG 1 → 66",
@@ -190,7 +190,7 @@ async def test_start_receives_injected_and_control_events(live_zen):
     )
 
     groups = {g.address.number: g for g in await zen.get_groups()}
-    assert await groups[0].set(level=55) is True
+    assert await groups[0].set(level=55) is LEGACY_ACK
     await wait_until(
         lambda: any(n == 0 and level == 55 for n, level, _, _ in group_events),
         message="expected group_change for group 0 → 55",
@@ -260,14 +260,14 @@ async def test_light_scene_and_on_off_via_interface(live_zen):
     lights = {lt.address.number: lt for lt in await zen.get_lights()}
     light = lights[0]
 
-    assert await light.set_scene(1) is True
+    assert await light.set_scene(1) is LEGACY_ACK
     assert live_sim.world.lights[0].level == 80
     assert await zen.protocol.dali_query_last_scene(light.address) == 1
 
-    assert await light.set(level=120) is True
-    assert await light.off(fade=False) is True
+    assert await light.set(level=120) is LEGACY_ACK
+    assert await light.off(fade=False) is LEGACY_ACK
     assert live_sim.world.lights[0].level == 0
-    assert await light.on(fade=False) is True
+    assert await light.on(fade=False) is LEGACY_ACK
     assert live_sim.world.lights[0].level == 120
 
 
@@ -280,11 +280,11 @@ async def test_group_scene_by_label_and_level(live_zen):
     group = groups[0]
 
     assert group.get_scene_number_from_label("Relax") == 1
-    assert await group.set_scene("Relax") is True
+    assert await group.set_scene("Relax") is LEGACY_ACK
     assert live_sim.world.groups[0].last_scene == 1
     assert live_sim.world.lights[0].level == 80
 
-    assert await group.set(level=40) is True
+    assert await group.set(level=40) is LEGACY_ACK
     assert live_sim.world.lights[0].level == 40
     assert live_sim.world.lights[1].level == 40
 
@@ -313,15 +313,15 @@ async def test_light_steps_recall_and_inhibit_via_interface(live_zen):
     live_sim.world.lights[1].max_level = 200
     live_sim.world.lights[1].min_level = 5
 
-    assert await light.set(level=10) is True
-    assert await light.dali_up() is True
+    assert await light.set(level=10) is LEGACY_ACK
+    assert await light.dali_up() is LEGACY_ACK
     assert live_sim.world.lights[1].level == 11
-    assert await light.dali_down() is True
+    assert await light.dali_down() is LEGACY_ACK
     assert live_sim.world.lights[1].level == 10
 
-    assert await light.dali_recall_max() is True
+    assert await light.dali_recall_max() is LEGACY_ACK
     assert live_sim.world.lights[1].level == 200
-    assert await light.dali_recall_min() is True
+    assert await light.dali_recall_min() is LEGACY_ACK
     assert live_sim.world.lights[1].level == 5
 
     assert await light.dali_inhibit(True) is True
@@ -361,7 +361,7 @@ async def test_light_fade_step_and_refresh_via_interface(live_zen):
     light = lights[1]
 
     assert await light.set(level=0, fade=False) is True
-    assert await light.dali_on_step_up() is True
+    assert await light.dali_on_step_up() is LEGACY_ACK
     assert live_sim.world.lights[1].level >= 1
 
     assert await light.set(level=50, fade=False) is True
@@ -371,19 +371,19 @@ async def test_light_fade_step_and_refresh_via_interface(live_zen):
     assert not (live_sim.world.lights[1].status & 0x10)
 
     live_sim.world.lights[1].last_active_level = 88
-    assert await light.dali_go_to_last_active_level() is True
+    assert await light.dali_go_to_last_active_level() is LEGACY_ACK
     assert live_sim.world.lights[1].level == 88
 
     assert await light.set(level=40, fade=False) is True
-    assert await light.dali_step_down_off() is True
+    assert await light.dali_step_down_off() is LEGACY_ACK
     assert live_sim.world.lights[1].level == 39
 
     assert await light.dali_enable_dapc_sequence() is None
-    assert await light.dali_off() is True
+    assert await light.dali_off() is LEGACY_ACK
     assert live_sim.world.lights[1].level == 0
 
     # Mutate controller under the entity, then refresh entity state.
-    assert await zen.protocol.dali_arc_level(light.address, 123) is True
+    assert await zen.protocol.dali_arc_level(light.address, 123) is LEGACY_ACK
     light.level = None
     await light.refresh_state_from_controller()
     assert light.level == 123

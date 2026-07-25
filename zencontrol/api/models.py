@@ -202,7 +202,11 @@ class ZenColour:
     @classmethod
     def from_bytes(cls, data: bytes) -> Self | None:
         match list(data):
-            case [ZenColourType.RGBWAF.value, r, g, b, w, a, f]:
+            case [ZenColourType.RGBWAF.value, r, g, b, *rest] if len(rest) <= 3:
+                # COLOUR_CHANGED_EVENT from a fixture with fewer than six channels
+                # carries only channels + 1 bytes, so an RGB fixture sends
+                # [0x80, R, G, B]. Channels the fixture does not have stay None.
+                w, a, f = (list(rest) + [None, None, None])[:3]
                 return cls(type=ZenColourType.RGBWAF, r=r, g=g, b=b, w=w, a=a, f=f)
             case [ZenColourType.TC.value, hi, lo] | [ZenColourType.TC.value, hi, lo, *_]:
                 if len(data) not in (3, 7):
