@@ -6,7 +6,7 @@ import time
 import logging
 import traceback
 from datetime import datetime as dt
-from typing import Any, Self, Literal, overload
+from typing import TYPE_CHECKING, Any, Self, Literal, overload
 from enum import Enum
 from colorama import Fore, Back, Style
 from dataclasses import dataclass, field
@@ -24,6 +24,12 @@ from .models import (
 from .types import ZenAddressType, ZenInstanceType, ZenColourType, ZenEventCode, ZenEventMask, ZenEventMode, ZenErrorCode, Const
 from ..exceptions import ZenError, ZenTimeoutError
 from ..utils import local_ip_for_remote
+
+if TYPE_CHECKING:
+    # Registered controllers are always interface-layer objects, so anything
+    # that hands out ZenAddress instances is typed with that class. Type-only
+    # import; importing the interface layer at runtime would be circular.
+    from ..interface.interface import ZenController as ZenInterfaceController
 
 
 def _mac_bytes_to_str(mac: bytes) -> str:
@@ -254,7 +260,7 @@ class ZenProtocol:
         self.disconnect_callback: Callable[[], Awaitable[None]] | None = None
         
         # Controllers will be assigned later
-        self.controllers = []
+        self.controllers: list[ZenInterfaceController] = []
         # Controllers identified via multicast but not yet registered
         self.identified_controllers: list[DiscoveredController] = []
         self._discovery_pending_macs: set[str] = set()
@@ -321,7 +327,7 @@ class ZenProtocol:
                 pass
         self.clear_entity_cache()
 
-    def set_controllers(self, controllers: list[ZenController]):
+    def set_controllers(self, controllers: list[ZenInterfaceController]):
         self.controllers = controllers # Used to match events to controllers, and include controller objects in callbacks
         # Drop identified entries that are now registered
         for ctrl in controllers:
@@ -763,7 +769,7 @@ class ZenProtocol:
         return None
 
     def _ecd_address_from_target(
-        self, controller: ZenController, target: int
+        self, controller: ZenInterfaceController, target: int
     ) -> ZenAddress | None:
         """Map an event target byte to an ECD ZenAddress, or None if out of range."""
         number = target - 64
@@ -1244,7 +1250,7 @@ class ZenProtocol:
             }
         return None
 
-    async def query_group_numbers(self, controller: ZenController) -> list[ZenAddress]:
+    async def query_group_numbers(self, controller: ZenInterfaceController) -> list[ZenAddress]:
         """Query a controller for groups."""
         groups = await self._send_basic(controller, self.CMD["QUERY_GROUP_NUMBERS"], return_type='list')
         zen_groups = []
@@ -1443,7 +1449,7 @@ class ZenProtocol:
             return zen_groups
         return []
 
-    async def query_dali_addresses_with_instances(self, controller: ZenController, start_address: int=0) -> list[ZenAddress]: # TODO: automate iteration over start_address=0, start_address=60, etc.
+    async def query_dali_addresses_with_instances(self, controller: ZenInterfaceController, start_address: int=0) -> list[ZenAddress]: # TODO: automate iteration over start_address=0, start_address=60, etc.
         """Query for DALI addresses that have instances associated with them.
         
         Due to payload restrictions, this needs to be called multiple times with different
@@ -1509,7 +1515,7 @@ class ZenProtocol:
             return f"{response[0]}.{response[1]}.{response[2]}"
         return None
     
-    async def query_control_gear_dali_addresses(self, controller: ZenController) -> list[ZenAddress]:
+    async def query_control_gear_dali_addresses(self, controller: ZenInterfaceController) -> list[ZenAddress]:
         """Query which DALI control gear addresses are present in the database. Returns a list of ZenAddress instances."""
         response = await self._send_basic(controller, self.CMD["QUERY_CONTROL_GEAR_DALI_ADDRESSES"])
         if response and len(response) == 8:  # 8 data bytes representing addresses 0-63

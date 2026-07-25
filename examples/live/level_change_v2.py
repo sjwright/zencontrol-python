@@ -9,7 +9,7 @@ if str(ROOT) not in sys.path:
 
 import yaml
 
-from zencontrol.api.models import ZenAddress, ZenController
+from zencontrol import ZenAddress, ZenController
 from zencontrol.api.protocol import ZenProtocol
 from zencontrol.api.types import ZenAddressType, ZenEventCode
 from zencontrol.utils import run_with_keyboard_interrupt

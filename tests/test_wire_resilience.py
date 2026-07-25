@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
-from zencontrol.api.models import ZenController
+from zencontrol import ZenController
 from zencontrol.api.protocol import ZenProtocol
 from zencontrol.exceptions import ZenTimeoutError
 from zencontrol.io.command import ClientConst, Request, Response, ResponseType, ZenClient
@@ -148,7 +148,7 @@ def test_mark_disconnected_unblocks_pending_with_timeout() -> None:
 async def test_send_packet_timeout_invalidates_client_and_refreshes_ip() -> None:
     protocol = ZenProtocol()
     controller = ZenController(
-        id="1",
+        id=1,
         name="ctrl",
         label="Ctrl",
         host="zen.local",
@@ -182,7 +182,7 @@ async def test_send_packet_timeout_invalidates_client_and_refreshes_ip() -> None
 async def test_ensure_client_recreates_when_disconnected() -> None:
     protocol = ZenProtocol()
     controller = ZenController(
-        id="1",
+        id=1,
         name="ctrl",
         label="Ctrl",
         host="127.0.0.1",
@@ -217,7 +217,7 @@ def test_resolve_unicast_advertise_ip_uses_route_via_controller() -> None:
     protocol = ZenProtocol(unicast=True)
     assert protocol.local_ip is None
     controller = ZenController(
-        id="1",
+        id=1,
         name="ctrl",
         label="Ctrl",
         host="127.0.0.1",
@@ -303,7 +303,7 @@ async def test_send_packet_error_returns_without_raising() -> None:
 
     protocol = ZenProtocol()
     controller = ZenController(
-        id="1",
+        id=1,
         name="ctrl",
         label="Ctrl",
         host="127.0.0.1",
@@ -329,23 +329,26 @@ async def test_send_packet_error_returns_without_raising() -> None:
 
 
 def test_mac_requires_six_bytes() -> None:
+    protocol = ZenProtocol()
     with pytest.raises(ValueError, match="6 bytes"):
         ZenController(
-            id="1",
+            id=1,
             name="ctrl",
             label="Ctrl",
             host="127.0.0.1",
             port=5108,
             mac="aa:bb",
+            protocol=protocol,
         )
 
     ctrl = ZenController(
-        id="1",
+        id=1,
         name="ctrl2",
         label="Ctrl",
         host="127.0.0.1",
         port=5108,
         mac="aa:bb:cc:dd:ee:ff",
+        protocol=protocol,
     )
     assert ctrl.mac_bytes == bytes.fromhex("aabbccddeeff")
 

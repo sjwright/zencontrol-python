@@ -12,10 +12,16 @@ import socket
 import struct
 import time
 from dataclasses import dataclass, field
-from typing import Any, Self
+from typing import TYPE_CHECKING, Any, Self
 
 from ..io import ZenClient
 from .types import ZenAddressType, ZenInstanceType, ZenColourType, Const
+
+if TYPE_CHECKING:
+    # Addresses are only ever built from registered controllers, which are
+    # interface-layer objects. Type-only import; at runtime the interface layer
+    # imports this module, so importing it here would be circular.
+    from ..interface.interface import ZenController as ZenInterfaceController
 
 
 DEFAULT_CONTROLLER_PORT = 5108
@@ -33,8 +39,13 @@ class DiscoveredController:
 
 @dataclass
 class ZenController:
-    """Represents a ZenControl controller
-    
+    """Base class holding a controller's config and transport state.
+
+    ``zencontrol.ZenController`` (the interface layer) subclasses this and adds
+    entity state; that subclass is what ``ZenControl.add_controller()`` returns
+    and what registered controllers always are. This base exists so the API
+    layer can talk about controllers without importing the interface layer.
+
     The 'host' field can be any resolvable hostname or IP address.
     The 'ip' property will resolve the hostname to an IP address and cache it.
     """
@@ -104,14 +115,14 @@ class ZenController:
 @dataclass(slots=True)
 class ZenAddress:
     """Represents a DALI address"""
-    controller: ZenController
+    controller: ZenInterfaceController
     type: ZenAddressType
     number: int
     label: str | None = field(default=None, init=False)
     serial: str | None = field(default=None, init=False)
     
     @classmethod
-    def broadcast(cls, controller: ZenController) -> Self:
+    def broadcast(cls, controller: ZenInterfaceController) -> Self:
         return cls(controller=controller, type=ZenAddressType.BROADCAST, number=255)
     
     def ecg(self) -> int:

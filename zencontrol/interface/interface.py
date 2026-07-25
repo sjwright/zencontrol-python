@@ -260,8 +260,7 @@ class ZenControl:
     def add_controller(self, id: int, name: str, label: str, host: str, port: int = 5108, mac: str | None = None, filtering: bool = False) -> ZenController:
         controller = ZenController(protocol=self.protocol, id=id, name=name, label=label, host=host, port=port, mac=mac, filtering=filtering)
         self.controllers.append(controller)
-        # list is invariant; protocol expects the API-level ZenController type
-        self.protocol.set_controllers(cast(list[SuperZenController], self.controllers))
+        self.protocol.set_controllers(self.controllers)
         return controller
 
     async def remove_controller(self, controller: ZenController | str) -> None:
@@ -273,7 +272,7 @@ class ZenControl:
         name = controller if isinstance(controller, str) else controller.name
         removed = [c for c in self.controllers if c.name == name]
         self.controllers = [c for c in self.controllers if c.name != name]
-        self.protocol.set_controllers(cast(list[SuperZenController], self.controllers))
+        self.protocol.set_controllers(self.controllers)
         self.protocol.purge_controller_entities(name)
         for ctrl in removed:
             client = ctrl.client
@@ -1107,7 +1106,7 @@ class ZenLight:
                 for group in data.get("group_membership", [])
             ]
             self._apply_group_membership(membership)
-            cast(ZenController, self.address.controller).lights.add(self)
+            self.address.controller.lights.add(self)
             return True
         except Exception:
             return False
@@ -1155,7 +1154,7 @@ class ZenLight:
             self._apply_group_membership(groups or [])
             
             # Add to controller's set of lights
-            cast(ZenController, self.address.controller).lights.add(self)
+            self.address.controller.lights.add(self)
 
             return True
         else:
@@ -1430,7 +1429,7 @@ class ZenGroup(ZenLight):
             data = _loads_interview_data(data)
             self.label = data.get("label")
             self._scene_labels = list(data.get("scene_labels", []))
-            cast(ZenController, self.address.controller).groups.add(self)
+            self.address.controller.groups.add(self)
             return True
         except Exception:
             return False
@@ -1438,7 +1437,7 @@ class ZenGroup(ZenLight):
         self.label = await self.protocol.query_group_label(self.address, generic_if_none=True)
         self._scene_labels = await self.protocol.query_scenes_for_group(self.address, generic_if_none=True)
         # Add to controller's set of groups
-        cast(ZenController, self.address.controller).groups.add(self)
+        self.address.controller.groups.add(self)
         return True
     def supports_colour(self, colour: "ZenColourType|ZenColour") -> bool:
         # If at least one light in the group supports this colour, return True
@@ -1542,14 +1541,14 @@ class ZenButton:
             self.instance_label = data.get("instance_label")
             self.instance.address.label = self.label
             self.instance.address.serial = cast(str | None, self.serial)
-            cast(ZenController, self.instance.address.controller).buttons.add(self)
+            self.instance.address.controller.buttons.add(self)
             return True
         except Exception:
             return False
     async def interview(self) -> bool:
         inst = self.instance
         addr = inst.address
-        ctrl = cast(ZenController, addr.controller)
+        ctrl = addr.controller
         if addr.label is None: addr.label = await self.protocol.query_dali_device_label(addr, generic_if_none=True)
         if addr.serial is None: addr.serial = cast(str | None, await self.protocol.query_dali_serial(addr))
         self.label = addr.label
@@ -1643,7 +1642,7 @@ class ZenAbsoluteInput:
             self.instance_label = data.get("instance_label")
             self.instance.address.label = self.label
             self.instance.address.serial = cast(str | None, self.serial)
-            cast(ZenController, self.instance.address.controller).absolute_inputs.add(self)
+            self.instance.address.controller.absolute_inputs.add(self)
             return True
         except Exception:
             return False
@@ -1651,7 +1650,7 @@ class ZenAbsoluteInput:
     async def interview(self) -> bool:
         inst = self.instance
         addr = inst.address
-        ctrl = cast(ZenController, addr.controller)
+        ctrl = addr.controller
         if addr.label is None:
             addr.label = await self.protocol.query_dali_device_label(addr, generic_if_none=True)
         if addr.serial is None:
@@ -1750,14 +1749,14 @@ class ZenMotionSensor:
             self._occupied = None
             self.instance.address.label = self.label
             self.instance.address.serial = cast(str | None, self.serial)
-            cast(ZenController, self.instance.address.controller).motion_sensors.add(self)
+            self.instance.address.controller.motion_sensors.add(self)
             return True
         except Exception:
             return False
     async def interview(self) -> bool:
         inst = self.instance
         addr = inst.address
-        ctrl = cast(ZenController, addr.controller)
+        ctrl = addr.controller
         occupancy_timers = await self.protocol.query_occupancy_instance_timers(inst)
         if occupancy_timers is not None:
             self.serial = await self.protocol.query_dali_serial(addr)

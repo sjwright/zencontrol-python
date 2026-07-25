@@ -6,7 +6,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from zencontrol.api.models import DiscoveredController, ZenController
+from zencontrol import ZenController
+from zencontrol.api.models import DiscoveredController
 from zencontrol.api.protocol import ZenProtocol
 from zencontrol.io.event import ZenEvent
 
@@ -76,7 +77,7 @@ async def test_second_packet_from_same_mac_or_ip_is_ignored() -> None:
 async def test_registered_controller_is_not_discovered() -> None:
     protocol = ZenProtocol()
     ctrl = ZenController(
-        id="1",
+        id=1,
         name="known",
         label="Known",
         host="192.168.1.50",
@@ -105,7 +106,7 @@ async def test_registering_controller_forgets_identified() -> None:
     assert len(protocol.identified_controllers) == 1
 
     ctrl = ZenController(
-        id="1",
+        id=1,
         name="kitchen",
         label="Kitchen",
         host="192.168.1.50",
@@ -136,7 +137,7 @@ async def test_label_query_failure_still_remembers_controller() -> None:
 async def test_new_controller_discovered_while_one_is_registered() -> None:
     protocol = ZenProtocol()
     known = ZenController(
-        id="1",
+        id=1,
         name="known",
         label="Known",
         host="192.168.1.10",
