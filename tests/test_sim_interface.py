@@ -350,3 +350,89 @@ async def test_button_and_sensor_interview_fields(live_zen):
     # Entrance 6-button pad should contribute multiple button instances
     entrance = [b for b in buttons if b.label == "Entrance 6-Button"]
     assert len(entrance) == 6
+
+
+@pytest.mark.asyncio
+async def test_light_fade_step_and_refresh_via_interface(live_zen):
+    zen, live_sim = live_zen
+    ctrl = zen.controllers[0]
+    await ctrl.interview()
+    lights = {lt.address.number: lt for lt in await zen.get_lights()}
+    light = lights[1]
+
+    assert await light.set(level=0, fade=False) is True
+    assert await light.dali_on_step_up() is True
+    assert live_sim.world.lights[1].level >= 1
+
+    assert await light.set(level=50, fade=False) is True
+    assert await light.dali_custom_fade(100, 5) is True
+    assert live_sim.world.lights[1].status & 0x10
+    assert await light.dali_stop_fade() is True
+    assert not (live_sim.world.lights[1].status & 0x10)
+
+    live_sim.world.lights[1].last_active_level = 88
+    assert await light.dali_go_to_last_active_level() is True
+    assert live_sim.world.lights[1].level == 88
+
+    assert await light.set(level=40, fade=False) is True
+    assert await light.dali_step_down_off() is True
+    assert live_sim.world.lights[1].level == 39
+
+    assert await light.dali_enable_dapc_sequence() is None
+    assert await light.dali_off() is True
+    assert live_sim.world.lights[1].level == 0
+
+    # Mutate controller under the entity, then refresh entity state.
+    assert await zen.protocol.dali_arc_level(light.address, 123) is True
+    light.level = None
+    await light.refresh_state_from_controller()
+    assert light.level == 123
+
+
+@pytest.mark.asyncio
+async def test_sysvar_get_value_and_refresh(live_zen):
+    zen, live_sim = live_zen
+    ctrl = zen.controllers[0]
+    await ctrl.interview()
+    assert await ctrl.is_dali_ready() is True
+
+    sysvars = await zen.get_system_variables(give_up_after=5)
+    svar = next(v for v in sysvars if v.id == 0)
+    svar._value = None
+    live_sim.world.system_variables[0].value = 55
+    assert await svar.get_value() == 55
+
+    live_sim.world.system_variables[0].value = 66
+    await svar.refresh_state_from_controller()
+    assert svar.value == 66
+
+
+@pytest.mark.asyncio
+async def test_motion_refresh_and_group_discoordination(live_zen):
+    zen, live_sim = live_zen
+    ctrl = zen.controllers[0]
+    await ctrl.interview()
+
+    sensors = await zen.get_motion_sensors()
+    porch = next(s for s in sensors if s.label == "Porch Sensor")
+    world_inst = live_sim.world.instance(10, 0)
+    assert world_inst is not None and world_inst.timers is not None
+    world_inst.timers.last_motion_at = __import__("time").time() - 5
+    assert await porch.refresh_state_from_controller() is True
+    assert porch.last_detect is not None
+    assert porch.hold_time == 60
+
+    groups = {g.address.number: g for g in await zen.get_groups()}
+    group = groups[0]
+    group.level = 40
+    group.scene = 1
+    disco: list = []
+
+    async def on_group(*, group, discoordinated=False, **kwargs):
+        if discoordinated:
+            disco.append(group.address.number)
+
+    zen.group_change = on_group
+    await group.declare_discoordination()
+    assert group.level is None and group.scene is None
+    assert 0 in disco

@@ -540,9 +540,7 @@ async def test_readiness_flags_and_unknown_sysvars(live_sim):
     live_sim.world.startup_complete = False
     assert await p.query_controller_startup_complete(c) is not True
     live_sim.world.startup_complete = True
-    live_sim.world.dali_ready = False
-    assert await p.query_is_dali_ready(c) is not True
-    live_sim.world.dali_ready = True
+    live_sim.world.dali_ready = False  # simulator ignores — DALI always ready
     assert await p.query_is_dali_ready(c) is True
 
     assert await p.query_system_variable_name(c, 99) is None
@@ -557,3 +555,84 @@ async def test_return_to_scheduled_profile(live_sim):
     assert await p.change_profile_number(c, 3) is True
     assert await p.return_to_scheduled_profile(c) is True
     assert await p.query_current_profile_number(c) == 1
+
+
+@pytest.mark.asyncio
+async def test_dali_query_fade_running(live_sim):
+    p = live_sim.protocol
+    addr = live_sim.ecg(1)
+    await p.dali_arc_level(addr, 0)
+    assert await p.dali_query_fade_running(addr) is False
+    assert await p.dali_custom_fade(addr, 100, 5) is True
+    p.cache.clear()
+    assert await p.dali_query_fade_running(addr) is True
+    assert await p.dali_stop_fade(addr) is True
+    p.cache.clear()
+    assert await p.dali_query_fade_running(addr) is False
+
+
+@pytest.mark.asyncio
+async def test_operating_mode_and_button_led_stubs(live_sim):
+    p = live_sim.protocol
+    assert await p.query_operating_mode_by_address(live_sim.ecg(0)) == 0
+    assert await p.query_operating_mode_by_address(live_sim.ecd(0)) == 0
+
+    button = live_sim.instance(0, 0)
+    assert await p.override_dali_button_led_state(button, True) is True
+    # Sim stub always reports last-known LED off.
+    assert await p.query_last_known_dali_button_led_state(button) is False
+
+
+@pytest.mark.asyncio
+async def test_query_instance_groups(live_sim):
+    p = live_sim.protocol
+    groups = await p.query_instance_groups(live_sim.instance(0, 0))
+    assert groups == (0, 1, None)
+    motion = await p.query_instance_groups(live_sim.instance(0, 2, type_code=3))
+    assert motion == (0, None, None)
+    # Unconfigured instance → all None
+    unset = await p.query_instance_groups(live_sim.instance(1, 0))
+    assert unset == (None, None, None)
+
+
+@pytest.mark.asyncio
+async def test_query_profile_information(live_sim):
+    """PDF: header + records; bit0=disabled, bits1–2=priority (0 scheduled, 1+, …)."""
+    p, c = live_sim.protocol, live_sim.controller
+    result = await p.query_profile_information(c)
+    assert result is not None
+    state, profiles = result
+    assert state["current_active_profile"] == 1
+    assert state["last_scheduled_profile"] == 1
+    assert state["last_overridden_profile_utc"].timestamp() == 0x22334455
+    assert state["last_scheduled_profile_utc"].timestamp() == 0x44556677
+    assert set(profiles) == {1, 2, 3}
+    # Assert protocol fields (enabled/priority); labels are library niceties.
+    assert profiles[1]["enabled"] is True and profiles[1]["priority"] == 0
+    assert profiles[2]["enabled"] is True and profiles[2]["priority"] == 1
+    assert profiles[3]["enabled"] is False and profiles[3]["priority"] == 0
+
+
+@pytest.mark.asyncio
+async def test_colour_only_preserves_level(live_sim):
+    p = live_sim.protocol
+    addr = live_sim.ecg(0)
+    assert await p.dali_arc_level(addr, 77) is True
+    colour = ZenColour(type=ZenColourType.TC, kelvin=4200)
+    assert await p.dali_colour(addr, colour, level=255) is True
+    assert await p.dali_query_level(addr) == 77
+    assert live_sim.world.lights[0].level == 77
+    queried = await p.query_dali_colour(addr)
+    assert queried is not None and queried.kelvin == 4200
+
+
+@pytest.mark.asyncio
+async def test_clear_tpi_event_unicast_address(live_sim):
+    """Sim extension: omit IP/port (zeros) clears unicast targeting."""
+    p, c = live_sim.protocol, live_sim.controller
+    await p.set_tpi_event_unicast_address(c, ipaddr="127.0.0.1", port=6970)
+    await p.set_tpi_event_unicast_address(c)
+    info = await p.query_tpi_event_unicast_address(c)
+    assert info is not None
+    assert info["port"] == 0
+    assert info["ip"] == "0.0.0.0"
