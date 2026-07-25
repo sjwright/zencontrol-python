@@ -8,7 +8,6 @@ import traceback
 from datetime import datetime as dt
 from typing import TYPE_CHECKING, Any, Self, Literal, overload
 from enum import Enum
-from colorama import Fore, Back, Style
 from dataclasses import dataclass, field
 
 from ..io import ZenClient, ZenListener, ZenEvent, Request, Response, ResponseType, RequestType, EventConst, ClientConst
@@ -24,6 +23,15 @@ from .models import (
 from .types import ZenAddressType, ZenInstanceType, ZenColourType, ZenEventCode, ZenEventMask, ZenEventMode, ZenErrorCode, Const
 from ..exceptions import ZenError, ZenTimeoutError
 from ..utils import local_ip_for_remote
+
+# Magic import to avoid dependency on colorama
+try:
+    from colorama import Fore, Style
+except ImportError:
+    class _NoColor:
+        def __getattr__(self, _name: str) -> str:
+            return ""
+    Fore = Style = _NoColor()  # type: ignore[assignment]
 
 if TYPE_CHECKING:
     # Registered controllers are always interface-layer objects, so anything

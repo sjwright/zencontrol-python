@@ -10,12 +10,18 @@ import zencontrol
 from zencontrol import ZenController, ZenProtocol, ZenClient, ZenColour, ZenColourType, ZenProfile, ZenLight, ZenGroup, ZenButton, ZenMotionSensor, ZenSystemVariable, ZenTimeoutError, ZenAddressType
 from zencontrol.api.types import Const as ApiConst
 import aiomqtt
-from colorama import Fore, Back, Style
 import logging
 from logging.handlers import RotatingFileHandler
 import math
 import pickle
 import traceback
+try:
+    from colorama import Fore, Style
+except ImportError:
+    class _NoColor:
+        def __getattr__(self, _name: str) -> str:
+            return ""
+    Fore = Style = _NoColor()  # type: ignore[assignment]
 
 class RateLimiter:
     """Rate limiter to control concurrent coroutine execution"""

@@ -24,11 +24,12 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed",
 ]
-dependencies = [
-    "colorama>=0.4.6",
-]
+dependencies = []
 
 [project.optional-dependencies]
+colorama = [
+    "colorama>=0.4.6",
+]
 dev = [
     "pytest>=6.0",
     "pytest-asyncio>=0.18.0",
@@ -36,10 +37,12 @@ dev = [
     "flake8>=4.0",
     "mypy>=0.950",
     "build>=1.0",
+    "colorama>=0.4.6",
 ]
 mqtt = [
     "aiomqtt>=2.1.0",
     "PyYAML>=6.0",
+    "colorama>=0.4.6",
 ]
 # Simulator integration tests (tests/test_sim_*.py) need zencontrol-simulator
 # (pip install -e ../zencontrol-simulator, or a sibling ../zencontrol-simulator
