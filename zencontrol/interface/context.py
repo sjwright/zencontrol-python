@@ -12,13 +12,14 @@ from collections.abc import Awaitable, Coroutine
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from ..api.commands import ZenCommandClient
-from ..api.models import DiscoveredController, ZenController
+from ..api.models import DiscoveredController
 
 if TYPE_CHECKING:
     from ..api.models import ZenColour
     from .entities import (
         ZenAbsoluteInput,
         ZenButton,
+        ZenController,
         ZenGroup,
         ZenLight,
         ZenMotionSensor,
