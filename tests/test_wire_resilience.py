@@ -52,6 +52,52 @@ async def test_event_queue_drop_oldest_under_backpressure() -> None:
 
 
 @pytest.mark.asyncio
+async def test_listener_run_stop_owns_consumer_lifecycle() -> None:
+    """ZenListener.run/stop own the consumer task and unexpected-exit hook."""
+    listener = ZenListener()
+    received: list[int] = []
+    unexpected = AsyncMock()
+
+    async def on_event(event: ZenEvent) -> None:
+        received.append(event.event_code)
+
+    # No socket: feed the queue directly and end the stream via stop_event
+    listener._enqueue_event(_make_event(7))
+    task = listener.run(on_event, on_unexpected_exit=unexpected)
+    assert listener.is_running()
+
+    for _ in range(20):
+        if received == [7]:
+            break
+        await asyncio.sleep(0.01)
+    else:
+        pytest.fail("handler did not receive enqueued event")
+
+    await listener.stop()
+    assert not listener.is_running()
+    assert task.cancelled() or task.done()
+    unexpected.assert_not_awaited()
+
+    # Second stop is idempotent
+    await listener.stop()
+
+
+@pytest.mark.asyncio
+async def test_listener_unexpected_exit_invokes_hook() -> None:
+    listener = ZenListener()
+    unexpected = AsyncMock()
+
+    async def on_event(event: ZenEvent) -> None:
+        pass
+
+    # End the events() loop immediately by setting stop before run pumps
+    listener._stop_event.set()
+    task = listener.run(on_event, on_unexpected_exit=unexpected)
+    await asyncio.wait_for(task, timeout=1.0)
+    unexpected.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_multicast_listener_joins_before_endpoint_and_drops_on_stop() -> None:
     """Reuse/join must happen before asyncio owns the socket; DROP before close."""
     fake_sock = MagicMock()

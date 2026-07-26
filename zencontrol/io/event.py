@@ -10,10 +10,15 @@ Terms:
 
 Example usage:
 async def listen_for_events():
-    listener = await ZenListener.create(unicast=False)  # Multicast mode
-    async with listener:
-        async for event in listener.events():
-            print(f"Event: {event.event_code}, Target: {event.target}, Payload: {event.payload.hex()}")
+    async def on_event(event: ZenEvent) -> None:
+        print(f"Event: {event.event_code}, Target: {event.target}")
+
+    listener = await ZenListener.create(unicast=False)
+    task = listener.run(on_event)
+    try:
+        await task
+    finally:
+        await listener.stop()
 
 asyncio.run(listen_for_events())
 """
@@ -26,6 +31,11 @@ import time
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Self
+
+# Event handler invoked once per parsed packet
+EventHandler = Callable[["ZenEvent"], Awaitable[None]]
+# Optional hook when the consumer exits without an intentional stop()
+UnexpectedExitHandler = Callable[[], Awaitable[None]]
 
 
 # Event classes
@@ -108,6 +118,11 @@ class ZenListener:
         self.dropped_events = 0
         self._last_drop_log = 0.0
 
+        # Session lifecycle (consumer task owned here, not by ZenProtocol)
+        self._consumer_task: asyncio.Task[None] | None = None
+        self._on_event: EventHandler | None = None
+        self._on_unexpected_exit: UnexpectedExitHandler | None = None
+
     @classmethod
     async def create(
         cls,
@@ -117,11 +132,87 @@ class ZenListener:
         logger: logging.Logger | None = None,
         max_queue_size: int = EventConst.DEFAULT_MAX_QUEUE_SIZE,
     ) -> ZenListener:
-        """Create and start a ZenListener instance"""
+        """Create and bind a ZenListener instance (does not start the consumer)."""
         self = cls(unicast, listen_ip, listen_port, logger, max_queue_size=max_queue_size)
         await self._create_datagram_endpoint()
         self.logger.info(f"Started event listener in {'unicast' if self.unicast else 'multicast'} mode")
         return self
+
+    @property
+    def consumer_task(self) -> asyncio.Task[None] | None:
+        """Background task started by ``run()``, if any."""
+        return self._consumer_task
+
+    def is_running(self) -> bool:
+        """True while the consumer task started by ``run()`` is active."""
+        return self._consumer_task is not None and not self._consumer_task.done()
+
+    def run(
+        self,
+        on_event: EventHandler,
+        *,
+        on_unexpected_exit: UnexpectedExitHandler | None = None,
+    ) -> asyncio.Task[None]:
+        """Start consuming queued events on a background task.
+
+        The socket must already be bound (``create`` / ``start_listening``).
+        On intentional ``stop()``, the task is cancelled and the socket closed.
+        If the consumer ends any other way, the socket is closed and
+        ``on_unexpected_exit`` is awaited (when provided).
+        """
+        existing = self._consumer_task
+        if existing is not None and not existing.done():
+            return existing
+
+        self._on_event = on_event
+        self._on_unexpected_exit = on_unexpected_exit
+        self._consumer_task = asyncio.create_task(self._consume())
+        return self._consumer_task
+
+    async def stop(self) -> None:
+        """Cancel the consumer (if any) and close the socket. Idempotent."""
+        task = self._consumer_task
+        self._consumer_task = None
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                pass
+        await self.close()
+
+    async def _consume(self) -> None:
+        """Pump ``events()`` into ``on_event`` until cancelled or the stream ends."""
+        unexpected = True
+        try:
+            async for event in self.events():
+                handler = self._on_event
+                if handler is None:
+                    continue
+                try:
+                    await handler(event)
+                except Exception as err:
+                    self.logger.error(
+                        "Error processing event from %s: %s",
+                        getattr(event, "ip_address", "?"),
+                        err,
+                        exc_info=True,
+                    )
+            self.logger.error("Event listener stopped unexpectedly")
+        except asyncio.CancelledError:
+            unexpected = False
+            raise
+        except Exception as err:
+            self.logger.error(f"Event listener error: {err}", exc_info=True)
+        finally:
+            await self.close()
+            if unexpected and callable(self._on_unexpected_exit):
+                try:
+                    await self._on_unexpected_exit()
+                except Exception as err:
+                    self.logger.error(f"on_unexpected_exit error: {err}", exc_info=True)
 
     async def start_listening(self) -> None:
         if self.transport and not self.transport.is_closing():
@@ -159,11 +250,11 @@ class ZenListener:
         self.logger.info("Stopped event listener")
 
     async def close(self) -> None:
-        """Close the listener socket (idempotent; used by protocol teardown)."""
+        """Close the listener socket (idempotent)."""
         await self.stop_listening()
 
     def is_listening(self) -> bool:
-        """Check if the listener is active and ready"""
+        """Check if the datagram socket is active and ready."""
         return self.transport is not None and not self.transport.is_closing()
 
     def _drop_multicast_membership(self) -> None:

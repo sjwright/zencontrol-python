@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -10,11 +11,52 @@ import pytest
 
 from zencontrol.api.types import ZenEventMode
 from zencontrol.interface.interface import ZenControl
+from zencontrol.io.event import ZenEvent
+
+EventHandler = Callable[[ZenEvent], Awaitable[None]]
+UnexpectedExitHandler = Callable[[], Awaitable[None]]
 
 
 class _BlockingListener:
     def __init__(self) -> None:
         self.listen_port = 6969
+        self._consumer_task: asyncio.Task[None] | None = None
+        self._on_event: EventHandler | None = None
+        self._on_unexpected_exit: UnexpectedExitHandler | None = None
+
+    @property
+    def consumer_task(self) -> asyncio.Task[None] | None:
+        return self._consumer_task
+
+    def is_running(self) -> bool:
+        return self._consumer_task is not None and not self._consumer_task.done()
+
+    def run(
+        self,
+        on_event: EventHandler,
+        *,
+        on_unexpected_exit: UnexpectedExitHandler | None = None,
+    ) -> asyncio.Task[None]:
+        self._on_event = on_event
+        self._on_unexpected_exit = on_unexpected_exit
+        self._consumer_task = asyncio.create_task(self._consume())
+        return self._consumer_task
+
+    async def _consume(self) -> None:
+        unexpected = True
+        try:
+            async for event in self.events():
+                if self._on_event is not None:
+                    await self._on_event(event)
+        except asyncio.CancelledError:
+            unexpected = False
+            raise
+        except Exception:
+            pass
+        finally:
+            await self.close()
+            if unexpected and callable(self._on_unexpected_exit):
+                await self._on_unexpected_exit()
 
     async def events(self):
         try:
@@ -24,7 +66,18 @@ class _BlockingListener:
         except asyncio.CancelledError:
             raise
 
-    async def close(self):
+    async def stop(self) -> None:
+        task = self._consumer_task
+        self._consumer_task = None
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        await self.close()
+
+    async def close(self) -> None:
         return None
 
 

@@ -2,7 +2,6 @@ import asyncio
 import logging
 import struct
 import time
-import traceback
 from collections.abc import Awaitable, Callable, Coroutine
 from datetime import datetime as dt
 from typing import TYPE_CHECKING, Any, Literal, Self, overload
@@ -262,9 +261,10 @@ class ZenProtocol:
         self.local_ip: str | None = None
         if self.unicast and self.listen_ip and self.listen_ip != "0.0.0.0":
             self.local_ip = self.listen_ip
-        # Setup event monitoring using ZenListener
+        # Packet session owned by ZenListener; protocol keeps the active instance
         self.event_listener: ZenListener | None = None
-        self.event_task: asyncio.Task[None] | None = None
+        # Retained after unexpected exit so supervisors/tests can still await it
+        self._event_task: asyncio.Task[None] | None = None
         # Prevents double on_disconnect if stop races with listener death
         self._disconnect_notified = False
 
@@ -314,8 +314,8 @@ class ZenProtocol:
     def track_task(self, coro: Coroutine[Any, Any, Any]) -> asyncio.Task[Any]:
         """Schedule fire-and-forget work and track it for cancellation on aclose.
 
-        Long-lived packet listening is owned separately via ``event_task`` /
-        ``start_event_monitoring`` / ``stop_event_monitoring``.
+        Packet listening lifecycle is owned by ``ZenListener``
+        (``run`` / ``stop``); this protocol only orchestrates enable/dispatch.
         """
         task = asyncio.create_task(coro)
         self._bg_tasks.add(task)
@@ -352,20 +352,19 @@ class ZenProtocol:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
+    @property
+    def event_task(self) -> asyncio.Task[None] | None:
+        """Consumer task from the latest ``ZenListener.run()``.
+
+        Kept after unexpected exit (when ``event_listener`` is cleared) so the
+        reconnect supervisor can still await the finished task.
+        """
+        return self._event_task
+
     def is_event_monitoring_active(self) -> bool:
         """True while the packet consumer task is running."""
-        return self.event_task is not None and not self.event_task.done()
-
-    async def _close_event_listener(self) -> None:
-        """Close and clear ``event_listener``. Idempotent."""
-        listener = self.event_listener
-        self.event_listener = None
-        if listener is None:
-            return
-        try:
-            await listener.close()
-        except Exception:
-            pass
+        task = self._event_task
+        return task is not None and not task.done()
 
     async def aclose(self) -> None:
         """Stop monitoring, cancel background tasks, and close UDP clients."""
@@ -736,15 +735,15 @@ class ZenProtocol:
     async def start_event_monitoring(self) -> None:
         """Bind the packet listener, enable controller emission, start the consumer.
 
-        On any failure before the consumer is running, rolls back: disables
-        controllers that were already enabled and closes the socket.
+        Socket/consumer lifecycle is owned by ``ZenListener``. This method only
+        orchestrates controller enablement and dispatch wiring. On any failure
+        before the consumer is running, rolls back enabled controllers and stops
+        the listener.
         """
         if self.is_event_monitoring_active():
             return
 
-        # Drop a finished task / orphaned socket before starting a new session
-        self.event_task = None
-        await self._close_event_listener()
+        await self.stop_event_monitoring()
 
         self._disconnect_notified = False
         enabled_controllers: list[ZenInterfaceController] = []
@@ -755,14 +754,15 @@ class ZenProtocol:
                 self.logger.info(f"Advertising unicast event address {self.local_ip}")
 
             # Bind first so unicast mode uses the actual assigned port (not 0)
-            self.event_listener = await ZenListener.create(
+            listener = await ZenListener.create(
                 unicast=self.unicast,
                 listen_ip=self.listen_ip or "0.0.0.0",
                 listen_port=(self.listen_port or 0) if self.unicast else EventConst.MULTICAST_PORT,
                 logger=self.logger,
             )
+            self.event_listener = listener
             if self.unicast:
-                self.listen_port = self.event_listener.listen_port
+                self.listen_port = listener.listen_port
 
             # All controllers must emit the same way: multicast or one unicast port
             for controller in self.controllers:
@@ -782,7 +782,10 @@ class ZenProtocol:
                 )
                 enabled_controllers.append(controller)
 
-            self.event_task = asyncio.create_task(self._async_event_listener())
+            self._event_task = listener.run(
+                self._process_zen_event,
+                on_unexpected_exit=self._on_listener_unexpected_exit,
+            )
         except Exception:
             await self._rollback_event_monitoring_start(enabled_controllers)
             raise
@@ -790,7 +793,7 @@ class ZenProtocol:
     async def _rollback_event_monitoring_start(
         self, enabled_controllers: list[ZenInterfaceController]
     ) -> None:
-        """Undo partial start: disable enabled controllers, close the listener."""
+        """Undo partial start: disable enabled controllers, stop the listener."""
         for controller in enabled_controllers:
             try:
                 await self.tpi_event_emit(
@@ -808,8 +811,7 @@ class ZenProtocol:
                     getattr(controller, "name", "?"),
                     err,
                 )
-        await self._close_event_listener()
-        self.event_task = None
+        await self.stop_event_monitoring()
 
     async def notify_disconnect(self) -> None:
         """Fire disconnect_callback at most once per monitoring session."""
@@ -823,39 +825,13 @@ class ZenProtocol:
         except Exception as err:
             self.logger.error(f"disconnect_callback error: {err}")
 
-    async def _async_event_listener(self) -> None:
-        """Consume packets from ``event_listener`` until cancelled or the stream ends.
+    async def _on_listener_unexpected_exit(self) -> None:
+        """Drop the live listener ref and notify when ZenListener dies on its own.
 
-        Socket teardown is owned exclusively by ``_close_event_listener`` (called
-        from this finally block and as a safety net from ``stop_event_monitoring``).
+        Leaves ``_event_task`` in place so awaiters can observe completion.
         """
-        # False when stop_event_monitoring cancelled us intentionally
-        unexpected = True
-        listener = self.event_listener
-        if listener is None:
-            return
-        try:
-            async for event in listener.events():
-                try:
-                    await self._process_zen_event(event)
-                except Exception as e:
-                    self.logger.error(
-                        "Error processing event from %s: %s",
-                        getattr(event, "ip_address", "?"),
-                        e,
-                        exc_info=True,
-                    )
-            self.logger.error("Async event listener stopped unexpectedly")
-        except asyncio.CancelledError:
-            unexpected = False
-            raise
-        except Exception as e:
-            self.logger.error(f"Async event listener error: {e}")
-            self.logger.error(f"Stack trace: {traceback.format_stack()}")
-        finally:
-            await self._close_event_listener()
-            if unexpected:
-                await self.notify_disconnect()
+        self.event_listener = None
+        await self.notify_disconnect()
 
     def get_controller_by_ip_mac(self, ip: str | None = None, mac: bytes | None = None) -> ZenInterfaceController | None:
         """Find a controller by IP address or MAC address"""
@@ -1158,17 +1134,13 @@ class ZenProtocol:
 
 
     async def stop_event_monitoring(self) -> None:
-        """Stop the packet consumer and close the listener socket. Idempotent.
-
-        Prefer cancelling the consumer first so it unblocks; the consumer's
-        finally block closes the socket. ``_close_event_listener`` is the safety
-        net when no consumer was running (e.g. failed start already rolled back,
-        or a race left the listener set).
-        """
-        task = self.event_task
-        self.event_task = None
-        await self._cancel_and_await(task)
-        await self._close_event_listener()
+        """Stop the packet session. Idempotent; delegates to ``ZenListener.stop``."""
+        listener = self.event_listener
+        self.event_listener = None
+        self._event_task = None
+        if listener is None:
+            return
+        await listener.stop()
 
 
     # ============================

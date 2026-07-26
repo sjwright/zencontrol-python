@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,16 +11,57 @@ import pytest
 from zencontrol.api.protocol import ZenProtocol
 from zencontrol.api.types import ZenEventMode
 from zencontrol.interface.interface import ZenControl
+from zencontrol.io.event import ZenEvent
+
+EventHandler = Callable[[ZenEvent], Awaitable[None]]
+UnexpectedExitHandler = Callable[[], Awaitable[None]]
 
 
 class _FakeListener:
-    """Minimal listener that yields no events then exits."""
+    """Duck-typed listener implementing the ZenListener session API."""
 
     def __init__(self, *, raise_error: Exception | None = None) -> None:
         self._raise_error = raise_error
         self.listen_port = 6969
         self.closed = False
         self.close_calls = 0
+        self._consumer_task: asyncio.Task[None] | None = None
+        self._on_event: EventHandler | None = None
+        self._on_unexpected_exit: UnexpectedExitHandler | None = None
+
+    @property
+    def consumer_task(self) -> asyncio.Task[None] | None:
+        return self._consumer_task
+
+    def is_running(self) -> bool:
+        return self._consumer_task is not None and not self._consumer_task.done()
+
+    def run(
+        self,
+        on_event: EventHandler,
+        *,
+        on_unexpected_exit: UnexpectedExitHandler | None = None,
+    ) -> asyncio.Task[None]:
+        self._on_event = on_event
+        self._on_unexpected_exit = on_unexpected_exit
+        self._consumer_task = asyncio.create_task(self._consume())
+        return self._consumer_task
+
+    async def _consume(self) -> None:
+        unexpected = True
+        try:
+            async for event in self.events():
+                if self._on_event is not None:
+                    await self._on_event(event)
+        except asyncio.CancelledError:
+            unexpected = False
+            raise
+        except Exception:
+            pass
+        finally:
+            await self.close()
+            if unexpected and callable(self._on_unexpected_exit):
+                await self._on_unexpected_exit()
 
     async def events(self):
         if self._raise_error is not None:
@@ -27,7 +69,18 @@ class _FakeListener:
         return
         yield  # pragma: no cover — makes this an async generator
 
-    async def close(self):
+    async def stop(self) -> None:
+        task = self._consumer_task
+        self._consumer_task = None
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        await self.close()
+
+    async def close(self) -> None:
         self.close_calls += 1
         self.closed = True
 
@@ -50,6 +103,7 @@ async def test_listener_error_fires_on_disconnect_once() -> None:
 
     on_disconnect.assert_awaited_once()
     assert protocol._disconnect_notified is True
+    assert protocol.event_listener is None
 
 
 @pytest.mark.asyncio
