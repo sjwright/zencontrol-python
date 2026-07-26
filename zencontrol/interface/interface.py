@@ -463,41 +463,41 @@ class ZenControl:
 
     async def stop(self) -> None:
         """Stop reconnect supervisor and event monitoring (keeps entity caches)."""
-        self._stopping = True
-        was_running = bool(
-            self.protocol.event_task and not self.protocol.event_task.done()
-        )
-        await self._cancel_background_tasks()
-        await self.protocol.stop_event_monitoring()
-        if was_running:
-            await self.protocol.notify_disconnect()
+        await self._shutdown(close_clients=False, clear_caches=False)
 
     async def aclose(self) -> None:
-        """Stop monitoring, cancel background tasks, close UDP clients, clear entity caches."""
+        """Stop monitoring, cancel background work, close UDP clients, clear caches."""
+        await self._shutdown(close_clients=True, clear_caches=True)
+
+    async def _shutdown(self, *, close_clients: bool, clear_caches: bool) -> None:
+        """Single shutdown path for ``stop`` and ``aclose``.
+
+        Ownership:
+        - This layer owns the supervisor and keepalive tasks.
+        - ``ZenProtocol`` owns the packet listener session and fire-and-forget
+          background tasks (via ``stop_event_monitoring`` / ``aclose``).
+        """
         self._stopping = True
-        was_running = bool(
-            self.protocol.event_task and not self.protocol.event_task.done()
-        )
-        await self._cancel_background_tasks()
-        await self.protocol.aclose()
+        was_running = self.protocol.is_event_monitoring_active()
+        await self._cancel_owned_tasks()
+        if close_clients:
+            await self.protocol.aclose()
+        else:
+            await self.protocol.stop_event_monitoring()
         if was_running:
             await self.protocol.notify_disconnect()
-        self.clear_entity_caches()
+        if clear_caches:
+            self.clear_entity_caches()
 
-    async def _cancel_background_tasks(self) -> None:
+    async def _cancel_owned_tasks(self) -> None:
+        """Cancel interface-owned long-lived tasks (supervisor + keepalive)."""
         await self._cancel_task("_supervisor_task")
         await self._cancel_task("_keepalive_task")
 
     async def _cancel_task(self, attr: str) -> None:
         task: asyncio.Task[None] | None = getattr(self, attr)
         setattr(self, attr, None)
-        if task is None or task.done():
-            return
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+        await ZenProtocol._cancel_and_await(task)
 
     async def _event_monitor_supervisor(self) -> None:
         """Keep the event listener running; reconnect with backoff after unexpected loss."""

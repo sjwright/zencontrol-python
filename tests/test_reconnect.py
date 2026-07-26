@@ -19,12 +19,6 @@ class _ControllableListener:
         self.closed = False
         self.create_count = 0
 
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *args):
-        return None
-
     async def events(self):
         await self._release.wait()
         return

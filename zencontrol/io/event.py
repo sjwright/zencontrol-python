@@ -133,26 +133,33 @@ class ZenListener:
         self.logger.info(f"Started event listener in {'unicast' if self.unicast else 'multicast'} mode")
 
     async def stop_listening(self) -> None:
-        if self.transport and not self.transport.is_closing():
-            self._stop_event.set()
-            self._drop_multicast_membership()
-            self.transport.close()
+        """Release the datagram socket and drain the queue. Idempotent."""
+        if self.transport is None or self.transport.is_closing():
             self.transport = None
             self.protocol = None
             self._mreq = None
+            self._stop_event.set()
+            return
 
-            # Clear any remaining events in queue
-            while not self._event_queue.empty():
-                try:
-                    self._event_queue.get_nowait()
-                    self._event_queue.task_done()
-                except asyncio.QueueEmpty:
-                    break
+        self._stop_event.set()
+        self._drop_multicast_membership()
+        self.transport.close()
+        self.transport = None
+        self.protocol = None
+        self._mreq = None
+
+        # Clear any remaining events in queue
+        while not self._event_queue.empty():
+            try:
+                self._event_queue.get_nowait()
+                self._event_queue.task_done()
+            except asyncio.QueueEmpty:
+                break
 
         self.logger.info("Stopped event listener")
 
     async def close(self) -> None:
-        """Close the listener (alias for stop_listening for async context manager compatibility)"""
+        """Close the listener socket (idempotent; used by protocol teardown)."""
         await self.stop_listening()
 
     def is_listening(self) -> bool:
