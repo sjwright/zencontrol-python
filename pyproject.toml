@@ -15,7 +15,7 @@ authors = [
 ]
 keywords = ["dali", "lighting", "control", "zencontrol", "home-automation"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
