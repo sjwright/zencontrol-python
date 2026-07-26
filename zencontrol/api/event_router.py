@@ -24,7 +24,7 @@ from ..io.event import EventConst, ZenEndpoint, ZenEvent, parse_frame
 from ..utils import is_ipv4_address, local_ip_for_remote
 from .event_decode import ZenDecodedEvent, decode
 from .identity import IdentityLog
-from .models import mac_bytes_to_str, mac_key
+from .models import mac_bytes_to_str
 from .types import Const, Transport
 
 # Handlers run on the funnel consumer. Contract: do not await device/command I/O.
@@ -37,10 +37,6 @@ LeasesIdleHandler = Callable[[], None]
 
 # Why the receiver dropped a subscription (passed to LostHandler).
 LOST_MAC_CONFLICT = "mac_conflict"
-
-# Back-compat aliases for callers/tests that imported private helpers from here.
-_mac_bytes_to_str = mac_bytes_to_str
-_mac_key = mac_key
 
 
 class EventHealth(Enum):
@@ -279,7 +275,7 @@ class ZenEventReceiver:
             )
 
         if mac is not None and mac in self._by_mac:
-            raise ValueError(f"MAC already subscribed: {_mac_bytes_to_str(mac)}")
+            raise ValueError(f"MAC already subscribed: {mac_bytes_to_str(mac)}")
         if mac is None and host is not None and host in self._by_host:
             raise ValueError(f"Host already has a provisional subscription: {host}")
 

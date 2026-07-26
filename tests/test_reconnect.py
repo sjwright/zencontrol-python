@@ -42,8 +42,8 @@ async def test_supervisor_restores_session_after_listener_death() -> None:
     on_connect = AsyncMock()
     on_disconnect = AsyncMock()
     on_resync = AsyncMock()
-    zen.on_connect = on_connect
-    zen.on_disconnect = on_disconnect
+    zen.callbacks.on_connect = on_connect
+    zen.callbacks.on_disconnect = on_disconnect
 
     await zen.start()
     assert open_count == 1

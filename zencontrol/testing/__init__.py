@@ -1,5 +1,5 @@
 """Internal testing helpers — not part of the public ``zencontrol`` API."""
 
-from .protocol import ZenProtocol
+from .harness import ZenTestClient
 
-__all__ = ["ZenProtocol"]
+__all__ = ["ZenTestClient"]

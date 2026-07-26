@@ -1,17 +1,15 @@
 """
-High-level interface models and client.
+High-level interface: ``ZenControl`` composition root and entity models.
 
-This module contains models that belong to the zen_interface layer:
-- ZenControl (main client for high-level usage)
-- ZenLight, ZenGroup, ZenButton, etc. (high-level Pythonic objects)
-- Business logic and convenience methods
+Prefer ``ZenControl`` for applications (commands + events + discovery).
+``EntityContext`` is the advanced/command-only surface used when you own the
+command client yourself and do not need the event session.
 """
 
-from .context import EntityContext, EntityRegistry, ZenCallbacks
-from .interface import (
+from .context import EntityContext, ZenCallbacks
+from .entities import (
     ZenAbsoluteInput,
     ZenButton,
-    ZenControl,
     ZenController,
     ZenGroup,
     ZenLight,
@@ -19,13 +17,14 @@ from .interface import (
     ZenProfile,
     ZenSystemVariable,
 )
+from .interface import ZenControl
 
 __all__ = [
     # High-level client
     "ZenControl",
-    "EntityContext",
-    "EntityRegistry",
     "ZenCallbacks",
+    # Advanced: command-only (no event session)
+    "EntityContext",
 
     # High-level models
     "ZenController",

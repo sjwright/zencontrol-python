@@ -83,9 +83,9 @@ async def main():
         zen.add_controller(**config.get("zencontrol")[0])
         ctrl = zen.controllers[0]
 
-        zen.button_press = on_button_press
-        zen.light_change = on_light_change
-        zen.group_change = on_group_change
+        zen.callbacks.button_press = on_button_press
+        zen.callbacks.light_change = on_light_change
+        zen.callbacks.group_change = on_group_change
 
         print("Testing ZenControl Event Monitoring...")
         print("=" * 60)

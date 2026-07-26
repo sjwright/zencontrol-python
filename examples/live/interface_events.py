@@ -53,15 +53,15 @@ async def main():
         print(f"{msecs:.1f} ms")
 
     # Set up event callbacks
-    # zi.on_connect = _zen_on_connect
-    # zi.on_disconnect = _zen_on_disconnect
-    # zi.profile_change = _zen_profile_change
-    zi.group_change = _zen_group_change
-    zi.light_change = _zen_light_change
-    zi.button_press = _zen_button_press
-    # zi.button_long_press = _zen_button_long_press
-    # zi.motion_event = _zen_motion_event
-    # zi.system_variable_change = _zen_system_variable_change
+    # zi.callbacks.on_connect = _zen_on_connect
+    # zi.callbacks.on_disconnect = _zen_on_disconnect
+    # zi.callbacks.profile_change = _zen_profile_change
+    zi.callbacks.group_change = _zen_group_change
+    zi.callbacks.light_change = _zen_light_change
+    zi.callbacks.button_press = _zen_button_press
+    # zi.callbacks.button_long_press = _zen_button_long_press
+    # zi.callbacks.motion_event = _zen_motion_event
+    # zi.callbacks.system_variable_change = _zen_system_variable_change
 
     # Start event monitoring
     await zi.start()

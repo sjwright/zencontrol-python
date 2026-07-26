@@ -65,7 +65,7 @@ async def test_subscription_handler_returns_before_callback_runs() -> None:
         callback_started.set()
         await release_callback.wait()
 
-    zen.light_change = on_light_change
+    zen.callbacks.light_change = on_light_change
     await zen.start()
 
     data, addr = _level_frame(mac=b"\x02\x00\x00\x00\x00\x01", level=128)
@@ -109,7 +109,7 @@ async def test_dispatch_chain_ignores_predecessor_cancel_but_honours_own() -> No
     async def record_dispatch(_ctrl, _ev) -> None:
         dispatched.append(1)
 
-    with patch.object(zen, "_dispatch_controller_event", side_effect=record_dispatch):
+    with patch.object(zen._dispatcher, "dispatch", side_effect=record_dispatch):
         # Predecessor stuck until cancelled.
         stuck = asyncio.get_running_loop().create_future()
 

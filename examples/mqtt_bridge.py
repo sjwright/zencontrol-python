@@ -351,15 +351,15 @@ class ZenMQTTBridge:
     async def setup_zen(self) -> None:
         try:
             self.zen: zencontrol.ZenControl = zencontrol.ZenControl(logger=self.logger, print_traffic=True)
-            self.zen.on_connect = self._zen_on_connect
-            self.zen.on_disconnect = self._zen_on_disconnect
-            self.zen.profile_change = self._zen_profile_change
-            self.zen.group_change = self._zen_group_change
-            self.zen.light_change = self._zen_light_change
-            self.zen.button_press = self._zen_button_press
-            self.zen.button_long_press = self._zen_button_long_press
-            self.zen.motion_event = self._zen_motion_event
-            self.zen.system_variable_change = self._zen_system_variable_change
+            self.zen.callbacks.on_connect = self._zen_on_connect
+            self.zen.callbacks.on_disconnect = self._zen_on_disconnect
+            self.zen.callbacks.profile_change = self._zen_profile_change
+            self.zen.callbacks.group_change = self._zen_group_change
+            self.zen.callbacks.light_change = self._zen_light_change
+            self.zen.callbacks.button_press = self._zen_button_press
+            self.zen.callbacks.button_long_press = self._zen_button_long_press
+            self.zen.callbacks.motion_event = self._zen_motion_event
+            self.zen.callbacks.system_variable_change = self._zen_system_variable_change
             for config in self.config['zencontrol']:
                 ctrl = self.zen.add_controller(
                     id=config['id'],

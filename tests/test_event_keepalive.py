@@ -43,7 +43,7 @@ async def test_assert_marks_unreachable_when_reassert_fails() -> None:
     zen.commands.query_tpi_event_emit_state = AsyncMock(return_value=False)
     zen.configure_controller_events = AsyncMock(return_value=False)
     status_cb = AsyncMock()
-    zen.controller_status_change = status_cb
+    zen.callbacks.controller_status_change = status_cb
 
     assert await zen.assert_controller_events(ctrl) is False  # type: ignore[arg-type]
     status_cb.assert_awaited_once_with(ctrl, "unreachable")
@@ -58,7 +58,7 @@ async def test_assert_defers_while_controller_not_ready() -> None:
     zen.configure_controller_events = AsyncMock()
     zen.commands.query_tpi_event_unicast_address = AsyncMock()
     status_cb = AsyncMock()
-    zen.controller_status_change = status_cb
+    zen.callbacks.controller_status_change = status_cb
 
     assert await zen.assert_controller_events(ctrl) is True  # type: ignore[arg-type]
     zen.configure_controller_events.assert_not_awaited()

@@ -29,7 +29,7 @@ async def test_absolute_input_event_parses_16bit_value() -> None:
     async def on_change(absolute_input: ZenAbsoluteInput, value: int) -> None:
         changes.append((absolute_input, value))
 
-    zen.absolute_input_change = on_change
+    zen.callbacks.absolute_input_change = on_change
     absolute = ZenAbsoluteInput(ctx=zen.context, instance=instance)
     assert absolute.interview_hydrate(
         {"serial": "1", "label": "Panel", "instance_label": "Dial"}

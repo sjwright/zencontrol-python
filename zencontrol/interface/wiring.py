@@ -15,7 +15,7 @@ from typing import Protocol
 
 from ..api.event_decode import ZenDecodedEvent
 from ..api.event_router import EventHealth, Lease, Subscription, ZenEventReceiver
-from ..api.models import ZenController
+from ..api.models import ZenController, mac_bytes_to_str
 from ..api.types import Transport, ZenEventMode
 from ..utils import resolve_host
 
@@ -38,10 +38,6 @@ class CommandPlane(Protocol):
     async def tpi_event_emit(
         self, controller: ZenController, mode: ZenEventMode | None = None
     ) -> bool: ...
-
-
-def _mac_bytes_to_str(mac: bytes) -> str:
-    return ":".join(f"{b:02X}" for b in mac)
 
 
 @dataclass
@@ -108,7 +104,7 @@ class ZenEventWiring:
             await self._event_handler(controller, decoded)
 
         async def on_identified(mac: bytes) -> None:
-            mac_str = _mac_bytes_to_str(mac)
+            mac_str = mac_bytes_to_str(mac)
             was_unknown = controller.mac is None
             controller.mac = mac_str
             if was_unknown and callable(self.on_identified):

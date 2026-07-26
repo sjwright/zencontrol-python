@@ -1,13 +1,13 @@
-"""Test/advanced facade combining command and event planes for simulator tests.
+"""Test harness combining command and event planes for simulator tests.
 
 Not public API — use ``ZenControl`` in application code.
 
 Example::
 
-    from zencontrol.testing import ZenProtocol
+    from zencontrol.testing import ZenTestClient
     from zencontrol import ZenController
 
-    p = ZenProtocol(unicast=True, listen_ip="127.0.0.1", listen_port=0)
+    p = ZenTestClient(unicast=True, listen_ip="127.0.0.1", listen_port=0)
     ctrl = ZenController(..., ctx=p.context)
     p.set_controllers([ctrl])
 """
@@ -40,8 +40,8 @@ from ..interface.wiring import ZenEventWiring
 LegacyCallback = Callable[..., Awaitable[None]]
 
 
-class ZenProtocol:
-    """Facade: ``ZenCommandClient`` commands + legacy callback event monitoring."""
+class ZenTestClient:
+    """Test harness: ``ZenCommandClient`` commands + legacy callback event monitoring."""
 
     def __init__(
         self,

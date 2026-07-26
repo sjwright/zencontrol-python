@@ -18,7 +18,6 @@ from .models import (
     ControllerRef,
     ZenAddress,
     ZenColour,
-    ZenController,
     ZenInstance,
 )
 from .event_decode import ZenEventMask

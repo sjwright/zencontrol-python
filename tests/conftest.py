@@ -83,7 +83,7 @@ def _simulator_config_path() -> Path:
 
 @dataclass
 class LiveSimulator:
-    """Running simulator paired with a ``ZenProtocol`` test facade."""
+    """Running simulator paired with a ``ZenTestClient`` test facade."""
 
     world: Any
     sim: Any
@@ -142,13 +142,13 @@ class LiveSimulator:
 
 @pytest.fixture
 async def live_sim() -> LiveSimulator:
-    """Start zencontrol-simulator on an ephemeral port with a ZenProtocol facade."""
+    """Start zencontrol-simulator on an ephemeral port with a ZenTestClient facade."""
     _require_simulator()
     from zencontrol_simulator.server import Simulator
     from zencontrol_simulator.world import load_world
 
     from zencontrol import ZenController
-    from zencontrol.testing import ZenProtocol
+    from zencontrol.testing import ZenTestClient
 
     config = _simulator_config_path()
     world = load_world(config)
@@ -161,7 +161,7 @@ async def live_sim() -> LiveSimulator:
     port = sim.bind_port
     mac = ":".join(f"{b:02x}" for b in world.mac)
 
-    protocol = ZenProtocol(unicast=True, listen_ip="127.0.0.1", listen_port=0)
+    protocol = ZenTestClient(unicast=True, listen_ip="127.0.0.1", listen_port=0)
     controller = ZenController(
         id=1,
         name="sim",

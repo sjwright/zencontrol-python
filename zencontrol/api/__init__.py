@@ -1,13 +1,15 @@
 """
-API-level models and protocol implementation.
+API layer: TPI command client, event receiver, and wire-facing models.
 
-This module contains models and types that belong to the API layer:
-- ZenController, ZenAddress, ZenInstance (API-level concepts)
-- ZenCommandClient (implements TPI commands)
-- ZenColour, ZenProfile (API-level concepts used by TPI protocol)
-- Types and enums used by the API layer
+- ``ZenCommandClient`` — command plane (UDP request/response)
+- ``ZenEventReceiver`` / ``Lease`` / ``Subscription`` — event plane
+- ``ZenController``, ``ZenAddress``, ``ZenInstance``, ``ZenColour`` — models
 """
 
+from .commands import ZenCommandClient
+from .event_decode import ZenEventCode, ZenEventMask
+from .event_router import EventHealth, Lease, Subscription, ZenEventReceiver
+from .identity import IdentityLog
 from .models import (
     ControllerRef,
     DiscoveredController,
@@ -15,12 +17,7 @@ from .models import (
     ZenColour,
     ZenController,
     ZenInstance,
-    ZenProfile,
 )
-from .commands import ZenCommandClient
-from .event_decode import ZenEventCode, ZenEventMask
-from .event_router import EventHealth
-from .identity import IdentityLog
 from .types import (
     Transport,
     ZenAddressType,
@@ -30,18 +27,23 @@ from .types import (
 )
 
 __all__ = [
-    # API-level models
+    # Command / event planes
+    "ZenCommandClient",
+    "ZenEventReceiver",
+    "Lease",
+    "Subscription",
+    "EventHealth",
+    "IdentityLog",
+
+    # Models
     "ControllerRef",
     "ZenController",
     "ZenAddress",
     "ZenInstance",
     "ZenColour",
-    "ZenProfile",
     "DiscoveredController",
-    "IdentityLog",
-    "ZenCommandClient",
 
-    # API-level types
+    # Types
     "ZenAddressType",
     "ZenInstanceType",
     "ZenColourType",
@@ -49,5 +51,4 @@ __all__ = [
     "ZenEventCode",
     "ZenEventMask",
     "ZenEventMode",
-    "EventHealth",
 ]

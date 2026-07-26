@@ -162,14 +162,14 @@ async def test_start_receives_injected_and_control_events(live_zen):
     async def on_group(*, group, level=None, colour=None, scene=None, **kwargs):
         group_events.append((group.address.number, level, colour, scene))
 
-    zen.button_press = on_button
-    zen.button_long_press = on_hold
-    zen.motion_event = on_motion
-    zen.absolute_input_change = on_absolute
-    zen.profile_change = on_profile
-    zen.system_variable_change = on_sysvar
-    zen.light_change = on_light
-    zen.group_change = on_group
+    zen.callbacks.button_press = on_button
+    zen.callbacks.button_long_press = on_hold
+    zen.callbacks.motion_event = on_motion
+    zen.callbacks.absolute_input_change = on_absolute
+    zen.callbacks.profile_change = on_profile
+    zen.callbacks.system_variable_change = on_sysvar
+    zen.callbacks.light_change = on_light
+    zen.callbacks.group_change = on_group
 
     await zen.start()
     await zen.get_profiles()
@@ -431,7 +431,7 @@ async def test_motion_refresh_and_group_discoordination(live_zen):
         if discoordinated:
             disco.append(group.address.number)
 
-    zen.group_change = on_group
+    zen.callbacks.group_change = on_group
     await group.declare_discoordination()
     assert group.level is None and group.scene is None
     assert 0 in disco

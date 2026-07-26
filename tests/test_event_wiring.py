@@ -186,7 +186,7 @@ async def test_host_only_binding_learns_mac_and_persists() -> None:
     async def on_identified(controller, mac: str) -> None:
         persisted.append((controller.name, mac))
 
-    zen.controller_identified = on_identified
+    zen.callbacks.controller_identified = on_identified
     await zen.start()
 
     binding = zen._wiring.get("pending") if zen._wiring else None
@@ -220,7 +220,7 @@ async def test_promotion_conflict_detaches_zombie_binding() -> None:
     async def on_status(controller, status: str) -> None:
         status_changes.append((controller.name, status))
 
-    zen.controller_status_change = on_status
+    zen.callbacks.controller_status_change = on_status
     known = zen.add_controller(
         id=1,
         name="known",
@@ -271,7 +271,7 @@ async def test_known_mac_skips_identified_callback() -> None:
         mac="02:00:00:00:00:01",
     )
     on_identified = AsyncMock()
-    zen.controller_identified = on_identified
+    zen.callbacks.controller_identified = on_identified
     await zen.start()
 
     assert zen.event_health_for("known") is EventHealth.SILENT

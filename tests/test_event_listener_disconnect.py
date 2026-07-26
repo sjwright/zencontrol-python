@@ -17,7 +17,7 @@ async def test_consumer_crash_fires_on_disconnect_once() -> None:
     zen = ZenControl()
     zen.reconnect_min_delay = 10.0
     on_disconnect = AsyncMock()
-    zen.on_disconnect = on_disconnect
+    zen.callbacks.on_disconnect = on_disconnect
     zen.event_receiver._endpoint_factory = fake_endpoint_factory()
     zen.commands.set_tpi_event_unicast_address = AsyncMock()
     zen.commands.tpi_event_emit = AsyncMock(return_value=True)
@@ -59,7 +59,7 @@ async def test_intentional_stop_fires_on_disconnect_once() -> None:
     zen = ZenControl()
     zen.reconnect_min_delay = 10.0
     on_disconnect = AsyncMock()
-    zen.on_disconnect = on_disconnect
+    zen.callbacks.on_disconnect = on_disconnect
     zen.event_receiver._endpoint_factory = fake_endpoint_factory()
     zen.commands.set_tpi_event_unicast_address = AsyncMock()
     zen.commands.tpi_event_emit = AsyncMock(return_value=True)
@@ -75,7 +75,7 @@ async def test_stop_after_crash_does_not_double_notify() -> None:
     zen = ZenControl()
     zen.reconnect_min_delay = 10.0
     on_disconnect = AsyncMock()
-    zen.on_disconnect = on_disconnect
+    zen.callbacks.on_disconnect = on_disconnect
     zen.event_receiver._endpoint_factory = fake_endpoint_factory()
     zen.commands.set_tpi_event_unicast_address = AsyncMock()
     zen.commands.tpi_event_emit = AsyncMock(return_value=True)

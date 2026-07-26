@@ -3,16 +3,21 @@ ZenControl Python Library
 
 A Python library for interfacing with ZenControl DALI lighting controllers.
 
-This library provides three distinct layers of abstraction:
+Layers:
 
-1. **zen_io**: Wire-level protocol implementation (UDP, message framing)
-2. **zen_api**: Zen API calls using zen_io (DALI commands, TPI protocol)
-3. **zen_interface**: Pythonic interface to Zen entities using zen_api (high-level objects)
+1. **io** — wire-level UDP framing (``ZenClient``, request/response envelopes)
+2. **api** — TPI command client + event receiver (``ZenCommandClient``, ``ZenEventReceiver``)
+3. **interface** — high-level entities and session orchestration (``ZenControl``)
 
-Example usage:
+Recommended entry point is ``ZenControl`` (commands + events + discovery).
+``EntityContext`` is advanced/command-only: entity identity and callbacks without
+an event session — prefer ``ZenControl`` unless you intentionally drive the
+command plane yourself.
+
+Example::
+
     import zencontrol
 
-    # High-level interface (recommended for most users)
     async with zencontrol.ZenControl() as zen:
         zen.add_controller(
             id=1,
@@ -25,17 +30,10 @@ Example usage:
         lights = await zen.get_lights()
         for light in lights:
             await light.set(level=50)
-
-    # Low-level API access (for advanced users)
-    async with zencontrol.ZenControl() as zen:
-        zen.add_controller(id=1, name="living", label="Living Room", host="192.168.1.100")
-        await zen.start()
-        for light in await zen.get_lights():
-            await light.set(level=50)
 """
 
 # High-level interface (recommended for most users)
-# API-level models (used by zen_api)
+# API-level models
 from .api.models import DiscoveredController, ZenAddress, ZenColour, ZenInstance
 
 # Shared types and exceptions
@@ -59,6 +57,7 @@ from .interface import (
     EntityContext,
     ZenAbsoluteInput,
     ZenButton,
+    ZenCallbacks,
     ZenControl,
     ZenController,
     ZenGroup,
@@ -68,7 +67,7 @@ from .interface import (
     ZenSystemVariable,
 )
 
-# Low-level models (used by zen_io)
+# Low-level models
 from .io import (
     Request,
     RequestType,
@@ -88,6 +87,8 @@ __author__ = "Simon Wright"
 __all__ = [
     # High-level interface (recommended)
     "ZenControl",
+    "ZenCallbacks",
+    # Advanced: command-only entity context (no event session)
     "EntityContext",
 
     # High-level models (for most users)
@@ -99,7 +100,7 @@ __all__ = [
     "ZenAbsoluteInput",
     "ZenMotionSensor",
     "ZenSystemVariable",
-    
+
     # API-level models (for advanced users)
     "ZenAddress",
     "ZenInstance",
@@ -113,14 +114,14 @@ __all__ = [
     "RequestType",
     "Response",
     "ResponseType",
-    
+
     # Exceptions
     "ZenError",
     "ZenTimeoutError",
     "ZenResponseError",
     "ZenConnectionError",
     "ZenConfigurationError",
-    
+
     # Types and enums
     "ZenAddressType",
     "ZenInstanceType",
@@ -130,7 +131,7 @@ __all__ = [
     "ZenEventMask",
     "ZenEventMode",
     "EventHealth",
-    
+
     # Utilities
     "run_with_keyboard_interrupt",
 ]

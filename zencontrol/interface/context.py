@@ -25,6 +25,8 @@ class ZenCallbacks:
     def __init__(self) -> None:
         self.on_connect: Callable[[], Awaitable[None]] | None = None
         self.on_disconnect: Callable[[], Awaitable[None]] | None = None
+        # Session gap after receiver restore (not a wire event).
+        self.on_resync: Callable[[], Awaitable[None]] | None = None
         self.profile_change: Callable[..., Awaitable[None]] | None = None
         self.group_change: Callable[..., Awaitable[None]] | None = None
         self.light_change: Callable[..., Awaitable[None]] | None = None
@@ -36,6 +38,8 @@ class ZenCallbacks:
         self.controller_discovered: Callable[[DiscoveredController], Awaitable[None]] | None = None
         # Fired once when a provisional binding learns its MAC (persist for HA).
         self.controller_identified: Callable[[ZenController, str], Awaitable[None]] | None = None
+        # online / starting / unreachable (keepalive / binding loss).
+        self.controller_status_change: Callable[..., Awaitable[None]] | None = None
 
 
 class EntityRegistry:
@@ -83,7 +87,13 @@ class EntityRegistry:
 
 
 class EntityContext:
-    """Owns entity callbacks, identity registry, and deferred interface tasks."""
+    """Owns entity callbacks, identity registry, and deferred interface tasks.
+
+    Advanced/command-only surface. Prefer ``ZenControl`` for applications that
+    need event monitoring, discovery, or session lifecycle — it creates and
+    owns an ``EntityContext``. Use this directly only when you drive
+    ``ZenCommandClient`` yourself without the event session.
+    """
 
     def __init__(
         self,

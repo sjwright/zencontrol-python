@@ -1,10 +1,8 @@
 """
 ZenControl API-level models.
 
-This module contains models that belong to the zen_api layer:
-- ZenController, ZenAddress, ZenInstance (API-level concepts)
-- ZenColour, ZenProfile (API-level concepts used by TPI protocol)
-- These are the core objects used by the TPI protocol
+Controller identity, addresses, instances, colour payloads, and discovery DTOs.
+High-level profile entities live in ``zencontrol.interface`` (``ZenProfile``).
 """
 
 import logging
@@ -90,9 +88,9 @@ class ZenController:
     and what registered controllers always are. This base exists so the API
     layer can talk about controllers without importing the interface layer.
 
-    Command clients and the protocol instance live outside the model: the
-    protocol owns UDP clients keyed by controller name; the interface layer
-    holds the protocol reference.
+    Transports live outside the model: ``ZenCommandClient`` owns UDP clients
+    keyed by controller name; ``ZenControl`` / ``EntityContext`` hold the
+    command client and (for the high-level path) the event session.
 
     The 'host' field can be any resolvable hostname or IP address.
     The 'ip' property will resolve the hostname to an IP address and cache it.
@@ -350,15 +348,3 @@ class ZenColour:
     def command_payload(self) -> bytes:
         """Colour type and channel bytes for DALI_COLOUR (follows address and arc level)."""
         return self.to_bytes()
-
-
-@dataclass(slots=True)
-class ZenProfile:
-    """Represents a DALI profile"""
-    controller: ZenController
-    address: ZenAddress
-    profile: int
-
-    def __post_init__(self) -> None:
-        if not (0 <= self.profile <= 255):
-            raise ValueError(f"Profile must be 0-255, got {self.profile}")
