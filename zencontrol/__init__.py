@@ -34,11 +34,10 @@ Example::
 
 # High-level interface (recommended for most users)
 # API-level models
-from .api.models import DiscoveredController, ZenAddress, ZenColour, ZenInstance
-
 # Shared types and exceptions
 from .api.event_decode import ZenEventCode, ZenEventMask
 from .api.event_router import EventHealth
+from .api.models import DiscoveredController, ZenAddress, ZenColour, ZenInstance
 from .api.types import (
     Transport,
     ZenAddressType,

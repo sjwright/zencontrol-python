@@ -13,13 +13,13 @@ from ..io.command import (
     ResponseType,
     ZenClient,
 )
+from .event_decode import ZenEventMask
 from .models import (
     ControllerRef,
     ZenAddress,
     ZenColour,
     ZenInstance,
 )
-from .event_decode import ZenEventMask
 from .types import (
     Const,
     ZenAddressType,
