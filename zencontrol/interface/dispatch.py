@@ -145,15 +145,10 @@ class EventDispatcher:
                 )._event_received()
 
             case LevelChangeV2(target, _current, level):
-                address = self._ecg_or_group(ctrl, target)
-                if address is None:
-                    return
-                if address.type == ZenAddressType.ECG:
-                    light = ZenLight(ctx=self.ctx, address=address)
-                    await light._event_received(level=level)
-                elif address.type == ZenAddressType.GROUP:
-                    group = ZenGroup(ctx=self.ctx, address=address)
-                    await group._event_received(level=level)
+                await self._dispatch_level(ctrl, target, level)
+
+            # LEVEL_CHANGE / GROUP_LEVEL_CHANGE / GROUP_OCCUPIED: not subscribed
+            # (see ZenEventMask.all_events) and ignored here if they arrive.
 
             case ColourChange(target, colour_bytes):
                 address = self._ecg_or_group(ctrl, target)
@@ -198,3 +193,16 @@ class EventDispatcher:
 
             case _:
                 return
+
+    async def _dispatch_level(
+        self, ctrl: ZenController, target: int, level: int
+    ) -> None:
+        address = self._ecg_or_group(ctrl, target)
+        if address is None:
+            return
+        if address.type == ZenAddressType.ECG:
+            light = ZenLight(ctx=self.ctx, address=address)
+            await light._event_received(level=level)
+        elif address.type == ZenAddressType.GROUP:
+            group = ZenGroup(ctx=self.ctx, address=address)
+            await group._event_received(level=level)

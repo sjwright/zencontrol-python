@@ -98,7 +98,7 @@ async def test_assert_reconfigures_on_unicast_target_mismatch() -> None:
     lease = SimpleNamespace(advertise=("192.168.1.10", 6970))
     wiring = MagicMock()
     wiring.get.return_value = SimpleNamespace(lease=lease)
-    zen._wiring = wiring
+    zen.session.wiring = wiring
 
     zen.commands.query_tpi_event_unicast_address = AsyncMock(
         return_value={
@@ -135,7 +135,7 @@ async def test_assert_compares_per_binding_advertise() -> None:
         "ctrl-a": binding_a,
         "ctrl-b": binding_b,
     }.get(c if isinstance(c, str) else c.name)
-    zen._wiring = wiring
+    zen.session.wiring = wiring
 
     zen.configure_controller_events = AsyncMock(return_value=True)
 
@@ -215,4 +215,4 @@ async def test_keepalive_loop_reasserts_and_stops_cleanly() -> None:
         pytest.fail("keepalive did not re-assert events")
 
     await zen.stop()
-    assert zen._keepalive_task is None or zen._keepalive_task.done()
+    assert zen.session.keepalive_task is None or zen.session.keepalive_task.done()

@@ -48,8 +48,8 @@ async def test_supervisor_restores_session_after_listener_death() -> None:
     await zen.start()
     assert open_count == 1
     on_connect.assert_awaited_once()
-    assert zen._wiring is not None
-    zen._wiring.on_resync = on_resync
+    assert zen.session.wiring is not None
+    zen.session.wiring.on_resync = on_resync
 
     task = zen.event_receiver.consumer_task
     assert task is not None
@@ -168,8 +168,8 @@ async def test_recover_skips_zombie_consumer_until_bind_succeeds() -> None:
     on_resync = AsyncMock()
     await zen.start()
     assert zen.is_event_monitoring_active()
-    assert zen._wiring is not None
-    zen._wiring.on_resync = on_resync
+    assert zen.session.wiring is not None
+    zen.session.wiring.on_resync = on_resync
 
     dead = zen.event_receiver.consumer_task
     assert dead is not None
@@ -233,7 +233,7 @@ async def test_wait_for_session_restore_requires_open_transport() -> None:
     assert zen.event_receiver.lease_count(Transport.MULTICAST) > 0
     assert not zen.event_receiver.is_transport_open(Transport.MULTICAST)
     assert not zen.is_event_monitoring_active()
-    assert not await zen._wait_for_session_restore(dead, timeout=0.2)
+    assert not await zen.session._wait_for_session_restore(dead, timeout=0.2)
 
     zombie.cancel()
     try:
@@ -275,11 +275,11 @@ async def test_wait_for_session_restore_awaits_event_not_poll() -> None:
         await real_sleep(0.05)
         # Mimic recover: new consumer + open transports + session hook.
         zen.event_receiver._consumer_task = asyncio.create_task(real_sleep(3600))
-        await zen._on_session_restored()
+        await zen.session._on_session_restored()
 
-    with patch("zencontrol.interface.interface.asyncio.sleep", side_effect=tracking_sleep):
+    with patch("zencontrol.interface.session.asyncio.sleep", side_effect=tracking_sleep):
         restore_task = asyncio.create_task(restore_later())
-        assert await zen._wait_for_session_restore(dead, timeout=1.0)
+        assert await zen.session._wait_for_session_restore(dead, timeout=1.0)
         await restore_task
 
     assert sleep_calls == [], f"restore wait polled via sleep: {sleep_calls}"
@@ -375,7 +375,7 @@ async def test_supervisor_exits_when_unexpected_death_has_no_leases() -> None:
     zen.logger.error = capture_error  # type: ignore[method-assign]
 
     await zen.start()
-    supervisor = zen._supervisor_task
+    supervisor = zen.session.supervisor_task
     dead = zen.event_receiver.consumer_task
     assert supervisor is not None and dead is not None
 
@@ -410,13 +410,13 @@ async def test_supervisor_exits_when_last_lease_releases_cleanly() -> None:
         id=1, name="ctrl-a", label="A", host="127.0.0.1", mac="02:00:00:00:00:01"
     )
     await zen.start()
-    supervisor = zen._supervisor_task
+    supervisor = zen.session.supervisor_task
     assert supervisor is not None
 
     await zen.remove_controller(ctrl)
     await asyncio.wait_for(supervisor, timeout=1.0)
     assert supervisor.done()
-    assert not zen._has_event_leases()
+    assert not zen.session._has_event_leases()
     await zen.aclose()
 
 
@@ -462,11 +462,11 @@ async def test_supervisor_cancel_does_not_reconnect() -> None:
 
     await zen.start()
     assert open_count == 1
-    assert zen._supervisor_task is not None
+    assert zen.session.supervisor_task is not None
 
-    zen._supervisor_task.cancel()
+    zen.session.supervisor_task.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await zen._supervisor_task
+        await zen.session.supervisor_task
 
     await asyncio.sleep(0.1)
     assert open_count == 1

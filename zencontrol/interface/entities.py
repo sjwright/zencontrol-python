@@ -21,7 +21,6 @@ from ..api import ZenController as SuperZenController
 from ..api.commands import ZenCommandClient
 from ..api.models import ControllerRef, mac_to_bytes
 from ..api.types import Const
-from ..io import ZenClient
 from .context import EntityContext
 
 
@@ -149,23 +148,14 @@ class ZenController(SuperZenController):
 
     connected: bool = False
     profile: ZenProfile | None = None
-    profiles: set[ZenProfile] = set()
-    lights: set[ZenLight] = set()
-    groups: set[ZenGroup] = set()
-    buttons: set[ZenButton] = set()
-    absolute_inputs: set[ZenAbsoluteInput] = set()
-    motion_sensors: set[ZenMotionSensor] = set()
-    sysvars: set[ZenSystemVariable] = set()
-    client_data: dict[str, Any] = {}
-
-    @property
-    def client(self) -> ZenClient | None:
-        """Compat shim: command clients live on commands, keyed by name."""
-        return self.commands.client_for(self)
-
-    @client.setter
-    def client(self, value: ZenClient | None) -> None:
-        self.commands.set_client(self, value)
+    profiles: set[ZenProfile]
+    lights: set[ZenLight]
+    groups: set[ZenGroup]
+    buttons: set[ZenButton]
+    absolute_inputs: set[ZenAbsoluteInput]
+    motion_sensors: set[ZenMotionSensor]
+    sysvars: set[ZenSystemVariable]
+    client_data: dict[str, Any]
 
     def __new__(cls, ctx: EntityContext, id: int, name: str, label: str, host: str, port: int = 5108, mac: str | None = None, filtering: bool = False) -> ZenController:
         # Unique per context + controller name
@@ -288,7 +278,7 @@ class ZenProfile:
     controller: ZenController
     number: int
     label: str | None = None
-    client_data: dict[str, Any] = {}
+    client_data: dict[str, Any]
 
     def __new__(cls, ctx: EntityContext, controller: ZenController, number: int) -> ZenProfile:
         # Unique per context + controller + profile number
@@ -352,28 +342,18 @@ class ZenLight:
     label: str | None = None
     sub_label: str | None = None
     serial: (int | str) | None = None
-    cgtype: list[int] = []
-    groups: set[ZenGroup] = set()
-    group_membership: list[ZenAddress] = []
-    features: dict[str, bool] = {
-        "brightness": False,
-        "temperature": False,
-        "RGB": False,
-        "RGBW": False,
-        "RGBWW": False,
-        "XY": False,
-    }
-    properties: dict[str, int | None] = {
-        "min_kelvin": Const.DEFAULT_WARMEST_TEMP,
-        "max_kelvin": Const.DEFAULT_COOLEST_TEMP,
-    }
-    _scene_labels: list[str | None] = [None] * Const.MAX_SCENE
-    _scene_levels: list[int | None] = [None] * Const.MAX_SCENE
-    _scene_colours: list[ZenColour | None] = [None] * Const.MAX_SCENE
+    cgtype: list[int]
+    groups: set[ZenGroup]
+    group_membership: list[ZenAddress]
+    features: dict[str, bool]
+    properties: dict[str, int | None]
+    _scene_labels: list[str | None]
+    _scene_levels: list[int | None]
+    _scene_colours: list[ZenColour | None]
     level: int | None = None
     colour: ZenColour | None = None
     scene: int | None = None
-    client_data: dict[str, Any] = {}
+    client_data: dict[str, Any]
     _refresh_timer: asyncio.Task[None] | None = None
 
     def __new__(cls, ctx: EntityContext, address: ZenAddress) -> Self:
@@ -755,7 +735,7 @@ class ZenLight:
         
 
 class ZenGroup(ZenLight):
-    lights: set[ZenLight] = set()
+    lights: set[ZenLight]
 
     def __new__(cls, ctx: EntityContext, address: ZenAddress) -> ZenGroup:
         # Unique per context + controller + group address
@@ -774,7 +754,7 @@ class ZenGroup(ZenLight):
 
     def __init__(self, ctx: EntityContext, address: ZenAddress) -> None:
         super().__init__(ctx, address)
-    
+
     @classmethod
     async def create(cls, ctx: EntityContext, address: ZenAddress) -> ZenGroup:
         """Async factory method for ZenGroup"""
@@ -860,7 +840,7 @@ class ZenButton:
     instance_label: str | None = None
     last_press_time: float = 0.0
     long_press_count: int = 0
-    client_data: dict[str, Any] = {}
+    client_data: dict[str, Any]
 
     def __new__(cls, ctx: EntityContext, instance: ZenInstance) -> ZenButton:
         # Unique per context + controller + address + instance
@@ -964,7 +944,7 @@ class ZenAbsoluteInput:
     label: str | None = None
     instance_label: str | None = None
     _value: int | None = None
-    client_data: dict[str, Any] = {}
+    client_data: dict[str, Any]
 
     def __new__(cls, ctx: EntityContext, instance: ZenInstance) -> ZenAbsoluteInput:
         compound_id = f"{instance.address.controller.name} {instance.address.number} {instance.number}"
@@ -1071,7 +1051,7 @@ class ZenMotionSensor:
     deadtime: int | None = None
     last_detect: float | None = None
     _occupied: bool | None = None
-    client_data: dict[str, Any] = {}
+    client_data: dict[str, Any]
 
     def __new__(cls, ctx: EntityContext, instance: ZenInstance) -> ZenMotionSensor:
         # Unique per context + controller + address + instance
@@ -1243,7 +1223,7 @@ class ZenSystemVariable:
     label: str | None = None
     _value: int | None = None
     _future_value: int | None = None
-    client_data: dict[str, Any] = {}
+    client_data: dict[str, Any]
 
     def __new__(cls, ctx: EntityContext, controller: ZenController, id: int, value: int | None = None, label: str | None = None) -> ZenSystemVariable:
         # Unique per context + controller + id

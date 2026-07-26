@@ -8,11 +8,105 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable, Coroutine
-from typing import Any
+from collections.abc import Awaitable, Coroutine
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from ..api.commands import ZenCommandClient
 from ..api.models import DiscoveredController, ZenController
+
+if TYPE_CHECKING:
+    from ..api.models import ZenColour
+    from .entities import (
+        ZenAbsoluteInput,
+        ZenButton,
+        ZenGroup,
+        ZenLight,
+        ZenMotionSensor,
+        ZenProfile,
+        ZenSystemVariable,
+    )
+
+ControllerRuntimeStatus = Literal["online", "starting", "unreachable"]
+
+
+class OnConnectHandler(Protocol):
+    def __call__(self) -> Awaitable[None]: ...
+
+
+class OnDisconnectHandler(Protocol):
+    def __call__(self) -> Awaitable[None]: ...
+
+
+class OnResyncHandler(Protocol):
+    def __call__(self) -> Awaitable[None]: ...
+
+
+class ProfileChangeHandler(Protocol):
+    def __call__(self, *, profile: ZenProfile) -> Awaitable[None]: ...
+
+
+class GroupChangeHandler(Protocol):
+    def __call__(
+        self,
+        *,
+        group: ZenGroup,
+        level: int | None = None,
+        colour: ZenColour | None = None,
+        scene: int | None = None,
+        discoordinated: bool = False,
+    ) -> Awaitable[None]: ...
+
+
+class LightChangeHandler(Protocol):
+    def __call__(
+        self,
+        *,
+        light: ZenLight,
+        level: int | None = None,
+        colour: ZenColour | None = None,
+        scene: int | None = None,
+    ) -> Awaitable[None]: ...
+
+
+class ButtonPressHandler(Protocol):
+    def __call__(self, *, button: ZenButton) -> Awaitable[None]: ...
+
+
+class AbsoluteInputChangeHandler(Protocol):
+    def __call__(
+        self, *, absolute_input: ZenAbsoluteInput, value: int
+    ) -> Awaitable[None]: ...
+
+
+class MotionEventHandler(Protocol):
+    def __call__(
+        self, *, sensor: ZenMotionSensor, occupied: bool
+    ) -> Awaitable[None]: ...
+
+
+class SystemVariableChangeHandler(Protocol):
+    def __call__(
+        self,
+        *,
+        system_variable: ZenSystemVariable,
+        value: int | None,
+        changed: bool,
+        by_me: bool,
+    ) -> Awaitable[None]: ...
+
+
+class ControllerDiscoveredHandler(Protocol):
+    def __call__(self, discovered: DiscoveredController) -> Awaitable[None]: ...
+
+
+class ControllerIdentifiedHandler(Protocol):
+    def __call__(self, controller: ZenController, mac: str) -> Awaitable[None]: ...
+
+
+class ControllerStatusChangeHandler(Protocol):
+    def __call__(
+        self, controller: ZenController, status: ControllerRuntimeStatus
+    ) -> Awaitable[None]: ...
 
 
 class ZenCallbacks:
@@ -23,23 +117,23 @@ class ZenCallbacks:
     """
 
     def __init__(self) -> None:
-        self.on_connect: Callable[[], Awaitable[None]] | None = None
-        self.on_disconnect: Callable[[], Awaitable[None]] | None = None
+        self.on_connect: OnConnectHandler | None = None
+        self.on_disconnect: OnDisconnectHandler | None = None
         # Session gap after receiver restore (not a wire event).
-        self.on_resync: Callable[[], Awaitable[None]] | None = None
-        self.profile_change: Callable[..., Awaitable[None]] | None = None
-        self.group_change: Callable[..., Awaitable[None]] | None = None
-        self.light_change: Callable[..., Awaitable[None]] | None = None
-        self.button_press: Callable[..., Awaitable[None]] | None = None
-        self.button_long_press: Callable[..., Awaitable[None]] | None = None
-        self.absolute_input_change: Callable[..., Awaitable[None]] | None = None
-        self.motion_event: Callable[..., Awaitable[None]] | None = None
-        self.system_variable_change: Callable[..., Awaitable[None]] | None = None
-        self.controller_discovered: Callable[[DiscoveredController], Awaitable[None]] | None = None
+        self.on_resync: OnResyncHandler | None = None
+        self.profile_change: ProfileChangeHandler | None = None
+        self.group_change: GroupChangeHandler | None = None
+        self.light_change: LightChangeHandler | None = None
+        self.button_press: ButtonPressHandler | None = None
+        self.button_long_press: ButtonPressHandler | None = None
+        self.absolute_input_change: AbsoluteInputChangeHandler | None = None
+        self.motion_event: MotionEventHandler | None = None
+        self.system_variable_change: SystemVariableChangeHandler | None = None
+        self.controller_discovered: ControllerDiscoveredHandler | None = None
         # Fired once when a provisional binding learns its MAC (persist for HA).
-        self.controller_identified: Callable[[ZenController, str], Awaitable[None]] | None = None
+        self.controller_identified: ControllerIdentifiedHandler | None = None
         # online / starting / unreachable (keepalive / binding loss).
-        self.controller_status_change: Callable[..., Awaitable[None]] | None = None
+        self.controller_status_change: ControllerStatusChangeHandler | None = None
 
 
 class EntityRegistry:
@@ -106,7 +200,7 @@ class EntityContext:
         self.registry = EntityRegistry()
         self._bg_tasks: set[asyncio.Task[Any]] = set()
 
-    def clear_entity_cache(self) -> None:
+    def clear_entity_caches(self) -> None:
         """Drop all interface entity singletons owned by this context."""
         self.registry.clear()
 

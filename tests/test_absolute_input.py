@@ -37,7 +37,7 @@ async def test_absolute_input_event_parses_16bit_value() -> None:
 
     async def _dispatch(ev: AbsoluteInput) -> None:
         await zen._on_controller_event(ctrl, ev)
-        tail = zen._event_dispatch_tail.get(ctrl.name)
+        tail = zen._dispatcher.tail.get(ctrl.name)
         if tail is not None:
             await tail
 

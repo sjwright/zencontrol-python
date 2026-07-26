@@ -32,7 +32,7 @@ async def test_discover_gear_groups_and_devices(live_sim):
     assert sorted(a.number for a in groups) == [0, 1, 2, 3, 4, 5]
     assert await p.query_group_label(live_sim.group(0)) == "Living Areas"
 
-    devices = await p.query_dali_addresses_with_instances(c, start_address=0)
+    devices = await p.query_dali_addresses_with_instances(c)
     ecd_nums = {a.number for a in devices}
     assert {0, 1, 2, 10, 11}.issubset(ecd_nums)
 

@@ -25,9 +25,7 @@ class DiscoveryHost(Protocol):
     event_receiver: ZenEventReceiver
     _enrich_locks: dict[str, asyncio.Lock]
 
-    @property
-    def _supervisor_task(self) -> asyncio.Task[None] | None: ...
-
+    def is_session_running(self) -> bool: ...
     async def start(self) -> None: ...
     async def stop(self) -> None: ...
 
@@ -123,7 +121,7 @@ class ControllerDiscovery:
         h = self._host
         window_start = time.time()
         started_here = False
-        if h._supervisor_task is None or h._supervisor_task.done():
+        if not h.is_session_running():
             await h.start()
             started_here = True
 

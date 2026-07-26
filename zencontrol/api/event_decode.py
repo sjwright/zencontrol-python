@@ -50,7 +50,9 @@ class ZenEventMask:
 
     @classmethod
     def all_events(cls) -> Self:
-        # Exclude deprecated level_change / group_level_change — use level_change_v2 (spec V2.001.121+)
+        # Subscribe mask for normal use. Excludes:
+        # - deprecated LEVEL_CHANGE / GROUP_LEVEL_CHANGE (use LEVEL_CHANGE_V2)
+        # - GROUP_OCCUPIED (not used by the interface layer)
         return cls(
             button_press=True,
             button_hold=True,
@@ -60,7 +62,6 @@ class ZenEventMask:
             system_variable_change=True,
             colour_change=True,
             profile_change=True,
-            group_occupied=True,
             level_change_v2=True,
         )
 

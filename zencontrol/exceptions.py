@@ -8,7 +8,7 @@ from typing import Any
 
 
 class ZenError(Exception):
-    """Base exception for Zen protocol errors"""
+    """Base exception for zencontrol library / TPI errors."""
     pass
 
 

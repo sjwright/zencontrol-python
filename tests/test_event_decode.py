@@ -22,6 +22,7 @@ from zencontrol.api.event_decode import (
     SceneChange,
     SystemVariableChange,
     ZenEventCode,
+    ZenEventMask,
     decode,
 )
 from zencontrol.io.event import ZenEvent, parse_frame
@@ -226,6 +227,20 @@ def test_occupied_types_remain_distinct() -> None:
     b = decode(_event(0x0A, b"\xFF\x01", target=64))
     assert type(a) is IsOccupied
     assert type(b) is GroupOccupied
+
+
+def test_all_events_excludes_deprecated_and_unused_codes() -> None:
+    mask = ZenEventMask.all_events()
+    assert mask.level_change is False
+    assert mask.group_level_change is False
+    assert mask.group_occupied is False
+    assert mask.level_change_v2 is True
+    assert mask.is_occupied is True
+    bits = mask.bitmask()
+    assert bits & (1 << ZenEventCode.LEVEL_CHANGE) == 0
+    assert bits & (1 << ZenEventCode.GROUP_LEVEL_CHANGE) == 0
+    assert bits & (1 << ZenEventCode.GROUP_OCCUPIED) == 0
+    assert bits & (1 << ZenEventCode.LEVEL_CHANGE_V2) != 0
 
 
 def test_end_to_end_parse_then_decode() -> None:

@@ -46,6 +46,7 @@ def test_commands_has_no_entity_context_concerns() -> None:
     assert "entity_registry" not in source
     assert "track_task" not in source
     assert "clear_entity_cache" not in source
+    assert "clear_entity_caches" not in source
 
 
 def test_commands_has_no_session_roster_or_emit_policy() -> None:

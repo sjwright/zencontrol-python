@@ -230,13 +230,7 @@ class ZenMQTTBridge:
             await self._publish_zen_availability()
             for ctrl in self.control:
                 ctrl.refresh_ip()
-                client = ctrl.client
-                ctrl.client = None
-                if client is not None:
-                    try:
-                        await client.close()
-                    except Exception:
-                        pass
+                await self.zen.commands._invalidate_client(ctrl)
             await asyncio.sleep(delay)
             delay = min(delay * 2, Const.STARTUP_RETRY_MAX_DELAY)
 

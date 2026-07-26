@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Literal, Self, cast
+from typing import Any, Self, cast
 
 from ..api import (
     ZenAddress,
@@ -15,7 +15,7 @@ from ..api.models import DiscoveredController
 from ..api.event_router import EventHealth, ZenEventReceiver
 from ..api.commands import ZenCommandClient
 from ..api.types import Const, Transport, ZenEventMode
-from .context import EntityContext, ZenCallbacks
+from .context import ControllerRuntimeStatus, EntityContext, ZenCallbacks
 from .discovery import ControllerDiscovery
 from .dispatch import EventDispatcher
 from .entities import (
@@ -79,31 +79,10 @@ class ZenControl:
     async def __aexit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
         await self.aclose()
 
-    # --- session / dispatch facades (keep private attr paths used by tests) ---
-
     @property
-    def _wiring(self):
-        return self._session.wiring
-
-    @_wiring.setter
-    def _wiring(self, value) -> None:
-        self._session.wiring = value
-
-    @property
-    def _supervisor_task(self):
-        return self._session.supervisor_task
-
-    @property
-    def _keepalive_task(self):
-        return self._session.keepalive_task
-
-    @property
-    def _event_dispatch_tail(self):
-        return self._dispatcher.tail
-
-    @property
-    def _stopping(self) -> bool:
-        return self._session.stopping
+    def session(self) -> ZenSession:
+        """Event-plane session (wiring, supervisor, keepalive)."""
+        return self._session
 
     @property
     def event_task(self):
@@ -111,6 +90,11 @@ class ZenControl:
 
     def is_event_monitoring_active(self) -> bool:
         return self._session.is_event_monitoring_active()
+
+    def is_session_running(self) -> bool:
+        """True when the session supervisor is alive (may still be binding)."""
+        task = self._session.supervisor_task
+        return task is not None and not task.done()
 
     async def notify_disconnect(self) -> None:
         await self._session.notify_disconnect()
@@ -124,27 +108,8 @@ class ZenControl:
     async def aclose(self) -> None:
         await self._session.aclose()
 
-    async def _on_session_restored(self) -> None:
-        await self._session._on_session_restored()
-
-    def _has_event_leases(self) -> bool:
-        return self._session._has_event_leases()
-
-    async def _wait_for_session_restore(
-        self,
-        dead_task: asyncio.Task[None] | None,
-        *,
-        timeout: float | None = None,
-    ) -> bool:
-        return await self._session._wait_for_session_restore(
-            dead_task, timeout=timeout
-        )
-
     async def _on_controller_event(self, controller: SuperZenController, ev: ZenDecodedEvent) -> None:
         await self._dispatcher.handle(controller, ev)
-
-    async def _dispatch_controller_event(self, ctrl: ZenController, ev: ZenDecodedEvent) -> None:
-        await self._dispatcher.dispatch(ctrl, ev)
 
     def _forget_event_dispatch(self, name: str) -> None:
         self._dispatcher.forget(name)
@@ -169,7 +134,7 @@ class ZenControl:
 
     def clear_entity_caches(self) -> None:
         """Clear entity singleton registries for this ZenControl instance."""
-        self.context.clear_entity_cache()
+        self.context.clear_entity_caches()
 
     @property
     def callbacks(self) -> ZenCallbacks:
@@ -183,9 +148,9 @@ class ZenControl:
 
     def event_health_for(self, controller: ZenController | str) -> EventHealth | None:
         """Per-binding event-plane health, or None if the controller is not attached."""
-        if self._wiring is None:
+        if self._session.wiring is None:
             return None
-        binding = self._wiring.get(controller)
+        binding = self._session.wiring.get(controller)
         return None if binding is None else binding.event_health
 
     async def _forward_discovered(self, discovered: DiscoveredController) -> None:
@@ -227,8 +192,8 @@ class ZenControl:
         name = controller if isinstance(controller, str) else controller.name
         removed = [c for c in self.controllers if c.name == name]
         self.controllers = [c for c in self.controllers if c.name != name]
-        if self._wiring is not None:
-            await self._wiring.detach(name)
+        if self._session.wiring is not None:
+            await self._session.wiring.detach(name)
         self._forget_event_dispatch(name)
         self.context.purge_controller_entities(name)
         for ctrl in removed:
@@ -250,14 +215,14 @@ class ZenControl:
         newly attached controller joins the shared listener. Returns True when the
         emit-enable command succeeds.
         """
-        if self._wiring is None:
+        if self._session.wiring is None:
             return False
         mode = self._event_mode_for(controller)
         try:
-            if self._wiring.get(controller) is not None:
-                await self._wiring.rearm(controller)
+            if self._session.wiring.get(controller) is not None:
+                await self._session.wiring.rearm(controller)
             else:
-                await self._wiring.attach(controller, mode)
+                await self._session.wiring.attach(controller, mode)
             return True
         except Exception as err:
             self.logger.debug(
@@ -280,7 +245,7 @@ class ZenControl:
         """
         if not self.is_event_monitoring_active():
             return False
-        if self._wiring is not None and self._wiring.get(controller) is None:
+        if self._session.wiring is not None and self._session.wiring.get(controller) is None:
             # Binding was dropped (e.g. MAC promotion conflict) — do not keep
             # confirming emit into a route that no longer exists.
             self.logger.debug(
@@ -348,9 +313,9 @@ class ZenControl:
         Compares against that controller's binding advertise (per-``toward``).
         Without a live advertise there is nothing to compare — return False.
         """
-        if self._wiring is None:
+        if self._session.wiring is None:
             return False
-        binding = self._wiring.get(controller)
+        binding = self._session.wiring.get(controller)
         advertise = None if binding is None else binding.lease.advertise
         if advertise is None:
             return False
@@ -411,24 +376,8 @@ class ZenControl:
         return lights
     
     async def _get_addresses_with_instances(self, controller: ZenController) -> list[ZenAddress]:
-        """Return all DALI addresses that have instances, scanning all address ranges.
-
-        ``query_dali_addresses_with_instances`` can only return up to 60 addresses
-        per call. Iterating over start_address in steps of 60 covers the full
-        DALI address space (0-127).
-        """
-        seen: set[tuple[str, int]] = set()
-        addresses: list[ZenAddress] = []
-        for start in range(0, 128, 60):
-            batch = await self.commands.query_dali_addresses_with_instances(
-                controller=controller, start_address=start
-            )
-            for addr in batch:
-                key = (addr.controller.name, addr.number)
-                if key not in seen:
-                    seen.add(key)
-                    addresses.append(addr)
-        return addresses
+        """Return all DALI addresses that have instances (full address-space scan)."""
+        return await self.commands.query_dali_addresses_with_instances(controller)
 
     async def get_buttons(self, controller: ZenController | None = None) -> set[ZenButton]:
         """Return a set of all buttons available (optionally for one controller)."""
@@ -499,6 +448,4 @@ class ZenControl:
         return sysvars
 
 
-type ControllerRuntimeStatus = Literal["online", "starting", "unreachable"]
-
-__all__ = ["ZenControl"]
+__all__ = ["ZenControl", "ControllerRuntimeStatus"]

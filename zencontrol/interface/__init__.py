@@ -6,7 +6,7 @@ Prefer ``ZenControl`` for applications (commands + events + discovery).
 command client yourself and do not need the event session.
 """
 
-from .context import EntityContext, ZenCallbacks
+from .context import ControllerRuntimeStatus, EntityContext, ZenCallbacks
 from .entities import (
     ZenAbsoluteInput,
     ZenButton,
@@ -23,6 +23,7 @@ __all__ = [
     # High-level client
     "ZenControl",
     "ZenCallbacks",
+    "ControllerRuntimeStatus",
     # Advanced: command-only (no event session)
     "EntityContext",
 

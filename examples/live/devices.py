@@ -18,7 +18,7 @@ async def main():
         print("=" * 50)
         
         try:
-            addresses = await tpi.query_dali_addresses_with_instances(ctrl, 0)
+            addresses = await tpi.query_dali_addresses_with_instances(ctrl)
             print(f"Addresses with instances:")
             
             for address in addresses:

@@ -9,10 +9,7 @@ import pytest
 
 from zencontrol.api.models import ZenAddress
 from zencontrol.api.types import ZenAddressType
-from zencontrol.interface.interface import (
-    ZenControl,
-    ZenLight,
-)
+from zencontrol import ZenControl, ZenLight
 
 
 @pytest.mark.asyncio
@@ -34,7 +31,7 @@ async def test_remove_controller_closes_client_and_purges_cache() -> None:
     )
     fake_client = MagicMock()
     fake_client.close = AsyncMock()
-    ctrl_a.client = fake_client
+    zen.commands.set_client(ctrl_a, fake_client)
     address = ZenAddress(controller=ctrl_a, type=ZenAddressType.ECG, number=1)
     ZenLight(ctx=zen.context, address=address)
     assert "ctrl-a 1" in zen.context.registry.lights
@@ -43,22 +40,22 @@ async def test_remove_controller_closes_client_and_purges_cache() -> None:
     async def _noop() -> None:
         return None
 
-    zen._event_dispatch_tail["ctrl-a"] = asyncio.create_task(_noop())
-    zen._event_dispatch_tail["ctrl-b"] = asyncio.create_task(_noop())
+    zen._dispatcher.tail["ctrl-a"] = asyncio.create_task(_noop())
+    zen._dispatcher.tail["ctrl-b"] = asyncio.create_task(_noop())
 
     await zen.remove_controller(ctrl_a)
 
     fake_client.close.assert_awaited()
-    assert ctrl_a.client is None
+    assert zen.commands.client_for(ctrl_a) is None
     assert zen.controllers == [ctrl_b]
     assert "ctrl-a" not in zen.context.registry.controllers
     assert "ctrl-a 1" not in zen.context.registry.lights
     assert "ctrl-b" in zen.context.registry.controllers
-    assert "ctrl-a" not in zen._event_dispatch_tail
-    assert "ctrl-b" in zen._event_dispatch_tail
+    assert "ctrl-a" not in zen._dispatcher.tail
+    assert "ctrl-b" in zen._dispatcher.tail
 
     await zen.aclose()
-    assert zen._event_dispatch_tail == {}
+    assert zen._dispatcher.tail == {}
 
 
 @pytest.mark.asyncio
@@ -74,7 +71,7 @@ async def test_aclose_closes_clients_and_clears_instances() -> None:
     fake_client = MagicMock()
     fake_client.is_connected.return_value = True
     fake_client.close = AsyncMock()
-    ctrl.client = fake_client
+    zen.commands.set_client(ctrl, fake_client)
 
     address = ZenAddress(controller=ctrl, type=ZenAddressType.ECG, number=1)
     ZenLight(ctx=zen.context, address=address)
@@ -84,7 +81,7 @@ async def test_aclose_closes_clients_and_clears_instances() -> None:
     await zen.aclose()
 
     fake_client.close.assert_awaited()
-    assert ctrl.client is None
+    assert zen.commands.client_for(ctrl) is None
     assert zen.context.registry.lights == {}
     assert zen.context.registry.controllers == {}
 

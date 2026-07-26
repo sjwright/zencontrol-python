@@ -242,7 +242,7 @@ async def test_send_packet_timeout_invalidates_client_and_refreshes_ip() -> None
         return_value=Response(ResponseType.TIMEOUT)
     )
     fake_client.close = AsyncMock()
-    controller.client = fake_client
+    protocol.set_client(controller, fake_client)
     controller.set_resolved_ip("192.0.2.10")
 
     with patch.object(controller, "refresh_ip", wraps=controller.refresh_ip) as refresh:
@@ -254,7 +254,7 @@ async def test_send_packet_timeout_invalidates_client_and_refreshes_ip() -> None
 
     refresh.assert_called_once()
     fake_client.close.assert_awaited()
-    assert controller.client is None
+    assert protocol.client_for(controller) is None
 
 
 @pytest.mark.asyncio
@@ -271,7 +271,7 @@ async def test_ensure_client_recreates_when_disconnected() -> None:
     stale = MagicMock()
     stale.is_connected.return_value = False
     stale.close = AsyncMock()
-    controller.client = stale
+    protocol.set_client(controller, stale)
 
     new_client = MagicMock()
     new_client.is_connected.return_value = True
@@ -283,7 +283,7 @@ async def test_ensure_client_recreates_when_disconnected() -> None:
 
     stale.close.assert_awaited()
     create.assert_awaited_once()
-    assert controller.client is new_client
+    assert protocol.client_for(controller) is new_client
 
 
 def test_default_retries_constant() -> None:
@@ -371,7 +371,7 @@ async def test_send_packet_error_returns_without_raising() -> None:
             data=bytes([ZenErrorCode.PAID_FEATURE.value]),
         )
     )
-    controller.client = fake_client
+    protocol.set_client(controller, fake_client)
 
     data, code = await protocol._send_packet(
         controller,

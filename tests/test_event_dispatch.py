@@ -8,7 +8,13 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from helpers_endpoints import fake_endpoint_factory
-from zencontrol.api.event_decode import LevelChangeV2
+from zencontrol.api.event_decode import (
+    GroupLevelChange,
+    GroupOccupied,
+    LevelChange,
+    LevelChangeV2,
+)
+from zencontrol.api.types import ZenAddressType
 from zencontrol.interface.interface import ZenControl
 
 
@@ -117,10 +123,10 @@ async def test_dispatch_chain_ignores_predecessor_cancel_but_honours_own() -> No
             await stuck
 
         prev = asyncio.create_task(predecessor())
-        zen._event_dispatch_tail[ctrl.name] = prev
+        zen._dispatcher.tail[ctrl.name] = prev
 
         await zen._on_controller_event(ctrl, ev)
-        chain = zen._event_dispatch_tail[ctrl.name]
+        chain = zen._dispatcher.tail[ctrl.name]
         assert chain is not prev
 
         # Cancel predecessor — chain should continue and dispatch.
@@ -136,9 +142,9 @@ async def test_dispatch_chain_ignores_predecessor_cancel_but_honours_own() -> No
             await stuck2
 
         prev2 = asyncio.create_task(predecessor2())
-        zen._event_dispatch_tail[ctrl.name] = prev2
+        zen._dispatcher.tail[ctrl.name] = prev2
         await zen._on_controller_event(ctrl, ev)
-        chain2 = zen._event_dispatch_tail[ctrl.name]
+        chain2 = zen._dispatcher.tail[ctrl.name]
         await asyncio.sleep(0)  # let chain2 reach await previous
         chain2.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -148,3 +154,34 @@ async def test_dispatch_chain_ignores_predecessor_cancel_but_honours_own() -> No
         if not prev2.done():
             stuck2.set_result(None)
             await prev2
+
+
+@pytest.mark.asyncio
+async def test_dispatch_drops_unused_and_deprecated_event_kinds() -> None:
+    """LEVEL_CHANGE / GROUP_LEVEL_CHANGE / GROUP_OCCUPIED must not touch entities."""
+    from zencontrol import ZenAddress, ZenLight
+
+    zen = ZenControl()
+    ctrl = zen.add_controller(
+        id=1, name="house", label="House", host="127.0.0.1", mac="02:00:00:00:00:01"
+    )
+    light = ZenLight(
+        ctx=zen.context,
+        address=ZenAddress(controller=ctrl, type=ZenAddressType.ECG, number=5),
+    )
+    light.features = {"brightness": True}
+    light.level = 10
+    called = False
+
+    async def on_any(**kwargs) -> None:
+        nonlocal called
+        called = True
+
+    zen.callbacks.light_change = on_any
+    zen.callbacks.group_change = on_any
+
+    await zen._dispatcher.dispatch(ctrl, LevelChange(target=5, level=40))
+    await zen._dispatcher.dispatch(ctrl, GroupLevelChange(target=64, level=80))
+    await zen._dispatcher.dispatch(ctrl, GroupOccupied(target=64, occupied=True))
+    assert light.level == 10
+    assert called is False

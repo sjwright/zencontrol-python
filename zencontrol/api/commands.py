@@ -42,7 +42,7 @@ except ImportError:
 
 """
 ===================================================================================
-Command plane: TPI Advanced API over zen_io (no event session).
+Command plane: TPI Advanced API over io (no event session).
 ===================================================================================
 """
 
@@ -796,30 +796,56 @@ class ZenCommandClient:
             return zen_groups
         return []
 
-    async def query_dali_addresses_with_instances(self, controller: ControllerRef, start_address: int = 0) -> list[ZenAddress]:  # TODO: automate iteration over start_address=0, start_address=60, etc.
-        """Query for DALI addresses that have instances associated with them.
-        
-        Due to payload restrictions, this needs to be called multiple times with different
-        start addresses to check all possible devices (e.g. start_address=0, then start_address=60)
-        
-        Args:
-            controller: ZenController instance
-            start_address: Starting DALI address to begin searching from (0-127)
-            
-        Returns:
-            List of DALI addresses that have instances, or None if query fails
+    async def query_dali_addresses_with_instances(
+        self,
+        controller: ControllerRef,
+        start_address: int | None = None,
+    ) -> list[ZenAddress]:
+        """Query DALI addresses that have instances.
+
+        Controllers return at most 60 addresses per request. When
+        ``start_address`` is omitted, paginate the full 0–127 space in steps of
+        60. Pass an explicit ``start_address`` for a single page.
         """
-        addresses = await self._send_basic(controller, self.CMD["QUERY_DALI_ADDRESSES_WITH_INSTANCES"], 0, [0,0,start_address], return_type='list')
+        if start_address is not None:
+            return await self._query_dali_addresses_with_instances_page(
+                controller, start_address
+            )
+        seen: set[tuple[str, int]] = set()
+        addresses: list[ZenAddress] = []
+        for start in range(0, 128, 60):
+            for addr in await self._query_dali_addresses_with_instances_page(
+                controller, start
+            ):
+                key = (addr.controller.name, addr.number)
+                if key not in seen:
+                    seen.add(key)
+                    addresses.append(addr)
+        return addresses
+
+    async def _query_dali_addresses_with_instances_page(
+        self, controller: ControllerRef, start_address: int
+    ) -> list[ZenAddress]:
+        """Single-page QUERY_DALI_ADDRESSES_WITH_INSTANCES (max 60 results)."""
+        addresses = await self._send_basic(
+            controller,
+            self.CMD["QUERY_DALI_ADDRESSES_WITH_INSTANCES"],
+            0,
+            [0, 0, start_address],
+            return_type="list",
+        )
         if not addresses:
             return []
         zen_addresses: list[ZenAddress] = []
         for number in addresses:
-            if 64 <= number <= 127:  # Only process valid device addresses (64-127)
-                zen_addresses.append(ZenAddress(
-                    controller=controller,
-                    type=ZenAddressType.ECD,
-                    number=number-64 # subtract 64 to get actual DALI device address
-                ))
+            if 64 <= number <= 127:  # ECD range on the wire
+                zen_addresses.append(
+                    ZenAddress(
+                        controller=controller,
+                        type=ZenAddressType.ECD,
+                        number=number - 64,
+                    )
+                )
         return zen_addresses
     
     async def query_scene_numbers_for_group(self, address: ZenAddress) -> list[int]:

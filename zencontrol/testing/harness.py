@@ -159,7 +159,7 @@ class ZenTestClient:
     async def aclose(self) -> None:
         await self.stop_event_monitoring()
         await self.context.cancel_background_tasks()
-        self.context.clear_entity_cache()
+        self.context.clear_entity_caches()
         await self.commands.aclose()
         await self.event_receiver.close()
 
