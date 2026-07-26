@@ -129,24 +129,22 @@ def _event(code: int, payload: bytes, target: int = 0) -> ZenEvent:
         (0x00, b"\x02", 64, ButtonPress(target=64, instance=2)),
         (0x01, b"\x03", 65, ButtonHold(target=65, instance=3)),
         (0x02, b"\x01\x12\x34", 64, AbsoluteInput(target=64, instance=1, value=0x1234)),
-        (0x03, b"\xFE", 5, LevelChange(target=5, level=0xFE)),
+        (0x03, b"\xfe", 5, LevelChange(target=5, level=0xFE)),
         (0x04, b"\x80", 64, GroupLevelChange(target=64, level=0x80)),
         (0x05, b"\x01\x01", 3, SceneChange(target=3, scene=1, active=True)),
         (0x05, b"\x02\x00", 67, SceneChange(target=67, scene=2, active=False)),
         (0x06, b"\x00\x01", 64, IsOccupied(target=64, instance=0)),
         (
             0x07,
-            b"\x00\x00\x00\x2A\x00",
+            b"\x00\x00\x00\x2a\x00",
             7,
             SystemVariableChange(target=7, value=42),
         ),
-        (0x08, b"\x20\x0B\xB8\x00\x00\x00\x00", 1, ColourChange(
-            target=1, colour=b"\x20\x0B\xB8\x00\x00\x00\x00"
-        )),
-        (0x09, b"\x00\x0F", 0, ProfileChange(profile=15)),
-        (0x0A, b"\xFF\x01", 64, GroupOccupied(target=64, occupied=True)),
-        (0x0A, b"\xFF\x00", 65, GroupOccupied(target=65, occupied=False)),
-        (0x0B, b"\xFE\x00", 59, LevelChangeV2(target=59, current=0xFE, level=0)),
+        (0x08, b"\x20\x0b\xb8\x00\x00\x00\x00", 1, ColourChange(target=1, colour=b"\x20\x0b\xb8\x00\x00\x00\x00")),
+        (0x09, b"\x00\x0f", 0, ProfileChange(profile=15)),
+        (0x0A, b"\xff\x01", 64, GroupOccupied(target=64, occupied=True)),
+        (0x0A, b"\xff\x00", 65, GroupOccupied(target=65, occupied=False)),
+        (0x0B, b"\xfe\x00", 59, LevelChangeV2(target=59, current=0xFE, level=0)),
     ],
 )
 def test_decode_each_code(code: int, payload: bytes, target: int, expected: object) -> None:
@@ -155,9 +153,7 @@ def test_decode_each_code(code: int, payload: bytes, target: int, expected: obje
 
 def test_decode_sysvar_with_magnitude() -> None:
     # raw=5, magnitude=2 → 500
-    assert decode(_event(0x07, b"\x00\x00\x00\x05\x02", target=1)) == SystemVariableChange(
-        target=1, value=500
-    )
+    assert decode(_event(0x07, b"\x00\x00\x00\x05\x02", target=1)) == SystemVariableChange(target=1, value=500)
 
 
 def test_decode_rejects_unknown_code() -> None:
@@ -180,9 +176,9 @@ def test_decode_rejects_unknown_code() -> None:
         (0x08, b"\x20"),  # colour needs 3–7
         (0x08, b"\x20" + bytes(7)),  # too long
         (0x09, b""),
-        (0x09, b"\x0F"),  # profile needs exactly 2
-        (0x0A, b"\xFF"),  # need 2
-        (0x0B, b"\xFE"),  # need 2
+        (0x09, b"\x0f"),  # profile needs exactly 2
+        (0x0A, b"\xff"),  # need 2
+        (0x0B, b"\xfe"),  # need 2
     ],
 )
 def test_decode_rejects_wrong_length_payload(code: int, payload: bytes) -> None:
@@ -193,16 +189,16 @@ def test_decode_rejects_wrong_length_payload(code: int, payload: bytes) -> None:
     ("code", "payload"),
     [
         (0x00, b"\x02\x00"),
-        (0x01, b"\x03\xFF"),
+        (0x01, b"\x03\xff"),
         (0x02, b"\x01\x12\x34\x00"),
-        (0x03, b"\xFE\x00"),
+        (0x03, b"\xfe\x00"),
         (0x04, b"\x80\x00"),
         (0x05, b"\x01\x01\x00"),
         (0x06, b"\x00\x01\x00"),
-        (0x07, b"\x00\x00\x00\x2A\x00\x00"),
-        (0x09, b"\x00\x0F\x00"),
-        (0x0A, b"\xFF\x01\x00"),
-        (0x0B, b"\xFE\x00\x00"),
+        (0x07, b"\x00\x00\x00\x2a\x00\x00"),
+        (0x09, b"\x00\x0f\x00"),
+        (0x0A, b"\xff\x01\x00"),
+        (0x0B, b"\xfe\x00\x00"),
     ],
 )
 def test_decode_rejects_trailing_junk(code: int, payload: bytes) -> None:
@@ -224,7 +220,7 @@ def test_level_change_and_v2_remain_distinct_types() -> None:
 
 def test_occupied_types_remain_distinct() -> None:
     a = decode(_event(0x06, b"\x01\x01", target=64))
-    b = decode(_event(0x0A, b"\xFF\x01", target=64))
+    b = decode(_event(0x0A, b"\xff\x01", target=64))
     assert type(a) is IsOccupied
     assert type(b) is GroupOccupied
 
@@ -244,7 +240,7 @@ def test_all_events_excludes_deprecated_and_unused_codes() -> None:
 
 
 def test_end_to_end_parse_then_decode() -> None:
-    data = _frame(target=59, code=0x0B, payload=b"\xFE\x00")
+    data = _frame(target=59, code=0x0B, payload=b"\xfe\x00")
     event = parse_frame(data, ADDR)
     assert event is not None
     assert decode(event) == LevelChangeV2(target=59, current=0xFE, level=0)

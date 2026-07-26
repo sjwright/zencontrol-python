@@ -6,8 +6,8 @@ import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
-
 from helpers_endpoints import fake_endpoint_factory
+
 from zencontrol.api.event_decode import (
     GroupLevelChange,
     GroupOccupied,
@@ -162,9 +162,7 @@ async def test_dispatch_drops_unused_and_deprecated_event_kinds() -> None:
     from zencontrol import ZenAddress, ZenLight
 
     zen = ZenControl()
-    ctrl = zen.add_controller(
-        id=1, name="house", label="House", host="127.0.0.1", mac="02:00:00:00:00:01"
-    )
+    ctrl = zen.add_controller(id=1, name="house", label="House", host="127.0.0.1", mac="02:00:00:00:00:01")
     light = ZenLight(
         ctx=zen.context,
         address=ZenAddress(controller=ctrl, type=ZenAddressType.ECG, number=5),

@@ -7,9 +7,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from zencontrol import ZenControl, ZenLight
 from zencontrol.api.models import ZenAddress
 from zencontrol.api.types import ZenAddressType
-from zencontrol import ZenControl, ZenLight
 
 
 @pytest.mark.asyncio
@@ -23,12 +23,8 @@ async def test_zencontrol_async_context_manager_calls_aclose() -> None:
 @pytest.mark.asyncio
 async def test_remove_controller_closes_client_and_purges_cache() -> None:
     zen = ZenControl()
-    ctrl_a = zen.add_controller(
-        id=1, name="ctrl-a", label="A", host="127.0.0.1", port=5108
-    )
-    ctrl_b = zen.add_controller(
-        id=2, name="ctrl-b", label="B", host="127.0.0.2", port=5108
-    )
+    ctrl_a = zen.add_controller(id=1, name="ctrl-a", label="A", host="127.0.0.1", port=5108)
+    ctrl_b = zen.add_controller(id=2, name="ctrl-b", label="B", host="127.0.0.2", port=5108)
     fake_client = MagicMock()
     fake_client.close = AsyncMock()
     zen.commands.set_client(ctrl_a, fake_client)

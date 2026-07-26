@@ -61,21 +61,15 @@ class EventDispatcher:
         address = ZenAddress(controller=controller, type=ZenAddressType.ECD, number=ecd)
         return ZenInstance(address=address, type=instance_type, number=number)
 
-    def _ecg_or_group(
-        self, controller: ZenController, target: int
-    ) -> ZenAddress | None:
+    def _ecg_or_group(self, controller: ZenController, target: int) -> ZenAddress | None:
         if target <= 63:
             return ZenAddress(controller=controller, type=ZenAddressType.ECG, number=target)
         if 64 <= target <= 79:
-            return ZenAddress(
-                controller=controller, type=ZenAddressType.GROUP, number=target - 64
-            )
+            return ZenAddress(controller=controller, type=ZenAddressType.GROUP, number=target - 64)
         self.logger.error(f"Invalid gear/group event target: {target}")
         return None
 
-    async def handle(
-        self, controller: SuperZenController, ev: ZenDecodedEvent
-    ) -> None:
+    async def handle(self, controller: SuperZenController, ev: ZenDecodedEvent) -> None:
         """Subscription handler entry — returns immediately (I8)."""
         ctrl = cast(ZenController, controller)
         name = ctrl.name
@@ -96,9 +90,7 @@ class EventDispatcher:
             except asyncio.CancelledError:
                 raise
             except Exception as err:
-                self.logger.error(
-                    "Event dispatch error for %s: %s", name, err, exc_info=True
-                )
+                self.logger.error("Event dispatch error for %s: %s", name, err, exc_info=True)
 
         self.tail[name] = self.ctx.track_task(run())
 
@@ -106,43 +98,29 @@ class EventDispatcher:
         """Apply a decoded event to entities and fire application callbacks."""
         match ev:
             case ButtonPress(target, instance_num):
-                instance = self._ecd_instance(
-                    ctrl, target, ZenInstanceType.PUSH_BUTTON, instance_num
-                )
+                instance = self._ecd_instance(ctrl, target, ZenInstanceType.PUSH_BUTTON, instance_num)
                 if instance is None:
                     return
                 await ZenButton(ctx=self.ctx, instance=instance)._event_received()
 
             case ButtonHold(target, instance_num):
-                instance = self._ecd_instance(
-                    ctrl, target, ZenInstanceType.PUSH_BUTTON, instance_num
-                )
+                instance = self._ecd_instance(ctrl, target, ZenInstanceType.PUSH_BUTTON, instance_num)
                 if instance is None:
                     return
-                await ZenButton(
-                    ctx=self.ctx, instance=instance
-                )._event_received(held=True)
+                await ZenButton(ctx=self.ctx, instance=instance)._event_received(held=True)
 
             case AbsoluteInput(target, instance_num, value):
-                instance = self._ecd_instance(
-                    ctrl, target, ZenInstanceType.ABSOLUTE_INPUT, instance_num
-                )
+                instance = self._ecd_instance(ctrl, target, ZenInstanceType.ABSOLUTE_INPUT, instance_num)
                 if instance is None:
                     return
                 payload = bytes([instance_num, (value >> 8) & 0xFF, value & 0xFF])
-                await ZenAbsoluteInput(
-                    ctx=self.ctx, instance=instance
-                )._event_received(payload)
+                await ZenAbsoluteInput(ctx=self.ctx, instance=instance)._event_received(payload)
 
             case IsOccupied(target, instance_num):
-                instance = self._ecd_instance(
-                    ctrl, target, ZenInstanceType.OCCUPANCY_SENSOR, instance_num
-                )
+                instance = self._ecd_instance(ctrl, target, ZenInstanceType.OCCUPANCY_SENSOR, instance_num)
                 if instance is None:
                     return
-                await ZenMotionSensor(
-                    ctx=self.ctx, instance=instance
-                )._event_received()
+                await ZenMotionSensor(ctx=self.ctx, instance=instance)._event_received()
 
             case LevelChangeV2(target, _current, level):
                 await self._dispatch_level(ctrl, target, level)
@@ -158,9 +136,7 @@ class EventDispatcher:
                 if colour is None:
                     return
                 if address.type == ZenAddressType.ECG:
-                    await ZenLight(
-                        ctx=self.ctx, address=address
-                    )._event_received(colour=colour)
+                    await ZenLight(ctx=self.ctx, address=address)._event_received(colour=colour)
                 elif address.type == ZenAddressType.GROUP:
                     group = ZenGroup(ctx=self.ctx, address=address)
                     await group._event_received(colour=colour)
@@ -172,21 +148,15 @@ class EventDispatcher:
                 if address is None:
                     return
                 if address.type == ZenAddressType.ECG:
-                    await ZenLight(
-                        ctx=self.ctx, address=address
-                    )._event_received(scene=scene, active=active)
+                    await ZenLight(ctx=self.ctx, address=address)._event_received(scene=scene, active=active)
                 elif address.type == ZenAddressType.GROUP:
                     group = ZenGroup(ctx=self.ctx, address=address)
                     await group._event_received(scene=scene, active=active)
                     for light in group.lights:
-                        await light._event_received(
-                            scene=scene, active=active, cascaded_from=group
-                        )
+                        await light._event_received(scene=scene, active=active, cascaded_from=group)
 
             case SystemVariableChange(target, value):
-                await ZenSystemVariable(
-                    ctx=self.ctx, controller=ctrl, id=target
-                )._event_received(value)
+                await ZenSystemVariable(ctx=self.ctx, controller=ctrl, id=target)._event_received(value)
 
             case ProfileChange(profile):
                 await ctrl._event_received(profile=profile)
@@ -194,9 +164,7 @@ class EventDispatcher:
             case _:
                 return
 
-    async def _dispatch_level(
-        self, ctrl: ZenController, target: int, level: int
-    ) -> None:
+    async def _dispatch_level(self, ctrl: ZenController, target: int, level: int) -> None:
         address = self._ecg_or_group(ctrl, target)
         if address is None:
             return

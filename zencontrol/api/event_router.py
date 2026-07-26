@@ -173,9 +173,7 @@ class ZenEventReceiver:
         self._by_host: dict[str, Subscription] = {}
 
         # Funnel: raw datagrams from every open endpoint
-        self._funnel: asyncio.Queue[tuple[bytes, tuple[str, int]]] = asyncio.Queue(
-            maxsize=self.max_queue_size
-        )
+        self._funnel: asyncio.Queue[tuple[bytes, tuple[str, int]]] = asyncio.Queue(maxsize=self.max_queue_size)
         self.dropped_datagrams = 0
         self._last_drop_log = 0.0
         self._consumer_task: asyncio.Task[None] | None = None
@@ -200,6 +198,10 @@ class ZenEventReceiver:
     @property
     def consumer_task(self) -> asyncio.Task[None] | None:
         return self._consumer_task
+
+    def _stop_requested(self) -> bool:
+        """Read stop flag without mypy narrowing across concurrent awaits."""
+        return self._stopping
 
     def is_transport_open(self, transport: Transport) -> bool:
         ep = self._endpoints.get(transport)
@@ -269,10 +271,7 @@ class ZenEventReceiver:
         if mac is not None and len(mac) != 6:
             raise ValueError(f"mac must be 6 bytes, got {len(mac)}")
         if host is not None and not is_ipv4_address(host):
-            raise ValueError(
-                f"subscribe(host=) must be a wire IPv4 address, got {host!r}; "
-                "await resolve_host() first"
-            )
+            raise ValueError(f"subscribe(host=) must be a wire IPv4 address, got {host!r}; await resolve_host() first")
 
         if mac is not None and mac in self._by_mac:
             raise ValueError(f"MAC already subscribed: {mac_bytes_to_str(mac)}")
@@ -285,9 +284,7 @@ class ZenEventReceiver:
             _mac=mac,
             _host=host,
             # Known MAC: attached but unheard. Provisional: wait for identity.
-            _health=(
-                EventHealth.SILENT if mac is not None else EventHealth.IDENTIFYING
-            ),
+            _health=(EventHealth.SILENT if mac is not None else EventHealth.IDENTIFYING),
             _on_identified=on_identified,
             _on_lost=on_lost,
         )
@@ -307,9 +304,7 @@ class ZenEventReceiver:
     # Leases
     # ------------------------------------------------------------------
 
-    async def acquire(
-        self, transport: Transport, *, toward: str | None = None
-    ) -> Lease:
+    async def acquire(self, transport: Transport, *, toward: str | None = None) -> Lease:
         """Hold a transport open. First acquire binds; last release closes.
 
         For unicast, ``toward`` is stored on the lease so ``advertise`` can
@@ -338,10 +333,7 @@ class ZenEventReceiver:
             self._refcounts[transport] = count
             if count == 0:
                 await self._close_endpoint(transport)
-            if (
-                self._refcounts[Transport.MULTICAST] == 0
-                and self._refcounts[Transport.UNICAST] == 0
-            ):
+            if self._refcounts[Transport.MULTICAST] == 0 and self._refcounts[Transport.UNICAST] == 0:
                 await self._stop_consumer(intentional=True)
                 became_idle = True
         # Outside the lock: wake waiters (Event.set is sync / non-reentrant-safe).
@@ -461,9 +453,7 @@ class ZenEventReceiver:
                     except asyncio.CancelledError:
                         raise
                     except Exception as err:
-                        self.logger.error(
-                            f"on_unexpected_exit error: {err}", exc_info=True
-                        )
+                        self.logger.error(f"on_unexpected_exit error: {err}", exc_info=True)
                 # Leases and subscriptions survive; re-open transports (I10).
                 if any(self._refcounts.values()):
                     self._schedule_recover()
@@ -492,12 +482,15 @@ class ZenEventReceiver:
         for transport in list(self._endpoints):
             async with self._locks[transport]:
                 await self._close_endpoint(transport)
-        if self._stopping:
+        # Re-read via method: close() may set _stopping during the awaits above.
+        if self._stop_requested():
             return
 
         delay = 0.5
         max_delay = 30.0
-        while not self._stopping:
+        while True:
+            if self._stop_requested():
+                return
             if not any(self._refcounts.values()):
                 return
 
@@ -517,7 +510,7 @@ class ZenEventReceiver:
                         exc_info=True,
                     )
 
-            if self._stopping:
+            if self._stop_requested():
                 return
             if not any(self._refcounts.values()):
                 return
@@ -531,14 +524,11 @@ class ZenEventReceiver:
                 except asyncio.CancelledError:
                     raise
                 except Exception as err:
-                    self.logger.error(
-                        f"on_session_restored error: {err}", exc_info=True
-                    )
+                    self.logger.error(f"on_session_restored error: {err}", exc_info=True)
                 return
 
             self.logger.warning(
-                "Session restore incomplete (leased transports not open); "
-                "retrying in %.1fs",
+                "Session restore incomplete (leased transports not open); retrying in %.1fs",
                 delay,
             )
             try:

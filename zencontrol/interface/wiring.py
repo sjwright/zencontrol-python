@@ -35,9 +35,7 @@ class CommandPlane(Protocol):
         port: int | None = None,
     ) -> bytes | None: ...
 
-    async def tpi_event_emit(
-        self, controller: ZenController, mode: ZenEventMode | None = None
-    ) -> bool: ...
+    async def tpi_event_emit(self, controller: ZenController, mode: ZenEventMode | None = None) -> bool: ...
 
 
 @dataclass
@@ -118,9 +116,7 @@ class ZenEventWiring:
                 controller.name,
                 reason,
             )
-            task = asyncio.create_task(
-                self._handle_subscription_lost(controller, reason)
-            )
+            task = asyncio.create_task(self._handle_subscription_lost(controller, reason))
             self._lost_tasks.add(task)
             task.add_done_callback(self._lost_tasks.discard)
 
@@ -177,15 +173,11 @@ class ZenEventWiring:
                 ),
             )
         except Exception as err:
-            self.logger.debug(
-                "Detach: failed to disable events on %s: %s", name, err
-            )
+            self.logger.debug("Detach: failed to disable events on %s: %s", name, err)
         await binding.lease.release()
         binding.subscription.close()
 
-    async def _handle_subscription_lost(
-        self, controller: ZenController, reason: str
-    ) -> None:
+    async def _handle_subscription_lost(self, controller: ZenController, reason: str) -> None:
         """Release lease/binding after the receiver drops a subscription."""
         await self.detach(controller)
         if not callable(self.on_lost):
@@ -229,22 +221,15 @@ class ZenEventWiring:
             except Exception as err:
                 self.logger.error(f"on_resync error: {err}", exc_info=True)
 
-    async def _program(
-        self, controller: ZenController, lease: Lease, mode: ZenEventMode
-    ) -> None:
+    async def _program(self, controller: ZenController, lease: Lease, mode: ZenEventMode) -> None:
         if mode.transport is Transport.UNICAST:
             advertise = lease.advertise
             if advertise is None:
                 raise RuntimeError(
-                    f"Cannot program unicast events for {controller.name}: "
-                    "no advertise address (unicast endpoint not open)"
+                    f"Cannot program unicast events for {controller.name}: no advertise address (unicast endpoint not open)"
                 )
             ip, port = advertise
-            await self._commands.set_tpi_event_unicast_address(
-                controller, ipaddr=ip, port=port
-            )
+            await self._commands.set_tpi_event_unicast_address(controller, ipaddr=ip, port=port)
         else:
-            await self._commands.set_tpi_event_unicast_address(
-                controller, ipaddr=None, port=None
-            )
+            await self._commands.set_tpi_event_unicast_address(controller, ipaddr=None, port=None)
         await self._commands.tpi_event_emit(controller, mode)

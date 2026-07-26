@@ -6,8 +6,8 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from helpers_endpoints import fake_endpoint_factory
+
 from zencontrol.api.event_router import EventHealth, ZenEventReceiver
 from zencontrol.api.types import Transport, ZenEventMode
 from zencontrol.interface.interface import ZenControl
@@ -106,9 +106,7 @@ async def test_attach_once_survives_forced_endpoint_death() -> None:
     zen.commands.set_tpi_event_unicast_address = AsyncMock()
     zen.commands.tpi_event_emit = AsyncMock(return_value=True)
 
-    zen.add_controller(
-        id=1, name="ctrl-a", label="A", host="127.0.0.1", mac="02:00:00:00:00:01"
-    )
+    zen.add_controller(id=1, name="ctrl-a", label="A", host="127.0.0.1", mac="02:00:00:00:00:01")
     on_resync = AsyncMock()
     await zen.start()
     assert zen.session.wiring is not None
@@ -157,13 +155,7 @@ def _frame(
     host: str = "127.0.0.1",
 ) -> tuple[bytes, tuple[str, int]]:
     payload = b"\x01"
-    body = (
-        bytes([0x5A, 0x43])
-        + mac
-        + (64).to_bytes(2, "big")
-        + bytes([0x00, len(payload)])
-        + payload
-    )
+    body = bytes([0x5A, 0x43]) + mac + (64).to_bytes(2, "big") + bytes([0x00, len(payload)]) + payload
     return body + bytes([_xor(body)]), (host, 1)
 
 
@@ -175,9 +167,7 @@ async def test_host_only_binding_learns_mac_and_persists() -> None:
     zen.commands.set_tpi_event_unicast_address = AsyncMock()
     zen.commands.tpi_event_emit = AsyncMock(return_value=True)
 
-    ctrl = zen.add_controller(
-        id=1, name="pending", label="Pending", host="127.0.0.1", mac=None
-    )
+    ctrl = zen.add_controller(id=1, name="pending", label="Pending", host="127.0.0.1", mac=None)
     assert ctrl.mac is None
     assert ctrl.mac_bytes is None
 

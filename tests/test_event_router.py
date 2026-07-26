@@ -58,9 +58,7 @@ async def test_provisional_promotes_on_first_packet() -> None:
     async def handler(ev: object) -> None:
         seen.append(ev)
 
-    sub = receiver.subscribe(
-        handler, host="192.168.1.50", on_identified=on_identified
-    )
+    sub = receiver.subscribe(handler, host="192.168.1.50", on_identified=on_identified)
     assert sub.mac is None
     assert sub.event_health is EventHealth.IDENTIFYING
 
@@ -188,9 +186,7 @@ async def test_promotion_conflict_fails_provisional() -> None:
     # Different host so both can exist; promote will conflict if MAC_A arrives
     # on the provisional's host — but MAC lookup wins first, so use a race via
     # direct _promote after resolving to provisional with a colliding MAC.
-    sub = receiver.subscribe(
-        prov_handler, host="192.168.1.60", on_lost=on_lost
-    )
+    sub = receiver.subscribe(prov_handler, host="192.168.1.60", on_lost=on_lost)
     ok = await receiver._promote(sub, MAC_A)
     assert ok is False
     assert sub.event_health is EventHealth.DETACHED
@@ -216,9 +212,7 @@ async def test_discovery_identity_only_no_label() -> None:
     assert receiver.identities.discovered == discovered
 
     # Second packet for same MAC is ignored
-    await receiver.handle(
-        _event(mac=MAC_B, host="192.168.1.70", payload=b"\x02", received_at=1.0)
-    )
+    await receiver.handle(_event(mac=MAC_B, host="192.168.1.70", payload=b"\x02", received_at=1.0))
     assert len(discovered) == 1
 
 
@@ -276,9 +270,7 @@ async def test_level_change_v2_routed() -> None:
         seen.append(ev)
 
     receiver.subscribe(handler, mac=MAC_A)
-    await receiver.handle(
-        _event(code=0x0B, target=3, payload=b"\xFE\x10")
-    )
+    await receiver.handle(_event(code=0x0B, target=3, payload=b"\xfe\x10"))
     assert seen == [LevelChangeV2(target=3, current=0xFE, level=0x10)]
 
 

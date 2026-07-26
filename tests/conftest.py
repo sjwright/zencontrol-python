@@ -173,9 +173,7 @@ async def live_sim() -> LiveSimulator:
     )
     protocol.set_controllers([controller])
 
-    live = LiveSimulator(
-        world=world, sim=sim, commands=protocol, controller=controller
-    )
+    live = LiveSimulator(world=world, sim=sim, commands=protocol, controller=controller)
     try:
         yield live
     finally:
@@ -188,9 +186,7 @@ async def live_zen(live_sim: LiveSimulator):
     """ZenControl high-level client pointed at the running simulator."""
     from zencontrol import ZenControl
 
-    async with ZenControl(
-        unicast=True, listen_ip="127.0.0.1", listen_port=0
-    ) as zen:
+    async with ZenControl(unicast=True, listen_ip="127.0.0.1", listen_port=0) as zen:
         zen.add_controller(
             id=1,
             name="sim",

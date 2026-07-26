@@ -36,9 +36,7 @@ class ControllerDiscovery:
     def __init__(self, host: DiscoveryHost) -> None:
         self._host = host
 
-    async def enrich_discovered(
-        self, discovered: DiscoveredController
-    ) -> DiscoveredController:
+    async def enrich_discovered(self, discovered: DiscoveredController) -> DiscoveredController:
         """Probe ``QUERY_CONTROLLER_LABEL`` over the command plane and store the result.
 
         Discovery on the identity log is host/mac only. Call this (or

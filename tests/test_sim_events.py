@@ -34,10 +34,7 @@ async def test_scene_and_colour_events_via_protocol(live_sim):
     tc = ZenColour(type=ZenColourType.TC, kelvin=3500)
     assert await p.dali_colour(live_sim.ecg(0), tc) is True
     await wait_until(
-        lambda: any(
-            n == 0 and c is not None and getattr(c, "kelvin", None) == 3500
-            for n, c in colours
-        ),
+        lambda: any(n == 0 and c is not None and getattr(c, "kelvin", None) == 3500 for n, c in colours),
         message="expected colour-change event for ECG 0 → 3500K",
     )
 
@@ -170,10 +167,7 @@ async def test_absolute_input_inject(live_sim):
 
     live_sim.sim.inject_absolute_input(13, 0, 0xABCD)
     await wait_until(
-        lambda: any(
-            ecd == 13 and inst == 0 and payload == bytes([0, 0xAB, 0xCD])
-            for ecd, inst, payload in events
-        ),
+        lambda: any(ecd == 13 and inst == 0 and payload == bytes([0, 0xAB, 0xCD]) for ecd, inst, payload in events),
         message="expected absolute-input inject event for ECD 13",
     )
     assert live_sim.world.instance(13, 0).value == 0xABCD
@@ -217,10 +211,7 @@ async def test_inject_level_scene_colour_profile_events(live_sim):
         lambda: (
             any(n == 1 and lv == 77 for n, lv in levels)
             and any(n == 0 and s == 1 for n, s in scenes)
-            and any(
-                n == 3 and c is not None and getattr(c, "x", None) == 1111
-                for n, c in colours
-            )
+            and any(n == 3 and c is not None and getattr(c, "x", None) == 1111 for n, c in colours)
             and 3 in profiles
         ),
         message="expected injected level/scene/colour/profile events",

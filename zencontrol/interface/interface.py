@@ -2,18 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Self, cast
+from typing import Any, Self
 
 from ..api import (
     ZenAddress,
-    ZenAddressType,
     ZenInstanceType,
 )
 from ..api import ZenController as SuperZenController
-from ..api.event_decode import ZenDecodedEvent
-from ..api.models import DiscoveredController
-from ..api.event_router import EventHealth, ZenEventReceiver
 from ..api.commands import ZenCommandClient
+from ..api.event_decode import ZenDecodedEvent
+from ..api.event_router import EventHealth, ZenEventReceiver
+from ..api.models import DiscoveredController
 from ..api.types import Const, Transport, ZenEventMode
 from .context import ControllerRuntimeStatus, EntityContext, ZenCallbacks
 from .discovery import ControllerDiscovery
@@ -39,13 +38,14 @@ High-level interface: ZenControl composition root.
 
 
 class ZenControl:
-    def __init__(self,
-                 logger: logging.Logger | None = None,
-                 print_traffic: bool = False,
-                 unicast: bool = False,
-                 listen_ip: str | None = None,
-                 listen_port: int | None = None,
-                 ):
+    def __init__(
+        self,
+        logger: logging.Logger | None = None,
+        print_traffic: bool = False,
+        unicast: bool = False,
+        listen_ip: str | None = None,
+        listen_port: int | None = None,
+    ):
         self.logger = logger or logging.getLogger(__name__)
         # Preferred TPI event emit transport (not a socket bind).
         self.unicast = unicast
@@ -85,7 +85,7 @@ class ZenControl:
         return self._session
 
     @property
-    def event_task(self):
+    def event_task(self) -> asyncio.Task[None] | None:
         return self._session.event_task
 
     def is_event_monitoring_active(self) -> bool:
@@ -160,25 +160,23 @@ class ZenControl:
         try:
             await callback(discovered)
         except Exception as err:
-            self.logger.error(
-                "controller_discovered callback error: %s", err, exc_info=err
-            )
+            self.logger.error("controller_discovered callback error: %s", err, exc_info=err)
 
-    async def _notify_controller_identified(
-        self, controller: SuperZenController, mac: str
-    ) -> None:
+    async def _notify_controller_identified(self, controller: SuperZenController, mac: str) -> None:
         callback = self.context.callbacks.controller_identified
         if not callable(callback):
             return
         try:
             await callback(controller, mac)
         except Exception as err:
-            self.logger.error(
-                "controller_identified callback error: %s", err, exc_info=err
-            )
+            self.logger.error("controller_identified callback error: %s", err, exc_info=err)
 
-    def add_controller(self, id: int, name: str, label: str, host: str, port: int = 5108, mac: str | None = None, filtering: bool = False) -> ZenController:
-        controller = ZenController(ctx=self.context, id=id, name=name, label=label, host=host, port=port, mac=mac, filtering=filtering)
+    def add_controller(
+        self, id: int, name: str, label: str, host: str, port: int = 5108, mac: str | None = None, filtering: bool = False
+    ) -> ZenController:
+        controller = ZenController(
+            ctx=self.context, id=id, name=name, label=label, host=host, port=port, mac=mac, filtering=filtering
+        )
         self.controllers.append(controller)
         self.identities.forget(host=host, mac=mac)
         return controller
@@ -203,9 +201,7 @@ class ZenControl:
         return ZenEventMode(
             enabled=True,
             filtering=controller.filtering,
-            transport=(
-                Transport.UNICAST if self.unicast else Transport.MULTICAST
-            ),
+            transport=(Transport.UNICAST if self.unicast else Transport.MULTICAST),
         )
 
     async def configure_controller_events(self, controller: ZenController) -> bool:
@@ -305,9 +301,7 @@ class ZenControl:
         await self._notify_controller_status(controller, "online")
         return True
 
-    def _unicast_target_mismatch(
-        self, controller: ZenController, info: dict[str, Any]
-    ) -> bool:
+    def _unicast_target_mismatch(self, controller: ZenController, info: dict[str, Any]) -> bool:
         """True when the controller's programmed unicast target is wrong for it.
 
         Compares against that controller's binding advertise (per-``toward``).
@@ -322,9 +316,7 @@ class ZenControl:
         expected_ip, expected_port = advertise
         return info.get("port") != expected_port or info.get("ip") != expected_ip
 
-    async def _notify_controller_status(
-        self, controller: ZenController, status: ControllerRuntimeStatus
-    ) -> None:
+    async def _notify_controller_status(self, controller: ZenController, status: ControllerRuntimeStatus) -> None:
         """Notify listeners of online / starting / unreachable."""
         callback = self.callbacks.controller_status_change
         if not callable(callback):
@@ -407,9 +399,7 @@ class ZenControl:
                         motion_sensors.add(motion_sensor)
         return motion_sensors
 
-    async def get_absolute_inputs(
-        self, controller: ZenController | None = None
-    ) -> set[ZenAbsoluteInput]:
+    async def get_absolute_inputs(self, controller: ZenController | None = None) -> set[ZenAbsoluteInput]:
         """Return absolute (numerical) ECD instances (optionally for one controller)."""
         absolute_inputs: set[ZenAbsoluteInput] = set()
         controllers = [controller] if controller else self.controllers
@@ -419,9 +409,7 @@ class ZenControl:
                 instances = await self.commands.query_instances_by_address(address=address)
                 for instance in instances:
                     if instance.type == ZenInstanceType.ABSOLUTE_INPUT:
-                        absolute_input = await ZenAbsoluteInput.create(
-                            ctx=self.context, instance=instance
-                        )
+                        absolute_input = await ZenAbsoluteInput.create(ctx=self.context, instance=instance)
                         absolute_inputs.add(absolute_input)
         return absolute_inputs
 

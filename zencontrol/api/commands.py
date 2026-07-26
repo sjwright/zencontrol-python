@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import struct
 import time
@@ -23,7 +22,6 @@ from .models import (
 from .event_decode import ZenEventMask
 from .types import (
     Const,
-    Transport,
     ZenAddressType,
     ZenErrorCode,
     ZenEventMode,

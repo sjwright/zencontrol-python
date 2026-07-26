@@ -169,9 +169,7 @@ async def test_profiles_and_system_variables(live_sim):
 async def test_tpi_event_mode_and_filters(live_sim):
     p, c = live_sim.commands, live_sim.controller
 
-    assert await p.tpi_event_emit(
-        c, ZenEventMode(enabled=True, filtering=False, unicast=False, multicast=True)
-    ) is True
+    assert await p.tpi_event_emit(c, ZenEventMode(enabled=True, filtering=False, unicast=False, multicast=True)) is True
     assert await p.query_tpi_event_emit_state(c) is True
 
     await p.set_tpi_event_unicast_address(c, ipaddr="127.0.0.1", port=6970)
@@ -223,8 +221,7 @@ async def test_injected_button_and_occupancy_events(live_sim):
     live_sim.sim.inject_button_press(0, 0)
     live_sim.sim.inject_occupancy(0, 2, occupied=True)
     await wait_until(
-        lambda: any(ecd == 0 and inst == 0 for ecd, inst in buttons)
-        and any(ecd == 0 and inst == 2 for ecd, inst in occupied),
+        lambda: any(ecd == 0 and inst == 0 for ecd, inst in buttons) and any(ecd == 0 and inst == 2 for ecd, inst in occupied),
         message="expected injected button and occupancy events",
     )
 
@@ -241,10 +238,7 @@ async def test_injected_absolute_input_event(live_sim):
     await p.start_event_monitoring()
     live_sim.sim.inject_absolute_input(13, 0, 4660)
     await wait_until(
-        lambda: any(
-            ecd == 13 and inst == 0 and payload == bytes([0, 0x12, 0x34])
-            for ecd, inst, payload in events
-        ),
+        lambda: any(ecd == 13 and inst == 0 and payload == bytes([0, 0x12, 0x34]) for ecd, inst, payload in events),
         message="expected injected absolute-input event",
     )
 
@@ -258,10 +252,7 @@ async def test_query_absolute_input_instance(live_sim):
     c = live_sim.controller
     addr = ZenAddress(controller=c, type=ZenAddressType.ECD, number=13)
     instances = await p.query_instances_by_address(address=addr)
-    assert any(
-        inst.number == 0 and inst.type == ZenInstanceType.ABSOLUTE_INPUT
-        for inst in instances
-    )
+    assert any(inst.number == 0 and inst.type == ZenInstanceType.ABSOLUTE_INPUT for inst in instances)
 
 
 @pytest.mark.asyncio
@@ -365,8 +356,7 @@ async def test_custom_fade_stop_and_auto_complete(live_sim):
     await p.dali_arc_level(addr, 0)
     assert await p.dali_custom_fade(addr, 50, 1) is True
     await wait_until(
-        lambda: live_sim.world.lights[1].level == 50
-        and not (live_sim.world.lights[1].status & 0x10),
+        lambda: live_sim.world.lights[1].level == 50 and not (live_sim.world.lights[1].status & 0x10),
         timeout=2.0,
         message="expected fade to complete at level 50",
     )
@@ -508,10 +498,7 @@ async def test_instance_ecd_labels_and_fitting_numbers(live_sim):
     assert await p.query_dali_fitting_number(addr) == "1.3"
     assert await p.query_dali_fitting_number(live_sim.ecd(0)) == "1.100"
     assert await p.query_controller_fitting_number(live_sim.controller) == "1"
-    assert (
-        await p.query_dali_instance_fitting_number(live_sim.instance(4, 2))
-        == "1.104.2"
-    )
+    assert await p.query_dali_instance_fitting_number(live_sim.instance(4, 2)) == "1.104.2"
     groups = await p.query_group_membership_by_address(addr)
     assert groups == [] or groups is None or list(groups) == []
 

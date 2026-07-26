@@ -7,14 +7,14 @@ import socket
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
-
 from helpers_endpoints import fake_endpoint_factory
+
 from zencontrol import ZenController
-from zencontrol.interface import EntityContext
 from zencontrol.api.commands import ZenCommandClient
 from zencontrol.api.event_router import ZenEventReceiver
 from zencontrol.api.types import Transport
 from zencontrol.exceptions import ZenTimeoutError
+from zencontrol.interface import EntityContext
 from zencontrol.io.command import (
     ClientConst,
     Request,
@@ -118,34 +118,21 @@ async def test_multicast_endpoint_joins_before_bind_and_drops_on_close() -> None
     # First setsockopt should be SO_REUSEADDR (before bind); ADD_MEMBERSHIP after bind
     first_opt = fake_sock.setsockopt.call_args_list[0].args[:2]
     assert first_opt == (socket.SOL_SOCKET, socket.SO_REUSEADDR)
-    assert fake_sock.bind.call_args_list[0] == call(
-        ("0.0.0.0", EventConst.MULTICAST_PORT)
-    )
-    add_call = next(
-        c
-        for c in fake_sock.setsockopt.call_args_list
-        if c.args[:2] == (socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP)
-    )
+    assert fake_sock.bind.call_args_list[0] == call(("0.0.0.0", EventConst.MULTICAST_PORT))
+    add_call = next(c for c in fake_sock.setsockopt.call_args_list if c.args[:2] == (socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP))
     assert add_call.args[2] == endpoint._mreq
-    bind_pos = next(
-        i for i, (name, *_) in enumerate(fake_sock.method_calls) if name == "bind"
-    )
+    bind_pos = next(i for i, (name, *_) in enumerate(fake_sock.method_calls) if name == "bind")
     add_pos = next(
         i
         for i, (name, args, _) in enumerate(fake_sock.method_calls)
-        if name == "setsockopt"
-        and args[:2] == (socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP)
+        if name == "setsockopt" and args[:2] == (socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP)
     )
     assert bind_pos < add_pos
 
     joined_mreq = add_call.args[2]
     await endpoint.close()
 
-    drop_calls = [
-        c
-        for c in fake_sock.setsockopt.call_args_list
-        if c.args[:2] == (socket.IPPROTO_IP, socket.IP_DROP_MEMBERSHIP)
-    ]
+    drop_calls = [c for c in fake_sock.setsockopt.call_args_list if c.args[:2] == (socket.IPPROTO_IP, socket.IP_DROP_MEMBERSHIP)]
     assert len(drop_calls) == 1
     assert drop_calls[0].args[2] == joined_mreq
     fake_transport.close.assert_called_once()
@@ -172,9 +159,7 @@ def test_resolve_host_sync_skips_dns_for_ipv4_literal() -> None:
 async def test_resolve_host_runs_dns_in_executor() -> None:
     from zencontrol.utils import resolve_host
 
-    with patch(
-        "zencontrol.utils.socket.gethostbyname", return_value="10.0.0.1"
-    ) as dns:
+    with patch("zencontrol.utils.socket.gethostbyname", return_value="10.0.0.1") as dns:
         assert await resolve_host("controller.local") == "10.0.0.1"
         dns.assert_called_once_with("controller.local")
 
@@ -238,9 +223,7 @@ async def test_send_packet_timeout_invalidates_client_and_refreshes_ip() -> None
 
     fake_client = MagicMock()
     fake_client.is_connected.return_value = True
-    fake_client.send_request_with_retries = AsyncMock(
-        return_value=Response(ResponseType.TIMEOUT)
-    )
+    fake_client.send_request_with_retries = AsyncMock(return_value=Response(ResponseType.TIMEOUT))
     fake_client.close = AsyncMock()
     protocol.set_client(controller, fake_client)
     controller.set_resolved_ip("192.0.2.10")

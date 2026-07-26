@@ -294,5 +294,3 @@ def decode(event: ZenEvent) -> ZenDecodedEvent | None:
                 current=payload[0],
                 level=payload[1],
             )
-
-    return None

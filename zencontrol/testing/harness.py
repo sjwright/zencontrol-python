@@ -60,12 +60,8 @@ class ZenTestClient:
         self.context = EntityContext(commands=self.commands, logger=self.commands.logger)
         self.event_receiver = ZenEventReceiver(
             logger=self.commands.logger,
-            unicast_listen_ip=(listen_ip if listen_ip else "0.0.0.0")
-            if unicast
-            else "0.0.0.0",
-            unicast_port=(listen_port if listen_port is not None else 0)
-            if unicast
-            else 0,
+            unicast_listen_ip=(listen_ip if listen_ip else "0.0.0.0") if unicast else "0.0.0.0",
+            unicast_port=(listen_port if listen_port is not None else 0) if unicast else 0,
         )
         self._wiring: ZenEventWiring | None = None
 
@@ -124,9 +120,7 @@ class ZenTestClient:
         return ZenEventMode(
             enabled=True,
             filtering=controller.filtering,
-            transport=(
-                Transport.UNICAST if self.unicast else Transport.MULTICAST
-            ),
+            transport=(Transport.UNICAST if self.unicast else Transport.MULTICAST),
         )
 
     async def start_event_monitoring(self) -> None:
@@ -163,24 +157,16 @@ class ZenTestClient:
         await self.commands.aclose()
         await self.event_receiver.close()
 
-    def _ecd_address(
-        self, controller: ZenController, target: int
-    ) -> ZenAddress | None:
+    def _ecd_address(self, controller: ZenController, target: int) -> ZenAddress | None:
         number = target - 64
         if not 0 <= number <= 63:
             self.commands.logger.error(f"Invalid ECD event target: {target}")
             return None
-        return ZenAddress(
-            controller=controller, type=ZenAddressType.ECD, number=number
-        )
+        return ZenAddress(controller=controller, type=ZenAddressType.ECD, number=number)
 
-    def _ecg_or_group(
-        self, controller: ZenController, target: int
-    ) -> ZenAddress | None:
+    def _ecg_or_group(self, controller: ZenController, target: int) -> ZenAddress | None:
         if target <= 63:
-            return ZenAddress(
-                controller=controller, type=ZenAddressType.ECG, number=target
-            )
+            return ZenAddress(controller=controller, type=ZenAddressType.ECG, number=target)
         if 64 <= target <= 79:
             return ZenAddress(
                 controller=controller,
@@ -198,9 +184,7 @@ class ZenTestClient:
         except Exception as err:
             self.commands.logger.error(f"Event callback error: {err}", exc_info=err)
 
-    async def _on_controller_event(
-        self, controller: ZenController, ev: ZenDecodedEvent
-    ) -> None:
+    async def _on_controller_event(self, controller: ZenController, ev: ZenDecodedEvent) -> None:
         match ev:
             case ButtonPress(target, instance_num):
                 address = self._ecd_address(controller, target)
@@ -244,9 +228,7 @@ class ZenTestClient:
                 await self._call(
                     self.absolute_input_callback,
                     instance=instance,
-                    payload=bytes(
-                        [instance_num, (value >> 8) & 0xFF, value & 0xFF]
-                    ),
+                    payload=bytes([instance_num, (value >> 8) & 0xFF, value & 0xFF]),
                 )
 
             case LevelChangeV2(target, current, level):
@@ -327,7 +309,7 @@ class ZenTestClient:
                     controller=controller,
                     target=target,
                     value=value,
-                    payload=bytes(),
+                    payload=b"",
                 )
 
             case _:

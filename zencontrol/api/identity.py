@@ -41,9 +41,7 @@ class IdentityLog:
         """Identities with a packet at or after ``since`` (discover window filter)."""
         return [d for d in self._entries.values() if d.last_seen >= since]
 
-    def get(
-        self, *, host: str | None = None, mac: bytes | str | None = None
-    ) -> DiscoveredController | None:
+    def get(self, *, host: str | None = None, mac: bytes | str | None = None) -> DiscoveredController | None:
         if mac is not None:
             return self._entries.get(mac_key(mac))
         if host is not None:
@@ -52,17 +50,12 @@ class IdentityLog:
                     return d
         return None
 
-    def forget(
-        self, *, host: str | None = None, mac: bytes | str | None = None
-    ) -> None:
+    def forget(self, *, host: str | None = None, mac: bytes | str | None = None) -> None:
         key = mac_key(mac) if mac is not None else None
         self._entries = {
             k: d
             for k, d in self._entries.items()
-            if not (
-                (host is not None and d.host == host)
-                or (key is not None and k == key)
-            )
+            if not ((host is not None and d.host == host) or (key is not None and k == key))
         }
 
     def replace(self, discovered: DiscoveredController) -> None:

@@ -86,9 +86,7 @@ class ZenEventMode:
             m = bool(multicast) if multicast is not None else not u
             if u and m:
                 raise ValueError("a controller emits on exactly one transport (I3)")
-            object.__setattr__(
-                self, "transport", Transport.UNICAST if u else Transport.MULTICAST
-            )
+            object.__setattr__(self, "transport", Transport.UNICAST if u else Transport.MULTICAST)
         else:
             object.__setattr__(self, "transport", Transport.MULTICAST)
 
@@ -118,9 +116,7 @@ class ZenEventMode:
         return cls(
             enabled=(mode_flag & 0x01) != 0,
             filtering=(mode_flag & 0x02) != 0,
-            transport=(
-                Transport.UNICAST if (mode_flag & 0x40) != 0 else Transport.MULTICAST
-            ),
+            transport=(Transport.UNICAST if (mode_flag & 0x40) != 0 else Transport.MULTICAST),
         )
 
 

@@ -225,12 +225,16 @@ class ZenClient:
         timeout: float | None = None,
         retries: int = ClientConst.DEFAULT_RETRIES,
     ) -> Response:
-        if self._closed: raise RuntimeError("Client is closed")
-        if self._transport is None: raise RuntimeError("Transport is none?!")
+        if self._closed:
+            raise RuntimeError("Client is closed")
+        if self._transport is None:
+            raise RuntimeError("Transport is none?!")
 
-        if timeout is None: timeout = ClientConst.DEFAULT_TIMEOUT
+        if timeout is None:
+            timeout = ClientConst.DEFAULT_TIMEOUT
         timeout = max(ClientConst.MIN_TIMEOUT, min(timeout, ClientConst.MAX_TIMEOUT))
-        if retries < 0: retries = 0
+        if retries < 0:
+            retries = 0
 
         loop = asyncio.get_running_loop()
         fut: asyncio.Future[Response]
@@ -243,8 +247,7 @@ class ZenClient:
             req.seq = self._alloc_seq()
             if req.seq in self._pending:
                 raise RuntimeError(
-                    f"sequence {req.seq} already pending, which shouldn't be possible "
-                    "because we just allocated it"
+                    f"sequence {req.seq} already pending, which shouldn't be possible because we just allocated it"
                 )
             self._pending[req.seq] = (fut, req)
             wire = req.to_bytes(checksum=self._checksum)
@@ -288,11 +291,14 @@ class ZenClient:
                 and response.data[0] == ClientConst.QUEUE_FAILURE
                 and attempt < queue_retries
             ):
-                delay = ClientConst.QUEUE_FAILURE_BASE_DELAY * (2 ** attempt)
+                delay = ClientConst.QUEUE_FAILURE_BASE_DELAY * (2**attempt)
                 self.logger.debug(
                     "QUEUE_FAILURE from %s:%s, retry %d/%d in %.0fms",
-                    self.server[0], self.server[1],
-                    attempt + 1, queue_retries, delay * 1000,
+                    self.server[0],
+                    self.server[1],
+                    attempt + 1,
+                    queue_retries,
+                    delay * 1000,
                 )
                 await asyncio.sleep(delay)
                 continue
@@ -393,11 +399,7 @@ class ZenClient:
     
     def is_connected(self) -> bool:
         """Check if client has a usable datagram transport."""
-        return (
-            not self._closed
-            and self._transport is not None
-            and not self._transport.is_closing()
-        )
+        return not self._closed and self._transport is not None and not self._transport.is_closing()
 
     async def close(self) -> None:
         """Close the client"""

@@ -6,8 +6,8 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from helpers_endpoints import fake_endpoint_factory
+
 from zencontrol.api.types import Transport, ZenEventMode
 from zencontrol.interface.interface import ZenControl
 

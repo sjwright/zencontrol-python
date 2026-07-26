@@ -6,15 +6,14 @@ import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
-
 from helpers_endpoints import fake_endpoint_factory
+
 from zencontrol import ZenControl, ZenController
-from zencontrol.interface import EntityContext
 from zencontrol.api.commands import ZenCommandClient
 from zencontrol.api.event_router import ZenEventReceiver
-from zencontrol.api.models import mac_key
-from zencontrol.api.models import DiscoveredController
+from zencontrol.api.models import DiscoveredController, mac_key
 from zencontrol.exceptions import ZenTimeoutError
+from zencontrol.interface import EntityContext
 from zencontrol.io.event import ZenEvent
 
 
@@ -32,13 +31,7 @@ def _frame(
     code: int = 0x00,
     payload: bytes = b"\x01",
 ) -> bytes:
-    body = (
-        bytes([0x5A, 0x43])
-        + mac
-        + target.to_bytes(2, "big")
-        + bytes([code, len(payload)])
-        + payload
-    )
+    body = bytes([0x5A, 0x43]) + mac + target.to_bytes(2, "big") + bytes([code, len(payload)]) + payload
     return body + bytes([_xor(body)])
 
 
@@ -78,9 +71,7 @@ async def test_unknown_multicast_records_identity_without_query() -> None:
 
     commands, receiver = _receiver_with_discovered_callback(on_discovered)
 
-    with patch.object(
-        commands, "query_controller_label", new_callable=AsyncMock, return_value="Kitchen"
-    ) as query:
+    with patch.object(commands, "query_controller_label", new_callable=AsyncMock, return_value="Kitchen") as query:
         await receiver.handle(_event())
 
     query.assert_not_awaited()
@@ -96,15 +87,11 @@ async def test_unknown_multicast_records_identity_without_query() -> None:
 @pytest.mark.asyncio
 async def test_second_packet_from_same_mac_refreshes_last_seen() -> None:
     commands, receiver = _receiver_with_discovered_callback()
-    with patch.object(
-        commands, "query_controller_label", new_callable=AsyncMock, return_value="Kitchen"
-    ) as query:
+    with patch.object(commands, "query_controller_label", new_callable=AsyncMock, return_value="Kitchen") as query:
         await receiver.handle(_event(received_at=1.0))
         first = receiver.identities.discovered[0]
         await receiver.handle(_event(ip="192.168.1.99", received_at=10.0))
-        await receiver.handle(
-            _event(ip="192.168.1.50", mac=b"\xaa\xbb\xcc\xdd\xee\xff", received_at=2.0)
-        )
+        await receiver.handle(_event(ip="192.168.1.50", mac=b"\xaa\xbb\xcc\xdd\xee\xff", received_at=2.0))
 
     query.assert_not_awaited()
     # One entry per MAC (same MAC from different IP still one; new MAC is second)
@@ -200,9 +187,7 @@ async def test_registered_controller_is_not_discovered() -> None:
 
     receiver.subscribe(handler, host=ctrl.ip, mac=ctrl.mac_bytes)
 
-    with patch.object(
-        commands, "query_controller_label", new_callable=AsyncMock, return_value="Nope"
-    ) as query:
+    with patch.object(commands, "query_controller_label", new_callable=AsyncMock, return_value="Nope") as query:
         await receiver.handle(_event())
 
     query.assert_not_awaited()
@@ -261,9 +246,7 @@ async def test_new_controller_discovered_while_one_is_registered() -> None:
 
     receiver.subscribe(_ignore, host=known.ip, mac=known.mac_bytes)
 
-    with patch.object(
-        commands, "query_controller_label", new_callable=AsyncMock, return_value="Annex"
-    ) as query:
+    with patch.object(commands, "query_controller_label", new_callable=AsyncMock, return_value="Annex") as query:
         await receiver.handle(_event())
 
     query.assert_not_awaited()
@@ -290,9 +273,7 @@ async def test_enrich_discovered_queries_label_via_temp_name() -> None:
         new_callable=AsyncMock,
         return_value="Kitchen",
     ) as query:
-        with patch.object(
-            zen.commands, "_invalidate_client", new_callable=AsyncMock
-        ) as invalidate:
+        with patch.object(zen.commands, "_invalidate_client", new_callable=AsyncMock) as invalidate:
             enriched = await zen.enrich_discovered(discovered)
 
     query.assert_awaited_once()

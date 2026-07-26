@@ -7,8 +7,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-
 from helpers_endpoints import fake_endpoint_factory
+
 from zencontrol.api.types import ZenEventMode
 from zencontrol.interface.interface import ZenControl
 

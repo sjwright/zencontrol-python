@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import time
 from collections.abc import Coroutine
 from typing import Any, Self, cast
@@ -15,7 +14,6 @@ from ..api import (
     ZenColour,
     ZenColourType,
     ZenInstance,
-    ZenInstanceType,
 )
 from ..api import ZenController as SuperZenController
 from ..api.commands import ZenCommandClient
@@ -126,9 +124,7 @@ def _or_scene_label(label: str | None, scene: int) -> str:
     return label if label is not None else f"Scene {scene}"
 
 
-async def _group_scene_labels(
-    commands: ZenCommandClient, address: ZenAddress
-) -> list[str | None]:
+async def _group_scene_labels(commands: ZenCommandClient, address: ZenAddress) -> list[str | None]:
     """Scene labels for a group, with generic names when the controller has none."""
     scenes: list[str | None] = [None] * Const.MAX_SCENE
     for scene in await commands.query_scene_numbers_for_group(address):
@@ -458,9 +454,7 @@ class ZenLight:
     async def interview(self) -> bool:
         cgstatus = await self.commands.dali_query_control_gear_status(self.address)
         if cgstatus:
-            self.label = _or_device_label(
-                await self.commands.query_dali_device_label(self.address), self.address
-            )
+            self.label = _or_device_label(await self.commands.query_dali_device_label(self.address), self.address)
             self.serial = await self.commands.query_dali_serial(self.address)
             self.cgtype = await self.commands.dali_query_cg_type(self.address) or []
             
@@ -562,14 +556,15 @@ class ZenLight:
         
         self._refresh_timer = self.ctx.track_task(delayed_refresh())
 
-    async def _event_received(self,
-            level: int|None = 255,
-            colour: ZenColour | None = None,
-            scene: int | None = None,
-            active: bool | None = None,
-            cascaded_from: ZenGroup | None = None,
-            verifying: bool = False
-        ) -> None:
+    async def _event_received(
+        self,
+        level: int | None = 255,
+        colour: ZenColour | None = None,
+        scene: int | None = None,
+        active: bool | None = None,
+        cascaded_from: ZenGroup | None = None,
+        verifying: bool = False,
+    ) -> None:
         # Called when a query command is issued or an event is received
         level_changed = False
         colour_changed = False
@@ -640,29 +635,36 @@ class ZenLight:
         if type(self) is ZenGroup:
             if level_changed or colour_changed or scene_changed:
                 if callable(self.ctx.callbacks.group_change):
-                    await self.ctx.callbacks.group_change(group=self,
-                                    level=self.level if level_changed else None,
-                                    colour=self.colour if colour_changed else None,
-                                    scene=self.scene if scene_changed else None)
+                    await self.ctx.callbacks.group_change(
+                        group=self,
+                        level=self.level if level_changed else None,
+                        colour=self.colour if colour_changed else None,
+                        scene=self.scene if scene_changed else None,
+                    )
         elif type(self) is ZenLight:
             if level_changed or colour_changed or scene_changed:
                 if callable(self.ctx.callbacks.light_change):
-                    await self.ctx.callbacks.light_change(light=self,
-                                    level=self.level if level_changed else None,
-                                    colour=self.colour if colour_changed else None,
-                                    scene=self.scene if scene_changed else None)
-    def supports_colour(self, colour: ZenColourType|ZenColour) -> bool:
+                    await self.ctx.callbacks.light_change(
+                        light=self,
+                        level=self.level if level_changed else None,
+                        colour=self.colour if colour_changed else None,
+                        scene=self.scene if scene_changed else None,
+                    )
+
+    def supports_colour(self, colour: ZenColourType | ZenColour) -> bool:
         if type(colour) is ZenColour:
             colour_type = colour.type
         elif type(colour) is ZenColourType:
             colour_type = colour
         else:
             return False
-        if (colour_type == ZenColourType.TC and self.features.get("temperature")) or \
-            (colour_type == ZenColourType.RGBWAF and self.features.get("RGB")) or \
-            (colour_type == ZenColourType.RGBWAF and self.features.get("RGBW")) or \
-            (colour_type == ZenColourType.RGBWAF and self.features.get("RGBWW")) or \
-            (colour_type == ZenColourType.XY and self.features.get("XY")):
+        if (
+            (colour_type == ZenColourType.TC and self.features.get("temperature"))
+            or (colour_type == ZenColourType.RGBWAF and self.features.get("RGB"))
+            or (colour_type == ZenColourType.RGBWAF and self.features.get("RGBW"))
+            or (colour_type == ZenColourType.RGBWAF and self.features.get("RGBWW"))
+            or (colour_type == ZenColourType.XY and self.features.get("XY"))
+        ):
             return True
         return False
     # -----------------------------------------------------------------------------------------
@@ -778,9 +780,7 @@ class ZenGroup(ZenLight):
         except Exception:
             return False
     async def interview(self) -> bool:
-        self.label = _or_group_label(
-            await self.commands.query_group_label(self.address), self.address.number
-        )
+        self.label = _or_group_label(await self.commands.query_group_label(self.address), self.address.number)
         self._scene_labels = await _group_scene_labels(self.commands, self.address)
         # Add to controller's set of groups
         _registered(self.address.controller).groups.add(self)
@@ -816,8 +816,8 @@ class ZenGroup(ZenLight):
         self.colour = None
         self.scene = None
         if callable(self.ctx.callbacks.group_change):
-            await self.ctx.callbacks.group_change(group=self,
-                                    discoordinated=True)
+            await self.ctx.callbacks.group_change(group=self, discoordinated=True)
+
     def contains_dimmable_lights(self) -> bool:
         # Is there at least one ZenLight in self.lights that supports dimming?
         for light in self.lights:
@@ -899,15 +899,12 @@ class ZenButton:
         addr = inst.address
         ctrl = _registered(addr.controller)
         if addr.label is None:
-            addr.label = _or_device_label(
-                await self.commands.query_dali_device_label(addr), addr
-            )
-        if addr.serial is None: addr.serial = cast(str | None, await self.commands.query_dali_serial(addr))
+            addr.label = _or_device_label(await self.commands.query_dali_device_label(addr), addr)
+        if addr.serial is None:
+            addr.serial = cast(str | None, await self.commands.query_dali_serial(addr))
         self.label = addr.label
         self.serial = addr.serial
-        self.instance_label = _or_instance_label(
-            await self.commands.query_dali_instance_label(inst), inst
-        )
+        self.instance_label = _or_instance_label(await self.commands.query_dali_instance_label(inst), inst)
         # Add to controller's set of buttons
         ctrl.buttons.add(self)
         return True
@@ -1009,16 +1006,12 @@ class ZenAbsoluteInput:
         addr = inst.address
         ctrl = _registered(addr.controller)
         if addr.label is None:
-            addr.label = _or_device_label(
-                await self.commands.query_dali_device_label(addr), addr
-            )
+            addr.label = _or_device_label(await self.commands.query_dali_device_label(addr), addr)
         if addr.serial is None:
             addr.serial = cast(str | None, await self.commands.query_dali_serial(addr))
         self.label = addr.label
         self.serial = addr.serial
-        self.instance_label = _or_instance_label(
-            await self.commands.query_dali_instance_label(inst), inst
-        )
+        self.instance_label = _or_instance_label(await self.commands.query_dali_instance_label(inst), inst)
         ctrl.absolute_inputs.add(self)
         return True
 
@@ -1034,9 +1027,7 @@ class ZenAbsoluteInput:
         changed = new_value != self._value
         self._value = new_value
         if changed and callable(self.ctx.callbacks.absolute_input_change):
-            await self.ctx.callbacks.absolute_input_change(
-                absolute_input=self, value=new_value
-            )
+            await self.ctx.callbacks.absolute_input_change(absolute_input=self, value=new_value)
 
 
 class ZenMotionSensor:
@@ -1122,12 +1113,8 @@ class ZenMotionSensor:
         occupancy_timers = await self.commands.query_occupancy_instance_timers(inst)
         if occupancy_timers is not None:
             self.serial = await self.commands.query_dali_serial(addr)
-            self.label = _or_device_label(
-                await self.commands.query_dali_device_label(addr), addr
-            )
-            self.instance_label = _or_instance_label(
-                await self.commands.query_dali_instance_label(inst), inst
-            )
+            self.label = _or_device_label(await self.commands.query_dali_device_label(addr), addr)
+            self.instance_label = _or_instance_label(await self.commands.query_dali_instance_label(inst), inst)
             self.deadtime = occupancy_timers["deadtime"]
             self.hold_time = occupancy_timers["hold"]
             self.last_detect = time.time() - occupancy_timers["last_detect"]
@@ -1288,16 +1275,16 @@ class ZenSystemVariable:
         ctrl.sysvars.add(self)
         return True
     async def _event_received(self, new_value: int | None) -> None:
-        changed = (new_value != self._value)
-        by_me = (new_value == self._future_value)
+        changed = new_value != self._value
+        by_me = new_value == self._future_value
         self._value = new_value
         self._future_value = None
         if changed:
             if callable(self.ctx.callbacks.system_variable_change):
-                await self.ctx.callbacks.system_variable_change(system_variable=self,
-                                  value=self._value,
-                                  changed=changed,
-                                  by_me=by_me)
+                await self.ctx.callbacks.system_variable_change(
+                    system_variable=self, value=self._value, changed=changed, by_me=by_me
+                )
+
     # -----------------------------------------------------------------------------------------
     # REMINDER: None of the following methods should update the internal object state directly.
     #   These methods send commands to the controller. The controller sends events back.

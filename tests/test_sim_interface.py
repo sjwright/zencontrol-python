@@ -43,11 +43,7 @@ async def test_interview_discovers_entities(live_zen):
     assert any(getattr(s, "instance_label", None) == "Motion" for s in sensors)
     assert any(getattr(b, "label", None) == "Living Room Switch" for b in buttons)
     assert any(getattr(s, "label", None) == "Porch Sensor" for s in sensors)
-    slider = next(
-        a
-        for a in absolute_inputs
-        if a.instance.address.number == 13 and a.instance.number == 0
-    )
+    slider = next(a for a in absolute_inputs if a.instance.address.number == 13 and a.instance.number == 0)
     assert slider.instance_label == "Slider"
     assert slider.value is None
 
@@ -337,11 +333,7 @@ async def test_button_and_sensor_interview_fields(live_zen):
 
     buttons = await zen.get_buttons()
     sensors = await zen.get_motion_sensors()
-    living = next(
-        b
-        for b in buttons
-        if b.label == "Living Room Switch" and b.instance_label == "On/Off"
-    )
+    living = next(b for b in buttons if b.label == "Living Room Switch" and b.instance_label == "On/Off")
     assert living.instance.number == 0
     porch = next(s for s in sensors if s.label == "Porch Sensor")
     assert porch.instance_label == "Porch Motion"

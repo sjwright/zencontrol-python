@@ -237,9 +237,7 @@ class ZenEndpoint:
         except Exception:
             try:
                 if self._mreq is not None:
-                    sock.setsockopt(
-                        socket.IPPROTO_IP, socket.IP_DROP_MEMBERSHIP, self._mreq
-                    )
+                    sock.setsockopt(socket.IPPROTO_IP, socket.IP_DROP_MEMBERSHIP, self._mreq)
             except OSError:
                 pass
             sock.close()

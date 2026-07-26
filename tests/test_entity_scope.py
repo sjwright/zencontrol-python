@@ -14,12 +14,8 @@ async def test_two_zencontrol_instances_isolate_entities() -> None:
     zen_a = ZenControl()
     zen_b = ZenControl()
 
-    ctrl_a = zen_a.add_controller(
-        id=1, name="shared", label="A", host="127.0.0.1", port=5108
-    )
-    ctrl_b = zen_b.add_controller(
-        id=1, name="shared", label="B", host="127.0.0.1", port=5108
-    )
+    ctrl_a = zen_a.add_controller(id=1, name="shared", label="A", host="127.0.0.1", port=5108)
+    ctrl_b = zen_b.add_controller(id=1, name="shared", label="B", host="127.0.0.1", port=5108)
 
     assert ctrl_a is not ctrl_b
     assert ctrl_a.label == "A"
@@ -50,9 +46,7 @@ async def test_two_zencontrol_instances_isolate_entities() -> None:
 @pytest.mark.asyncio
 async def test_same_protocol_reuses_entity_identity() -> None:
     zen = ZenControl()
-    ctrl = zen.add_controller(
-        id=1, name="ctrl", label="Ctrl", host="127.0.0.1", port=5108
-    )
+    ctrl = zen.add_controller(id=1, name="ctrl", label="Ctrl", host="127.0.0.1", port=5108)
     addr = ZenAddress(controller=ctrl, type=ZenAddressType.ECG, number=3)
     light1 = ZenLight(ctx=zen.context, address=addr)
     light2 = ZenLight(ctx=zen.context, address=addr)

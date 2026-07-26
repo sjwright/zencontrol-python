@@ -26,13 +26,7 @@ def _frame(
     code: int = 0x00,
     payload: bytes = b"\x01",
 ) -> bytes:
-    body = (
-        bytes([0x5A, 0x43])
-        + mac
-        + target.to_bytes(2, "big")
-        + bytes([code, len(payload)])
-        + payload
-    )
+    body = bytes([0x5A, 0x43]) + mac + target.to_bytes(2, "big") + bytes([code, len(payload)]) + payload
     return body + bytes([_xor(body)])
 
 

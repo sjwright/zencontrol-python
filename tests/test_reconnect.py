@@ -6,8 +6,8 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from helpers_endpoints import fake_endpoint_factory
+
 from zencontrol.api.event_router import ZenEventReceiver
 from zencontrol.api.types import Transport
 from zencontrol.interface.interface import ZenControl
@@ -194,11 +194,7 @@ async def test_recover_skips_zombie_consumer_until_bind_succeeds() -> None:
     on_resync.assert_not_awaited()
 
     for _ in range(80):
-        if (
-            zen.event_receiver.leased_transports_open()
-            and zen.is_event_monitoring_active()
-            and on_resync.await_count >= 1
-        ):
+        if zen.event_receiver.leased_transports_open() and zen.is_event_monitoring_active() and on_resync.await_count >= 1:
             break
         await asyncio.sleep(0.05)
     else:
@@ -390,9 +386,7 @@ async def test_supervisor_exits_when_unexpected_death_has_no_leases() -> None:
 
     await asyncio.wait_for(supervisor, timeout=1.0)
     assert supervisor.done()
-    cancelled_logs = [
-        e for e in errors if "cancelled unexpectedly" in e or "Event monitor task error" in e
-    ]
+    cancelled_logs = [e for e in errors if "cancelled unexpectedly" in e or "Event monitor task error" in e]
     assert len(cancelled_logs) <= 1, f"supervisor spun: {cancelled_logs}"
     assert zen.event_task is None
     await zen.aclose()
@@ -406,9 +400,7 @@ async def test_supervisor_exits_when_last_lease_releases_cleanly() -> None:
     zen.commands.set_tpi_event_unicast_address = AsyncMock()
     zen.commands.tpi_event_emit = AsyncMock(return_value=True)
 
-    ctrl = zen.add_controller(
-        id=1, name="ctrl-a", label="A", host="127.0.0.1", mac="02:00:00:00:00:01"
-    )
+    ctrl = zen.add_controller(id=1, name="ctrl-a", label="A", host="127.0.0.1", mac="02:00:00:00:00:01")
     await zen.start()
     supervisor = zen.session.supervisor_task
     assert supervisor is not None

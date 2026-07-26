@@ -73,15 +73,11 @@ class ButtonPressHandler(Protocol):
 
 
 class AbsoluteInputChangeHandler(Protocol):
-    def __call__(
-        self, *, absolute_input: ZenAbsoluteInput, value: int
-    ) -> Awaitable[None]: ...
+    def __call__(self, *, absolute_input: ZenAbsoluteInput, value: int) -> Awaitable[None]: ...
 
 
 class MotionEventHandler(Protocol):
-    def __call__(
-        self, *, sensor: ZenMotionSensor, occupied: bool
-    ) -> Awaitable[None]: ...
+    def __call__(self, *, sensor: ZenMotionSensor, occupied: bool) -> Awaitable[None]: ...
 
 
 class SystemVariableChangeHandler(Protocol):
@@ -104,9 +100,7 @@ class ControllerIdentifiedHandler(Protocol):
 
 
 class ControllerStatusChangeHandler(Protocol):
-    def __call__(
-        self, controller: ZenController, status: ControllerRuntimeStatus
-    ) -> Awaitable[None]: ...
+    def __call__(self, controller: ZenController, status: ControllerRuntimeStatus) -> Awaitable[None]: ...
 
 
 class ZenCallbacks:

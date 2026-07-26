@@ -13,9 +13,7 @@ from zencontrol.interface.interface import ZenAbsoluteInput, ZenControl, ZenCont
 
 
 def _ecd_instance(zen: ZenControl, *, number: int = 0, inst: int = 1) -> tuple[ZenController, ZenInstance]:
-    ctrl = zen.add_controller(
-        id=1, name="house", label="House", host="127.0.0.1", port=5108
-    )
+    ctrl = zen.add_controller(id=1, name="house", label="House", host="127.0.0.1", port=5108)
     addr = ZenAddress(controller=ctrl, type=ZenAddressType.ECD, number=number)
     return ctrl, ZenInstance(address=addr, type=ZenInstanceType.ABSOLUTE_INPUT, number=inst)
 
@@ -31,9 +29,7 @@ async def test_absolute_input_event_parses_16bit_value() -> None:
 
     zen.callbacks.absolute_input_change = on_change
     absolute = ZenAbsoluteInput(ctx=zen.context, instance=instance)
-    assert absolute.interview_hydrate(
-        {"serial": "1", "label": "Panel", "instance_label": "Dial"}
-    )
+    assert absolute.interview_hydrate({"serial": "1", "label": "Panel", "instance_label": "Dial"})
 
     async def _dispatch(ev: AbsoluteInput) -> None:
         await zen._on_controller_event(ctrl, ev)
@@ -65,21 +61,13 @@ async def test_absolute_input_event_ignores_short_payload() -> None:
 @pytest.mark.asyncio
 async def test_get_absolute_inputs_filters_instance_type() -> None:
     zen = ZenControl()
-    ctrl = zen.add_controller(
-        id=1, name="house", label="House", host="127.0.0.1", port=5108
-    )
+    ctrl = zen.add_controller(id=1, name="house", label="House", host="127.0.0.1", port=5108)
     addr = ZenAddress(controller=ctrl, type=ZenAddressType.ECD, number=2)
-    abs_inst = ZenInstance(
-        address=addr, type=ZenInstanceType.ABSOLUTE_INPUT, number=0
-    )
-    btn_inst = ZenInstance(
-        address=addr, type=ZenInstanceType.PUSH_BUTTON, number=1
-    )
+    abs_inst = ZenInstance(address=addr, type=ZenInstanceType.ABSOLUTE_INPUT, number=0)
+    btn_inst = ZenInstance(address=addr, type=ZenInstanceType.PUSH_BUTTON, number=1)
 
     zen._get_addresses_with_instances = AsyncMock(return_value=[addr])  # noqa: SLF001
-    zen.commands.query_instances_by_address = AsyncMock(
-        return_value=[abs_inst, btn_inst]
-    )
+    zen.commands.query_instances_by_address = AsyncMock(return_value=[abs_inst, btn_inst])
     zen.commands.query_dali_device_label = AsyncMock(return_value="Wall")
     zen.commands.query_dali_serial = AsyncMock(return_value="ABC")
     zen.commands.query_dali_instance_label = AsyncMock(return_value="Slider")
