@@ -1,7 +1,8 @@
 import asyncio
 import yaml
 from pathlib import Path
-from zencontrol import ZenProtocol, ZenController, run_with_keyboard_interrupt
+from zencontrol import ZenCommandClient, ZenController, run_with_keyboard_interrupt
+from zencontrol.interface import EntityContext
 
 async def main():
     """Test DALI device queries"""
@@ -9,9 +10,9 @@ async def main():
     config = yaml.safe_load(open(Path(__file__).resolve().parents[2] / "tests" / "config.yaml"))
     
     # Create protocol and controller
-    async with ZenProtocol(print_traffic=False) as tpi:
-        ctrl = ZenController(protocol=tpi, **config.get('zencontrol')[0])
-        tpi.set_controllers([ctrl])
+    async with ZenCommandClient(print_traffic=False) as tpi:
+        ctx = EntityContext(commands=tpi)
+        ctrl = ZenController(ctx=ctx, **config.get('zencontrol')[0])
         
         print("Testing DALI device queries...")
         print("=" * 50)
@@ -23,7 +24,9 @@ async def main():
             for address in addresses:
                 print(f"  {address.number}")
 
-                label = await tpi.query_dali_device_label(address, generic_if_none=True)
+                label = await tpi.query_dali_device_label(address)
+                if label is None:
+                    label = f"{address.controller.label} ECD {address.number}"
                 print(f"    label: {label}")
 
                 operating_mode = await tpi.query_operating_mode_by_address(address)

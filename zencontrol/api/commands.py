@@ -2,37 +2,31 @@ import asyncio
 import logging
 import struct
 import time
-from collections.abc import Awaitable, Callable, Coroutine
 from datetime import datetime as dt
-from typing import TYPE_CHECKING, Any, Literal, Self, overload
+from typing import Any, Literal, Self, overload
 
 from ..exceptions import ZenTimeoutError
-from ..io import (
+from ..io.command import (
     ClientConst,
-    EventConst,
     Request,
     RequestType,
     Response,
     ResponseType,
     ZenClient,
-    ZenEvent,
-    ZenListener,
 )
-from ..utils import local_ip_for_remote
 from .models import (
-    DEFAULT_CONTROLLER_PORT,
-    DiscoveredController,
+    ControllerRef,
     ZenAddress,
     ZenColour,
     ZenController,
     ZenInstance,
 )
+from .event_decode import ZenEventMask
 from .types import (
     Const,
+    Transport,
     ZenAddressType,
     ZenErrorCode,
-    ZenEventCode,
-    ZenEventMask,
     ZenEventMode,
     ZenInstanceType,
 )
@@ -46,97 +40,15 @@ except ImportError:
             return ""
     Fore = Style = _NoColor()  # type: ignore[assignment]
 
-if TYPE_CHECKING:
-    # Registered controllers are always interface-layer objects, so anything
-    # that hands out ZenAddress instances is typed with that class. Type-only
-    # import; importing the interface layer at runtime would be circular.
-    from ..interface.interface import ZenController as ZenInterfaceController
-
-
-def _mac_bytes_to_str(mac: bytes) -> str:
-    """Format MAC bytes as uppercase colon-separated hex."""
-    return ":".join(f"{b:02X}" for b in mac)
-
-
-def _mac_str_to_key(mac: str) -> str:
-    """Normalize a MAC string to uppercase hex without separators."""
-    return mac.upper().replace(":", "").replace("-", "")
 
 """
 ===================================================================================
-This module implements the ZenControl TPI Advanced API using zen_io.
+Command plane: TPI Advanced API over zen_io (no event session).
 ===================================================================================
 """
 
 
-class ZenCallbacks:
-    """Per-ZenControl high-level callback registry.
-
-    Stored on ``ZenProtocol.callbacks`` so entity singletons can reach their
-    owning integration's callbacks via ``self.protocol.callbacks``.
-    """
-
-    def __init__(self) -> None:
-        self.on_connect: Callable[[], Awaitable[None]] | None = None
-        self.on_disconnect: Callable[[], Awaitable[None]] | None = None
-        self.profile_change: Callable[..., Awaitable[None]] | None = None
-        self.group_change: Callable[..., Awaitable[None]] | None = None
-        self.light_change: Callable[..., Awaitable[None]] | None = None
-        self.button_press: Callable[..., Awaitable[None]] | None = None
-        self.button_long_press: Callable[..., Awaitable[None]] | None = None
-        self.absolute_input_change: Callable[..., Awaitable[None]] | None = None
-        self.motion_event: Callable[..., Awaitable[None]] | None = None
-        self.system_variable_change: Callable[..., Awaitable[None]] | None = None
-        self.controller_discovered: Callable[[DiscoveredController], Awaitable[None]] | None = None
-
-
-class EntityRegistry:
-    """Per-protocol caches for interface-layer entity identity.
-
-    Entities keyed here are unique within one ``ZenProtocol`` / ``ZenControl``
-    instance, not process-wide.
-    """
-
-    def __init__(self) -> None:
-        self.controllers: dict[str, Any] = {}
-        self.profiles: dict[str, Any] = {}
-        self.lights: dict[str, Any] = {}
-        self.groups: dict[str, Any] = {}
-        self.buttons: dict[str, Any] = {}
-        self.absolute_inputs: dict[str, Any] = {}
-        self.motion_sensors: dict[str, Any] = {}
-        self.system_variables: dict[str, Any] = {}
-
-    def clear(self) -> None:
-        self.controllers.clear()
-        self.profiles.clear()
-        self.lights.clear()
-        self.groups.clear()
-        self.buttons.clear()
-        self.absolute_inputs.clear()
-        self.motion_sensors.clear()
-        self.system_variables.clear()
-
-    def purge_controller(self, controller_name: str) -> None:
-        """Drop cached entities that belong to ``controller_name``."""
-        self.controllers.pop(controller_name, None)
-        prefix = f"{controller_name} "
-        for store in (
-            self.profiles,
-            self.lights,
-            self.groups,
-            self.buttons,
-            self.absolute_inputs,
-            self.motion_sensors,
-            self.system_variables,
-        ):
-            for key in [k for k in store if k == controller_name or k.startswith(prefix)]:
-                store.pop(key, None)
-
-
-class ZenProtocol:
-
-    callbacks: ZenCallbacks
+class ZenCommandClient:
 
     # Define commands as a dictionary
     CMD: dict[str, int] = {
@@ -241,59 +153,13 @@ class ZenProtocol:
 
     def __init__(self,
                  logger: logging.Logger | None = None,
-                 print_traffic: bool = False,
-                 unicast: bool = False,
-                 listen_ip: str | None = None,
-                 listen_port: int | None = None,
-                 cache: dict[bytes, dict[str, Any]] | None = None) -> None:
+                 print_traffic: bool = False) -> None:
         self.logger = logger or logging.getLogger('null')
         if logger is None:
             self.logger.addHandler(logging.NullHandler())
         self.print_traffic = print_traffic
-        self.unicast = unicast
-        self.listen_ip = (listen_ip if listen_ip else "0.0.0.0") if unicast else None
-        self.listen_port = (listen_port if listen_port else 0) if unicast else None
-
-        # Cache object
-        self.cache: dict[bytes, dict[str, Any]] = cache if cache is not None else {}
-
-        # Advertised unicast IP resolved lazily in start_event_monitoring (needs controllers)
-        self.local_ip: str | None = None
-        if self.unicast and self.listen_ip and self.listen_ip != "0.0.0.0":
-            self.local_ip = self.listen_ip
-        # Packet session owned by ZenListener; protocol keeps the active instance
-        self.event_listener: ZenListener | None = None
-        # Retained after unexpected exit so supervisors/tests can still await it
-        self._event_task: asyncio.Task[None] | None = None
-        # Prevents double on_disconnect if stop races with listener death
-        self._disconnect_notified = False
-
-        # Setup event listeners
-        self.button_press_callback: Callable[..., Awaitable[None]] | None = None
-        self.button_hold_callback: Callable[..., Awaitable[None]] | None = None
-        self.absolute_input_callback: Callable[..., Awaitable[None]] | None = None
-        self.level_change_callback: Callable[..., Awaitable[None]] | None = None
-        self.group_level_change_callback: Callable[..., Awaitable[None]] | None = None
-        self.scene_change_callback: Callable[..., Awaitable[None]] | None = None
-        self.is_occupied_callback: Callable[..., Awaitable[None]] | None = None
-        self.colour_change_callback: Callable[..., Awaitable[None]] | None = None
-        self.profile_change_callback: Callable[..., Awaitable[None]] | None = None
-        self.system_variable_change_callback: Callable[..., Awaitable[None]] | None = None
-        self.disconnect_callback: Callable[[], Awaitable[None]] | None = None
-        
-        # Controllers will be assigned later
-        self.controllers: list[ZenInterfaceController] = []
-        # Controllers identified via multicast but not yet registered
-        self.identified_controllers: list[DiscoveredController] = []
-        self._discovery_pending_macs: set[str] = set()
-        self._discovery_pending_ips: set[str] = set()
-        self.controller_discovered_callback: Callable[[DiscoveredController], Awaitable[None]] | None = None
-        # High-level callback registry (replaced per ZenControl instance)
-        self.callbacks = ZenCallbacks()
-        # Interface-layer entity identity (scoped to this protocol)
-        self.entity_registry = EntityRegistry()
-        # Fire-and-forget work (delayed events, refresh timers, motion holds)
-        self._bg_tasks: set[asyncio.Task[Any]] = set()
+        # Command-plane UDP clients keyed by controller name (not on the model).
+        self._clients: dict[str, ZenClient] = {}
 
     async def __aenter__(self) -> Self:
         """Async context manager entry"""
@@ -302,202 +168,101 @@ class ZenProtocol:
     async def __aexit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
         """Async context manager exit"""
         await self.aclose()
-    
-    def clear_entity_cache(self) -> None:
-        """Drop all interface entity singletons owned by this protocol."""
-        self.entity_registry.clear()
-
-    def purge_controller_entities(self, controller_name: str) -> None:
-        """Drop interface-layer singletons for one controller."""
-        self.entity_registry.purge_controller(controller_name)
-
-    def track_task(self, coro: Coroutine[Any, Any, Any]) -> asyncio.Task[Any]:
-        """Schedule fire-and-forget work and track it for cancellation on aclose.
-
-        Packet listening lifecycle is owned by ``ZenListener``
-        (``run`` / ``stop``); this protocol only orchestrates enable/dispatch.
-        """
-        task = asyncio.create_task(coro)
-        self._bg_tasks.add(task)
-        task.add_done_callback(self._bg_task_done)
-        return task
-
-    def _bg_task_done(self, task: asyncio.Task[Any]) -> None:
-        self._bg_tasks.discard(task)
-        if task.cancelled():
-            return
-        exc = task.exception()
-        if exc is not None:
-            self.logger.error(f"Background task failed: {exc}", exc_info=exc)
-
-    @staticmethod
-    async def _cancel_and_await(task: asyncio.Task[Any] | None) -> None:
-        """Cancel a task and wait for it to finish. Ignores cancel/exit errors."""
-        if task is None or task.done():
-            return
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-        except Exception:
-            pass
-
-    async def _cancel_background_tasks(self) -> None:
-        """Cancel tracked fire-and-forget work (timers, deferred callbacks)."""
-        tasks = list(self._bg_tasks)
-        self._bg_tasks.clear()
-        for task in tasks:
-            task.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-
-    @property
-    def event_task(self) -> asyncio.Task[None] | None:
-        """Consumer task from the latest ``ZenListener.run()``.
-
-        Kept after unexpected exit (when ``event_listener`` is cleared) so the
-        reconnect supervisor can still await the finished task.
-        """
-        return self._event_task
-
-    def is_event_monitoring_active(self) -> bool:
-        """True while the packet consumer task is running."""
-        task = self._event_task
-        return task is not None and not task.done()
 
     async def aclose(self) -> None:
-        """Stop monitoring, cancel background tasks, and close UDP clients."""
-        await self.stop_event_monitoring()
-        await self._cancel_background_tasks()
-        for controller in self.controllers:
-            client = controller.client
-            controller.client = None
+        """Close UDP command clients."""
+        await self.close_all_clients()
+
+    def client_for(self, controller: ControllerRef) -> ZenClient | None:
+        """Return the command-plane UDP client for ``controller``, if any."""
+        return self._clients.get(controller.name)
+
+    def set_client(self, controller: ControllerRef, client: ZenClient | None) -> None:
+        """Install or clear a command client without touching the model."""
+        if client is None:
+            self._clients.pop(controller.name, None)
+        else:
+            self._clients[controller.name] = client
+
+    async def close_all_clients(self) -> None:
+        """Close every owned command client. Idempotent."""
+        for name in list(self._clients):
+            client = self._clients.pop(name, None)
             if client is None:
                 continue
             try:
                 await client.close()
             except Exception:
                 pass
-        self.clear_entity_cache()
-
-    def set_controllers(self, controllers: list[ZenInterfaceController]) -> None:
-        self.controllers = controllers # Used to match events to controllers, and include controller objects in callbacks
-        # Drop identified entries that are now registered
-        for ctrl in controllers:
-            self.forget_identified(host=ctrl.host, mac=ctrl.mac)
-
-    def get_identified_by_ip_mac(
-        self, ip: str | None = None, mac: (bytes | str) | None = None
-    ) -> DiscoveredController | None:
-        """Find an already-identified (discovered) controller by IP or MAC."""
-        mac_key: str | None = None
-        if isinstance(mac, bytes):
-            mac_key = _mac_str_to_key(_mac_bytes_to_str(mac))
-        elif isinstance(mac, str):
-            mac_key = _mac_str_to_key(mac)
-        for discovered in self.identified_controllers:
-            if ip is not None and discovered.host == ip:
-                return discovered
-            if mac_key is not None and _mac_str_to_key(discovered.mac) == mac_key:
-                return discovered
-        return None
-
-    def forget_identified(
-        self, *, host: str | None = None, mac: str | None = None
-    ) -> None:
-        """Remove matching entries from the identified-controller cache."""
-        mac_key = _mac_str_to_key(mac) if mac else None
-        self.identified_controllers = [
-            d
-            for d in self.identified_controllers
-            if not (
-                (host is not None and d.host == host)
-                or (mac_key is not None and _mac_str_to_key(d.mac) == mac_key)
-            )
-        ]
 
     # ============================
     # PACKET SENDING
     # ============================
 
-    @staticmethod
-    def _checksum(packet: list[int]) -> int:
-        acc = 0x00
-        for d in packet:
-            acc = d ^ acc
-        return acc
-
     @overload
     async def _send_basic(
         self,
-        controller: ZenController,
+        controller: ControllerRef,
         command: int,
         address: int = 0x00,
         data: list[int] | None = None,
         *,
-        return_type: Literal["str"],
-        cacheable: bool = False,
+        return_type: Literal["str"]
     ) -> str | None: ...
 
     @overload
     async def _send_basic(
         self,
-        controller: ZenController,
+        controller: ControllerRef,
         command: int,
         address: int = 0x00,
         data: list[int] | None = None,
         *,
-        return_type: Literal["bytes"] = "bytes",
-        cacheable: bool = False,
+        return_type: Literal["bytes"] = "bytes"
     ) -> bytes | None: ...
 
     @overload
     async def _send_basic(
         self,
-        controller: ZenController,
+        controller: ControllerRef,
         command: int,
         address: int = 0x00,
         data: list[int] | None = None,
         *,
-        return_type: Literal["list"],
-        cacheable: bool = False,
+        return_type: Literal["list"]
     ) -> list[int] | None: ...
 
     @overload
     async def _send_basic(
         self,
-        controller: ZenController,
+        controller: ControllerRef,
         command: int,
         address: int = 0x00,
         data: list[int] | None = None,
         *,
-        return_type: Literal["int"],
-        cacheable: bool = False,
+        return_type: Literal["int"]
     ) -> int | None: ...
 
     @overload
     async def _send_basic(
         self,
-        controller: ZenController,
+        controller: ControllerRef,
         command: int,
         address: int = 0x00,
         data: list[int] | None = None,
         *,
-        return_type: Literal["bool", "ok"],
-        cacheable: bool = False,
+        return_type: Literal["bool", "ok"]
     ) -> bool | None: ...
 
     async def _send_basic(self,
-                   controller: ZenController,
+                   controller: ControllerRef,
                    command: int,
                    address: int = 0x00,
-                   data: list[int] | None = None, 
+                   data: list[int] | None = None,
                    return_type: str = 'bytes',
-                   cacheable: bool = False
                    ) -> (bytes | str | list[int] | int | bool) | None:
         request: Request = Request(command=command, data=[address] + (data or []), request_type=RequestType.BASIC)
-        response_data, response_code = await self._send_packet(controller, request, cacheable=cacheable)
+        response_data, response_code = await self._send_packet(controller, request)
         match response_code:
             case 0xA0: # OK
                 match return_type:
@@ -560,8 +325,8 @@ class ZenProtocol:
             else (f"Unknown error code: {hex(code)}" if code is not None else "no error code")
         )
         self.logger.error(f"Command error code: {label}")
-        
-    async def _send_colour(self, controller: ZenController, command: int, address: int, colour: ZenColour, level: int = 255) -> bool | None:
+
+    async def _send_colour(self, controller: ControllerRef, command: int, address: int, colour: ZenColour, level: int = 255) -> bool | None:
         """Send a DALI colour command."""
         data = [address, level & 0xFF] + list(colour.command_payload())
         request: Request = Request(command=command, data=data, request_type=RequestType.DALI_COLOUR)
@@ -573,7 +338,7 @@ class ZenProtocol:
                 return False
         return None
 
-    async def _send_dynamic(self, controller: ZenController, command: int, data: list[int]) -> bytes | None:
+    async def _send_dynamic(self, controller: ControllerRef, command: int, data: list[int]) -> bytes | None:
         # Calculate data length and prepend it to data
         request: Request = Request(command=command, data=data, request_type=RequestType.DYNAMIC)
         response_data, response_code = await self._send_packet(controller, request)
@@ -599,42 +364,14 @@ class ZenProtocol:
         if response_data:
             return response_data
         return None
-    
-    async def _send_packet(self, controller: ZenController, request: Request, cacheable: bool = False) -> tuple[bytes | None, int]:
-        cache_key: bytes | None = None
-        # Read from cache?
-        if cacheable:
-            request_data = bytes(request.data) if not isinstance(request.data, bytes) else request.data
-            cache_key = controller.id.encode("utf-8") + bytes([request.command & 0xFF]) + request_data
-            if cache_key in self.cache:
-                c = self.cache[cache_key]
-                cached_timestamp = c.get('t', None) # timestamp
-                cached_data = c.get('d', None) # data
-                cached_response_type = c.get('c', None) # response_type
-                cache_valid = (
-                    cached_timestamp is not None
-                    and time.time() - cached_timestamp < Const.CACHE_TIMEOUT
-                    and cached_response_type == ResponseType.ANSWER
-                    and cached_data is not None
-                )
-                if cache_valid:
-                    assert isinstance(cached_data, bytes)
-                    assert isinstance(cached_response_type, int)
-                    if self.print_traffic:
-                        cached_packet = bytes([cached_response_type & 0xFF, len(cached_data) & 0xFF]) + cached_data
-                        print(Fore.MAGENTA + f"FOUND:   [----, {' '.join(f'0x{b:02X}' for b in cache_key)}, ----]  "
-                            + Fore.RED + Style.DIM + " CACHE HIT"
-                            + Style.BRIGHT + Fore.CYAN + f"  [{' '.join(f'0x{b:02X}' for b in cached_packet)}, ----]"
-                            + Style.RESET_ALL)
-                    return cached_data, cached_response_type
-                else:
-                    del self.cache[cache_key]
 
+    async def _send_packet(self, controller: ControllerRef, request: Request) -> tuple[bytes | None, int]:
         # Ensure client is properly initialized and not closed
         await self._ensure_client(controller)
-        assert controller.client is not None
+        client = self._clients.get(controller.name)
+        assert client is not None
 
-        response: Response = await controller.client.send_request_with_retries(
+        response: Response = await client.send_request_with_retries(
             request,
             retries=ClientConst.DEFAULT_RETRIES,
         )
@@ -654,11 +391,6 @@ class ZenProtocol:
         # treat them like NO_ANSWER (None). Raising here breaks discovery/interview
         # for paid-feature and similar controller responses.
 
-        # Write to cache?
-        if cacheable and cache_key is not None:
-            if response.response_type == ResponseType.ANSWER and response.data is not None:
-                self.cache[cache_key] = {'d': response.data, 'c': response.response_type.value, 't': time.time()}
-        
         # print_traffic
         req = response.request
         if self.print_traffic and req is not None and req.raw_sent and response.raw_rcvd:
@@ -669,24 +401,24 @@ class ZenProtocol:
                 + Style.RESET_ALL + Fore.CYAN + f"  RESPONSE: [{' '.join(f'0x{b:02X}' for b in response.raw_rcvd)}]"
                 + Style.RESET_ALL + Fore.WHITE + Style.DIM + f"  RTT: {rtt_ms:.0f}ms".ljust(10)
                 + Style.RESET_ALL)
-        
+
         return response.data, response.response_type.value
 
-    async def _ensure_client(self, controller: ZenController) -> None:
+    async def _ensure_client(self, controller: ControllerRef) -> None:
         """Create or replace the UDP client when missing or disconnected."""
-        if controller.client is not None and controller.client.is_connected():
+        client = self._clients.get(controller.name)
+        if client is not None and client.is_connected():
             return
-        if controller.client is not None:
+        if client is not None:
             await self._invalidate_client(controller)
-        controller.client = await ZenClient.create(
+        self._clients[controller.name] = await ZenClient.create(
             (controller.ip, controller.port),
             logger=self.logger,
         )
 
-    async def _invalidate_client(self, controller: ZenController) -> None:
+    async def _invalidate_client(self, controller: ControllerRef) -> None:
         """Close and drop a stale client so the next send recreates it."""
-        client = controller.client
-        controller.client = None
+        client = self._clients.pop(controller.name, None)
         if client is None:
             return
         try:
@@ -694,472 +426,19 @@ class ZenProtocol:
         except Exception:
             pass
 
-    def _resolve_unicast_advertise_ip(self) -> str:
-        """Local IPv4 to advertise to controllers for unicast event delivery."""
-        if self.listen_ip and self.listen_ip != "0.0.0.0":
-            return self.listen_ip
-        if self.controllers:
-            return local_ip_for_remote(self.controllers[0].ip)
-        # No controllers yet — best-effort via a public DNS address for routing
-        return local_ip_for_remote("8.8.8.8")
-
-    # ============================
-    # EVENT LISTENING
-    # ============================
-
-    def set_callbacks(self,
-                            button_press_callback: Callable[..., Awaitable[None]] | None = None,
-                            button_hold_callback: Callable[..., Awaitable[None]] | None = None,
-                            absolute_input_callback: Callable[..., Awaitable[None]] | None = None,
-                            level_change_callback: Callable[..., Awaitable[None]] | None = None, 
-                            group_level_change_callback: Callable[..., Awaitable[None]] | None = None,
-                            scene_change_callback: Callable[..., Awaitable[None]] | None = None,
-                            is_occupied_callback: Callable[..., Awaitable[None]] | None = None,
-                            colour_change_callback: Callable[..., Awaitable[None]] | None = None,
-                            profile_change_callback: Callable[..., Awaitable[None]] | None = None,
-                            system_variable_change_callback: Callable[..., Awaitable[None]] | None = None,
-                            disconnect_callback: Callable[[], Awaitable[None]] | None = None,
-                            ) -> None:
-        self.button_press_callback = button_press_callback
-        self.button_hold_callback = button_hold_callback
-        self.absolute_input_callback = absolute_input_callback
-        self.level_change_callback = level_change_callback
-        self.group_level_change_callback = group_level_change_callback
-        self.scene_change_callback = scene_change_callback
-        self.is_occupied_callback = is_occupied_callback
-        self.colour_change_callback = colour_change_callback
-        self.profile_change_callback = profile_change_callback
-        self.system_variable_change_callback = system_variable_change_callback
-        self.disconnect_callback = disconnect_callback
-        
-    async def start_event_monitoring(self) -> None:
-        """Bind the packet listener, enable controller emission, start the consumer.
-
-        Socket/consumer lifecycle is owned by ``ZenListener``. This method only
-        orchestrates controller enablement and dispatch wiring. On any failure
-        before the consumer is running, rolls back enabled controllers and stops
-        the listener.
-        """
-        if self.is_event_monitoring_active():
-            return
-
-        await self.stop_event_monitoring()
-
-        self._disconnect_notified = False
-        enabled_controllers: list[ZenInterfaceController] = []
-
-        try:
-            if self.unicast:
-                self.local_ip = self._resolve_unicast_advertise_ip()
-                self.logger.info(f"Advertising unicast event address {self.local_ip}")
-
-            # Bind first so unicast mode uses the actual assigned port (not 0)
-            listener = await ZenListener.create(
-                unicast=self.unicast,
-                listen_ip=self.listen_ip or "0.0.0.0",
-                listen_port=(self.listen_port or 0) if self.unicast else EventConst.MULTICAST_PORT,
-                logger=self.logger,
-            )
-            self.event_listener = listener
-            if self.unicast:
-                self.listen_port = listener.listen_port
-
-            # All controllers must emit the same way: multicast or one unicast port
-            for controller in self.controllers:
-                await self.set_tpi_event_unicast_address(
-                    controller,
-                    ipaddr=self.local_ip if self.unicast else None,
-                    port=self.listen_port if self.unicast else None,
-                )
-                await self.tpi_event_emit(
-                    controller,
-                    ZenEventMode(
-                        enabled=True,
-                        filtering=controller.filtering,
-                        unicast=self.unicast,
-                        multicast=not self.unicast,
-                    ),
-                )
-                enabled_controllers.append(controller)
-
-            self._event_task = listener.run(
-                self._process_zen_event,
-                on_unexpected_exit=self._on_listener_unexpected_exit,
-            )
-        except Exception:
-            await self._rollback_event_monitoring_start(enabled_controllers)
-            raise
-
-    async def _rollback_event_monitoring_start(
-        self, enabled_controllers: list[ZenInterfaceController]
-    ) -> None:
-        """Undo partial start: disable enabled controllers, stop the listener."""
-        for controller in enabled_controllers:
-            try:
-                await self.tpi_event_emit(
-                    controller,
-                    ZenEventMode(
-                        enabled=False,
-                        filtering=controller.filtering,
-                        unicast=self.unicast,
-                        multicast=not self.unicast,
-                    ),
-                )
-            except Exception as err:
-                self.logger.debug(
-                    "Rollback: failed to disable events on %s: %s",
-                    getattr(controller, "name", "?"),
-                    err,
-                )
-        await self.stop_event_monitoring()
-
-    async def notify_disconnect(self) -> None:
-        """Fire disconnect_callback at most once per monitoring session."""
-        if self._disconnect_notified:
-            return
-        self._disconnect_notified = True
-        if not callable(self.disconnect_callback):
-            return
-        try:
-            await self.disconnect_callback()
-        except Exception as err:
-            self.logger.error(f"disconnect_callback error: {err}")
-
-    async def _on_listener_unexpected_exit(self) -> None:
-        """Drop the live listener ref and notify when ZenListener dies on its own.
-
-        Leaves ``_event_task`` in place so awaiters can observe completion.
-        """
-        self.event_listener = None
-        await self.notify_disconnect()
-
-    def get_controller_by_ip_mac(self, ip: str | None = None, mac: bytes | None = None) -> ZenInterfaceController | None:
-        """Find a controller by IP address or MAC address"""
-        if ip is not None:
-            for ctrl in self.controllers:
-                if ctrl.ip == ip:
-                    return ctrl
-        if mac is not None:
-            for ctrl in self.controllers:
-                if ctrl.mac_bytes == mac:
-                    return ctrl
-        return None
-
-    def _ecd_address_from_target(
-        self, controller: ZenInterfaceController, target: int
-    ) -> ZenAddress | None:
-        """Map an event target byte to an ECD ZenAddress, or None if out of range."""
-        number = target - 64
-        if not 0 <= number <= 63:
-            self.logger.error(f"Invalid ECD event target: {target}")
-            return None
-        return ZenAddress(controller=controller, type=ZenAddressType.ECD, number=number)
-
-    async def _handle_unknown_controller(self, event: ZenEvent) -> None:
-        """Identify a new controller from multicast, query its label, and remember it."""
-        mac_str = _mac_bytes_to_str(event.mac_address)
-        mac_key = _mac_str_to_key(mac_str)
-        host = event.ip_address
-
-        if self.get_identified_by_ip_mac(host, event.mac_address) is not None:
-            return
-        if mac_key in self._discovery_pending_macs or host in self._discovery_pending_ips:
-            return
-
-        self._discovery_pending_macs.add(mac_key)
-        self._discovery_pending_ips.add(host)
-        label: str | None = None
-        temp: ZenController | None = None
-        try:
-            temp = ZenController(
-                id=f"discover-{mac_key}",
-                name=f"_discover_{mac_key}",
-                label="",
-                host=host,
-                port=DEFAULT_CONTROLLER_PORT,
-                mac=mac_str,
-                protocol=self,
-            )
-            try:
-                label = await self.query_controller_label(temp)
-            except ZenTimeoutError:
-                self.logger.info(
-                    "Discovered controller %s (%s) but label query timed out",
-                    host,
-                    mac_str,
-                )
-            except Exception as err:
-                self.logger.warning(
-                    "Discovered controller %s (%s) but label query failed: %s",
-                    host,
-                    mac_str,
-                    err,
-                )
-
-            # Re-check in case a race registered the controller meanwhile
-            if self.get_controller_by_ip_mac(host, event.mac_address) is not None:
-                return
-            if self.get_identified_by_ip_mac(host, event.mac_address) is not None:
-                return
-
-            discovered = DiscoveredController(
-                host=host,
-                mac=mac_str,
-                label=label,
-                port=DEFAULT_CONTROLLER_PORT,
-            )
-            self.identified_controllers.append(discovered)
-            self.logger.info(
-                "Identified controller %s mac=%s label=%r",
-                host,
-                mac_str,
-                label,
-            )
-
-            callback = self.controller_discovered_callback
-            if callback is None and callable(self.callbacks.controller_discovered):
-                callback = self.callbacks.controller_discovered
-            if callable(callback):
-                try:
-                    await callback(discovered)
-                except Exception as err:
-                    self.logger.error(
-                        "controller_discovered callback error: %s", err, exc_info=err
-                    )
-        finally:
-            self._discovery_pending_macs.discard(mac_key)
-            self._discovery_pending_ips.discard(host)
-            if temp is not None and temp.client is not None:
-                try:
-                    await temp.client.close()
-                except Exception:
-                    pass
-                temp.client = None
-
-    async def _process_zen_event(self, event: ZenEvent) -> None:
-        """Process received ZenEvent from ZenListener"""
-        typecast = "unicast" if self.unicast else "multicast"
-        
-        # Find the controller that sent this event
-        controller = self.get_controller_by_ip_mac(event.ip_address, event.mac_address)
-        if not controller:
-            await self._handle_unknown_controller(event)
-            return
-
-        ip_address = event.ip_address
-        target = event.target
-        payload = event.payload
-        event_code = event.event_code
-        try:
-            event_enum = ZenEventCode(event_code)
-        except ValueError:
-            self.logger.warning(f"Unknown event code {event_code} from {ip_address}")
-            return
-
-        min_payload = {
-            ZenEventCode.BUTTON_PRESS: 1,
-            ZenEventCode.BUTTON_HOLD: 1,
-            ZenEventCode.ABSOLUTE_INPUT: 3,
-            ZenEventCode.LEVEL_CHANGE: 1,
-            ZenEventCode.LEVEL_CHANGE_V2: 2,
-            ZenEventCode.GROUP_LEVEL_CHANGE: 1,
-            ZenEventCode.SCENE_CHANGE: 2,
-            ZenEventCode.IS_OCCUPIED: 1,
-            ZenEventCode.SYSTEM_VARIABLE_CHANGE: 5,
-            ZenEventCode.COLOUR_CHANGE: 1,
-            ZenEventCode.PROFILE_CHANGE: 1,
-        }.get(event_enum, 0)
-        if len(payload) < min_payload:
-            self.logger.warning(f"Event {event_enum.name} payload too short: {len(payload)} < {min_payload}")
-            return
-        # Print the raw packet
-        # if self.print_traffic: 
-        #     print(Fore.MAGENTA + f"{typecast.upper()} {ip_address}:" + 
-        #           Fore.CYAN + f" [{' '.join(f'0x{b:02X}' for b in event.raw_data)}]" + 
-        #           Style.RESET_ALL)
-        
-        match event_enum:
-            case ZenEventCode.BUTTON_PRESS:
-                if self.print_traffic: 
-                    print(Fore.MAGENTA + f"{typecast.upper()} {ip_address}:" +
-                        Fore.CYAN + f" Button {target-64}.{payload[0]} pressed" +
-                        Style.RESET_ALL)
-                if self.button_press_callback:
-                    address = self._ecd_address_from_target(controller, target)
-                    if address is None:
-                        return
-                    instance = ZenInstance(address=address, type=ZenInstanceType.PUSH_BUTTON, number=payload[0])
-                    await self.button_press_callback(instance=instance, payload=payload)
-
-            case ZenEventCode.BUTTON_HOLD:
-                if self.print_traffic: 
-                    print(Fore.MAGENTA + f"{typecast.upper()} {ip_address}:" +
-                        Fore.CYAN + f" Button {target-64}.{payload[0]} held" +
-                        Style.RESET_ALL)
-                if self.button_hold_callback:
-                    address = self._ecd_address_from_target(controller, target)
-                    if address is None:
-                        return
-                    instance = ZenInstance(address=address, type=ZenInstanceType.PUSH_BUTTON, number=payload[0])
-                    await self.button_hold_callback(instance=instance, payload=payload)
-
-            case ZenEventCode.ABSOLUTE_INPUT:
-                value = (payload[1] << 8) | payload[2]
-                if self.print_traffic: 
-                    print(Fore.MAGENTA + f"{typecast.upper()} {ip_address}:" +
-                        Fore.CYAN + f" Absolute {target-64}.{payload[0]} = {value}" +
-                        Style.RESET_ALL)
-                if self.absolute_input_callback:
-                    address = self._ecd_address_from_target(controller, target)
-                    if address is None:
-                        return
-                    instance = ZenInstance(address=address, type=ZenInstanceType.ABSOLUTE_INPUT, number=payload[0])
-                    await self.absolute_input_callback(instance=instance, payload=payload)
-
-            case ZenEventCode.LEVEL_CHANGE:
-                # Deprecated — superseded by LEVEL_CHANGE_V2; spec recommends filtering this event type
-                pass
-
-            case ZenEventCode.LEVEL_CHANGE_V2:
-                # payload[0] = current arc level, payload[1] = arc level dimming to (authoritative destination)
-                current_level = payload[0]
-                target_level = payload[1]
-                if self.print_traffic:
-                    addr_label = f"{'' if target <= 63 else 'group '}{target if target <= 63 else target-64}"
-                    print(Fore.MAGENTA + f"{typecast.upper()} {ip_address}: [{' '.join(f'0x{b:02X}' for b in event.raw_data)}]" +
-                        Fore.GREEN + f" LEVEL_CHANGE_V2 {addr_label} to {target_level}, currently {current_level}" +
-                        Style.RESET_ALL)
-                if self.level_change_callback:
-                    if target <= 63:
-                        address = ZenAddress(controller=controller, type=ZenAddressType.ECG, number=target)
-                        await self.level_change_callback(address=address, arc_level=target_level, payload=payload)
-                    elif 64 <= target <= 79:
-                        address = ZenAddress(controller=controller, type=ZenAddressType.GROUP, number=target-64)
-                        if self.group_level_change_callback:
-                            await self.group_level_change_callback(address=address, arc_level=target_level, payload=payload)
-                    else:
-                        self.logger.error(f"Invalid level change V2 event target: {target}")
-                        return
-
-            case ZenEventCode.GROUP_LEVEL_CHANGE:
-                # Deprecated — superseded by LEVEL_CHANGE_V2 for group targets (64–79)
-                pass
-
-            case ZenEventCode.SCENE_CHANGE:
-                # Ignore event if it doesn't contain the "at scene" flag
-                if len(payload) < 2:
-                    return
-                if self.print_traffic: 
-                    addr_label = f"{'' if target <= 63 else 'group '}{target if target <= 63 else target-64}"
-                    print(Fore.MAGENTA + f"{typecast.upper()} {ip_address}: [{' '.join(f'0x{b:02X}' for b in event.raw_data)}]" +
-                        Fore.GREEN + f" SCENE_CHANGE {addr_label} to {'' if payload[1] == 1 else 'inactive-'}{payload[0]}" +
-                        Style.RESET_ALL)
-                if self.scene_change_callback:
-                    if target <= 63:
-                        address = ZenAddress(controller=controller, type=ZenAddressType.ECG, number=target)
-                    elif 64 <= target <= 79:
-                        address = ZenAddress(controller=controller, type=ZenAddressType.GROUP, number=target-64)
-                    else:
-                        self.logger.error(f"Invalid scene change event target: {target}")
-                        return
-                    await self.scene_change_callback(
-                        address=address,
-                        scene=payload[0],
-                        active=bool(payload[1]),
-                        payload=payload,
-                    )
-                
-            case ZenEventCode.IS_OCCUPIED:
-                if self.print_traffic: 
-                    print(Fore.MAGENTA + f"{typecast.upper()} {ip_address}:" +
-                        Fore.CYAN + f" Motion sensor {target-64}.{payload[0]}" +
-                        Style.DIM + f" [{' '.join(f'0x{b:02X}' for b in payload)}]" +
-                        Style.RESET_ALL)
-                if self.is_occupied_callback:
-                    address = self._ecd_address_from_target(controller, target)
-                    if address is None:
-                        return
-                    instance = ZenInstance(address=address, type=ZenInstanceType.OCCUPANCY_SENSOR, number=payload[0])
-                    await self.is_occupied_callback(instance=instance, payload=payload)
-                
-            case ZenEventCode.SYSTEM_VARIABLE_CHANGE:
-                if not 0 <= target < Const.MAX_SYSVAR:
-                    self.logger.error(f"Variable number must be between 0 and {Const.MAX_SYSVAR}, received {target}")
-                    return
-                raw_value = int.from_bytes(payload[0:4], byteorder='big', signed=True)
-                magnitude = int.from_bytes([payload[4]], byteorder='big', signed=True)
-                value = raw_value * (10 ** magnitude)
-                if self.print_traffic: 
-                    print(Fore.MAGENTA + f"{typecast.upper()} {ip_address}:" +
-                        Fore.CYAN + f" System Variable {target} set to {value}" +
-                        Style.RESET_ALL)
-                if self.system_variable_change_callback:
-                    await self.system_variable_change_callback(controller=controller, target=target, value=value, payload=payload)
-
-            case ZenEventCode.COLOUR_CHANGE:
-                if self.print_traffic: 
-                    print(Fore.MAGENTA + f"{typecast.upper()} {ip_address}:" +
-                        Fore.CYAN + f" Colour change {'' if target <= 63 else 'group '}{target if target <= 63 else target-64}" +
-                        Style.DIM + f" [{' '.join(f'0x{b:02X}' for b in payload)}]" +
-                        Style.RESET_ALL)
-                if self.colour_change_callback:
-                    if target < 64:
-                        address = ZenAddress(controller=controller, type=ZenAddressType.ECG, number=target)
-                    elif 64 <= target <= 79:
-                        address = ZenAddress(controller=controller, type=ZenAddressType.GROUP, number=target-64)
-                    else:
-                        self.logger.error(f"Invalid colour change event target: {target}")
-                        return
-                    colour = ZenColour.from_bytes(payload)
-                    if colour is None:
-                        self.logger.warning(
-                            f"Unparseable colour change payload from {ip_address}: "
-                            f"[{' '.join(f'0x{b:02X}' for b in payload)}]"
-                        )
-                        return
-                    await self.colour_change_callback(address=address, colour=colour, payload=payload)
-
-            case ZenEventCode.PROFILE_CHANGE:
-                payload_int = int.from_bytes(payload, byteorder='big')
-                if self.print_traffic: 
-                    print(Fore.MAGENTA + f"{typecast.upper()} {ip_address}:" +
-                        Fore.CYAN + f" Profile change {payload_int}" +
-                        Style.RESET_ALL)
-                if self.profile_change_callback:
-                    await self.profile_change_callback(controller=controller, profile=payload_int, payload=payload)
-            
-            case ZenEventCode.GROUP_OCCUPIED:
-                # Do nothing
-                pass
-
-
-    async def stop_event_monitoring(self) -> None:
-        """Stop the packet session. Idempotent; delegates to ``ZenListener.stop``."""
-        listener = self.event_listener
-        self.event_listener = None
-        self._event_task = None
-        if listener is None:
-            return
-        await listener.stop()
-
-
     # ============================
     # API COMMANDS
     # ============================
 
-    async def query_group_label(self, address: ZenAddress, generic_if_none: bool=False) -> str | None:
+    async def query_group_label(self, address: ZenAddress) -> str | None:
         """Get the label for a DALI Group. Returns a string, or None if no label is set."""
-        label = await self._send_basic(address.controller, self.CMD["QUERY_GROUP_LABEL"], address.group(), return_type='str', cacheable=True)
-        if label is None and generic_if_none: return f"Group {address.number}"
-        return label
+        return await self._send_basic(address.controller, self.CMD["QUERY_GROUP_LABEL"], address.group(), return_type='str')
     
-    async def query_dali_device_label(self, address: ZenAddress, generic_if_none: bool=False) -> str | None:
+    async def query_dali_device_label(self, address: ZenAddress) -> str | None:
         """Query the label for a DALI device (control gear or control device). Returns a string, or None if no label is set."""
-        label = await self._send_basic(address.controller, self.CMD["QUERY_DALI_DEVICE_LABEL"], address.ecg_or_ecd(), return_type='str', cacheable=True)
-        if label is None and generic_if_none: label = f"{address.controller.label} ECD {address.number}"
-        return label
+        return await self._send_basic(address.controller, self.CMD["QUERY_DALI_DEVICE_LABEL"], address.ecg_or_ecd(), return_type='str')
         
-    async def query_profile_label(self, controller: ZenController, profile: int) -> str | None:
+    async def query_profile_label(self, controller: ControllerRef, profile: int) -> str | None:
         """Get the label for a Profile number (0-65535). Returns a string if a label exists, else None."""
         # Profile numbers are 2 bytes long, so check valid range
         if not 0 <= profile <= 65535:
@@ -1168,16 +447,16 @@ class ZenProtocol:
         profile_upper = (profile >> 8) & 0xFF
         profile_lower = profile & 0xFF
         # Send request
-        return await self._send_basic(controller, self.CMD["QUERY_PROFILE_LABEL"], 0x00, [0x00, profile_upper, profile_lower], return_type='str', cacheable=True)
+        return await self._send_basic(controller, self.CMD["QUERY_PROFILE_LABEL"], 0x00, [0x00, profile_upper, profile_lower], return_type='str')
     
-    async def query_current_profile_number(self, controller: ZenController) -> int | None:
+    async def query_current_profile_number(self, controller: ControllerRef) -> int | None:
         """Get the current/active Profile number for a controller. Returns int, else None if query fails."""
         response = await self._send_basic(controller, self.CMD["QUERY_CURRENT_PROFILE_NUMBER"])
         if response and len(response) >= 2: # Profile number is 2 bytes, combine them into a single integer. First byte is high byte, second is low byte
             return (response[0] << 8) | response[1]
         return None
 
-    async def query_tpi_event_emit_state(self, controller: ZenController) -> bool | None:
+    async def query_tpi_event_emit_state(self, controller: ControllerRef) -> bool | None:
         """Get the current TPI Event multicast emitter state for a controller. Returns True if enabled, False if disabled, None if query fails."""
         response = await self._send_basic(controller, self.CMD["QUERY_TPI_EVENT_EMIT_STATE"])
         if not response:
@@ -1257,7 +536,7 @@ class ZenProtocol:
                 
         return results
 
-    async def tpi_event_emit(self, controller: ZenController, mode: ZenEventMode | None = None) -> bool:
+    async def tpi_event_emit(self, controller: ControllerRef, mode: ZenEventMode | None = None) -> bool:
         """Enable or disable TPI Event emission. Returns True if successful, else False."""
         if mode is None: mode = ZenEventMode(enabled=True, filtering=False, unicast=False, multicast=True)
         mask = mode.bitmask()
@@ -1268,7 +547,7 @@ class ZenProtocol:
                 return True
         return False
 
-    async def set_tpi_event_unicast_address(self, controller: ZenController, ipaddr: str | None = None, port: int | None = None) -> bytes | None:
+    async def set_tpi_event_unicast_address(self, controller: ControllerRef, ipaddr: str | None = None, port: int | None = None) -> bytes | None:
         """Configure TPI Events for Unicast mode with IP and port as defined in the ZenController instance."""
         data = [0,0,0,0,0,0]
         if port is not None:
@@ -1292,7 +571,7 @@ class ZenProtocol:
         
         return await self._send_dynamic(controller, self.CMD["SET_TPI_EVENT_UNICAST_ADDRESS"], data)
 
-    async def query_tpi_event_unicast_address(self, controller: ZenController) -> dict[str, Any] | None:
+    async def query_tpi_event_unicast_address(self, controller: ControllerRef) -> dict[str, Any] | None:
         """Query TPI Events state and unicast configuration.
         Sends a Basic frame to query the TPI Event emit state, Unicast Port and Unicast Address.
        
@@ -1317,16 +596,18 @@ class ZenProtocol:
             }
         return None
 
-    async def query_group_numbers(self, controller: ZenInterfaceController) -> list[ZenAddress]:
+    async def query_group_numbers(self, controller: ControllerRef) -> list[ZenAddress]:
         """Query a controller for groups."""
         groups = await self._send_basic(controller, self.CMD["QUERY_GROUP_NUMBERS"], return_type='list')
-        zen_groups = []
+        zen_groups: list[ZenAddress] = []
         if groups is not None:
             groups.sort()
             for group in groups:
-                zen_groups.append(ZenAddress(controller=controller, type=ZenAddressType.GROUP, number=group))
+                zen_groups.append(
+                    ZenAddress(controller=controller, type=ZenAddressType.GROUP, number=group)
+                )
         return zen_groups
-        
+
     async def query_dali_colour(self, address: ZenAddress) -> ZenColour | None:
         """Query colour information from a DALI address."""
         response = await self._send_basic(address.controller, self.CMD["QUERY_DALI_COLOUR"], address.ecg())
@@ -1334,9 +615,9 @@ class ZenProtocol:
             return None
         return ZenColour.from_bytes(response)
     
-    async def query_profile_information(self, controller: ZenController) -> (tuple[dict[str, Any], dict[int, dict[str, bool | int | str]]]) | None:
+    async def query_profile_information(self, controller: ControllerRef) -> (tuple[dict[str, Any], dict[int, dict[str, bool | int | str]]]) | None:
         """Query a controller for profile information. Returns a tuple of two dicts, or None if query fails."""
-        response = await self._send_basic(controller, self.CMD["QUERY_PROFILE_INFORMATION"], cacheable=True)
+        response = await self._send_basic(controller, self.CMD["QUERY_PROFILE_INFORMATION"])
         if not response or len(response) < 12:
             return None
         # Initial 12 bytes:
@@ -1365,7 +646,7 @@ class ZenProtocol:
         # Return tuple of state and profiles
         return state, profiles
     
-    async def query_profile_numbers(self, controller: ZenController) -> list[int] | None:
+    async def query_profile_numbers(self, controller: ControllerRef) -> list[int] | None:
         """Query a controller for a list of available Profile Numbers. Returns a list of profile numbers, or None if query fails."""
         response = await self._send_basic(controller, self.CMD["QUERY_PROFILE_NUMBERS"])
         if response and len(response) >= 2:
@@ -1400,9 +681,9 @@ class ZenProtocol:
 
     async def query_instances_by_address(self, address: ZenAddress) -> list[ZenInstance]:
         """Query a DALI address (ECD) for associated instances. Returns a list of ZenInstance, or an empty list if nothing found."""
-        response = await self._send_basic(address.controller, self.CMD["QUERY_INSTANCES_BY_ADDRESS"], address.ecd(), cacheable=True)
+        response = await self._send_basic(address.controller, self.CMD["QUERY_INSTANCES_BY_ADDRESS"], address.ecd())
         if response and len(response) >= 4:
-            instances = []
+            instances: list[ZenInstance] = []
             # Process groups of 4 bytes for each instance
             for i in range(0, len(response), 4):
                 if i + 3 < len(response):
@@ -1421,7 +702,7 @@ class ZenProtocol:
 
     async def query_operating_mode_by_address(self, address: ZenAddress) -> int | None:
         """Query a DALI address (ECG or ECD) for its operating mode. Returns an int containing the operating mode value, or None if the query fails."""
-        response = await self._send_basic(address.controller, self.CMD["QUERY_OPERATING_MODE_BY_ADDRESS"], address.ecg_or_ecd(), cacheable=True)
+        response = await self._send_basic(address.controller, self.CMD["QUERY_OPERATING_MODE_BY_ADDRESS"], address.ecg_or_ecd())
         if response and len(response) == 1:
             return response[0]  # Operating mode is in first byte
         return None
@@ -1452,14 +733,14 @@ class ZenProtocol:
         255 mean “not in that scene.” Treat only indices 0–11 as Zencontrol
         scenes — slots 12–15 are unused padding, not extra product scenes.
         """
-        response = await self._send_basic(address.controller, self.CMD["QUERY_SCENE_LEVELS_BY_ADDRESS"], address.ecg(), return_type='list', cacheable=True)
+        response = await self._send_basic(address.controller, self.CMD["QUERY_SCENE_LEVELS_BY_ADDRESS"], address.ecg(), return_type='list')
         if response:
             return [None if x == 255 else x for x in response]
         return [None] * Const.MAX_SCENE
     
     async def query_colour_scene_membership_by_address(self, address: ZenAddress) -> list[int]:
         """Query a DALI address (ECG) for which scenes have colour change data. Returns a list of scene numbers."""
-        response = await self._send_basic(address.controller, self.CMD["QUERY_COLOUR_SCENE_MEMBERSHIP_BY_ADDR"], address.ecg(), return_type='list', cacheable=True)
+        response = await self._send_basic(address.controller, self.CMD["QUERY_COLOUR_SCENE_MEMBERSHIP_BY_ADDR"], address.ecg(), return_type='list')
         if response:
             return response
         return []
@@ -1474,10 +755,10 @@ class ZenProtocol:
         # Create a list of 12 ZenColour instances
         output: list[ZenColour | None] = [None] * Const.MAX_SCENE
         # Queries
-        response = await self._send_basic(address.controller, self.CMD["QUERY_COLOUR_SCENE_0_7_DATA_FOR_ADDR"], address.ecg(), cacheable=True)
+        response = await self._send_basic(address.controller, self.CMD["QUERY_COLOUR_SCENE_0_7_DATA_FOR_ADDR"], address.ecg())
         if response is None:
             return output
-        response2 = await self._send_basic(address.controller, self.CMD["QUERY_COLOUR_SCENE_8_11_DATA_FOR_ADDR"], address.ecg(), cacheable=True)
+        response2 = await self._send_basic(address.controller, self.CMD["QUERY_COLOUR_SCENE_8_11_DATA_FOR_ADDR"], address.ecg())
         if response2 is None:
             return output
         response += response2
@@ -1493,7 +774,7 @@ class ZenProtocol:
             
     async def query_group_membership_by_address(self, address: ZenAddress) -> list[ZenAddress]:
         """Query an address (ECG) for which DALI groups it belongs to. Returns a list of ZenAddress group instances."""
-        response = await self._send_basic(address.controller, self.CMD["QUERY_GROUP_MEMBERSHIP_BY_ADDRESS"], address.ecg(), cacheable=True)
+        response = await self._send_basic(address.controller, self.CMD["QUERY_GROUP_MEMBERSHIP_BY_ADDRESS"], address.ecg())
         if response and len(response) == 2:
             groups = []
             # Process high byte (groups 8-15)
@@ -1506,7 +787,7 @@ class ZenProtocol:
                     groups.append(i)
             # Process into ZenAddress instances
             groups.sort()
-            zen_groups = []
+            zen_groups: list[ZenAddress] = []
             for number in groups:
                 zen_groups.append(ZenAddress(
                     controller=address.controller,
@@ -1516,7 +797,7 @@ class ZenProtocol:
             return zen_groups
         return []
 
-    async def query_dali_addresses_with_instances(self, controller: ZenInterfaceController, start_address: int=0) -> list[ZenAddress]: # TODO: automate iteration over start_address=0, start_address=60, etc.
+    async def query_dali_addresses_with_instances(self, controller: ControllerRef, start_address: int = 0) -> list[ZenAddress]:  # TODO: automate iteration over start_address=0, start_address=60, etc.
         """Query for DALI addresses that have instances associated with them.
         
         Due to payload restrictions, this needs to be called multiple times with different
@@ -1532,7 +813,7 @@ class ZenProtocol:
         addresses = await self._send_basic(controller, self.CMD["QUERY_DALI_ADDRESSES_WITH_INSTANCES"], 0, [0,0,start_address], return_type='list')
         if not addresses:
             return []
-        zen_addresses = []
+        zen_addresses: list[ZenAddress] = []
         for number in addresses:
             if 64 <= number <= 127:  # Only process valid device addresses (64-127)
                 zen_addresses.append(ZenAddress(
@@ -1544,7 +825,7 @@ class ZenProtocol:
     
     async def query_scene_numbers_for_group(self, address: ZenAddress) -> list[int]:
         """Query which DALI scenes are associated with a given group number. Returns list of scene numbers."""
-        response = await self._send_basic(address.controller, self.CMD["QUERY_SCENE_NUMBERS_FOR_GROUP"], address.group(), cacheable=True)
+        response = await self._send_basic(address.controller, self.CMD["QUERY_SCENE_NUMBERS_FOR_GROUP"], address.group())
         if response and len(response) == 2:
             scenes = []
             # Process high byte (scenes 8-15)
@@ -1558,35 +839,32 @@ class ZenProtocol:
             return sorted(scenes)
         return []
     
-    async def query_scene_label_for_group(self, address: ZenAddress, scene: int, generic_if_none: bool=False) -> str | None:
+    async def query_scene_label_for_group(self, address: ZenAddress, scene: int) -> str | None:
         """Query the label for a scene (0-11) and group number combination. Returns string, or None if no label is set."""
         if not 0 <= scene < Const.MAX_SCENE: raise ValueError("Scene must be between 0 and 11")
-        label = await self._send_basic(address.controller, self.CMD["QUERY_SCENE_LABEL_FOR_GROUP"], address.group(), [scene], return_type='str', cacheable=True)
-        if label is None and generic_if_none:
-            return f"Scene {scene}"
-        return label
+        return await self._send_basic(address.controller, self.CMD["QUERY_SCENE_LABEL_FOR_GROUP"], address.group(), [scene], return_type='str')
     
-    async def query_scenes_for_group(self, address: ZenAddress, generic_if_none: bool=False) -> list[str | None]:
+    async def query_scenes_for_group(self, address: ZenAddress) -> list[str | None]:
         """Compound command to query the labels for all scenes for a group. Returns list of scene labels, where None indicates no label is set."""
         scenes: list[str | None] = [None] * Const.MAX_SCENE
         numbers = await self.query_scene_numbers_for_group(address)
         if numbers:
             for scene in numbers:
-                scenes[scene] = await self.query_scene_label_for_group(address, scene, generic_if_none=generic_if_none)
+                scenes[scene] = await self.query_scene_label_for_group(address, scene)
         return scenes
     
-    async def query_controller_version_number(self, controller: ZenController) -> str | None:
+    async def query_controller_version_number(self, controller: ControllerRef) -> str | None:
         """Query the controller's version number. Returns string, or None if query fail s."""
         response = await self._send_basic(controller, self.CMD["QUERY_CONTROLLER_VERSION_NUMBER"])
         if response and len(response) == 3:
             return f"{response[0]}.{response[1]}.{response[2]}"
         return None
     
-    async def query_control_gear_dali_addresses(self, controller: ZenInterfaceController) -> list[ZenAddress]:
+    async def query_control_gear_dali_addresses(self, controller: ControllerRef) -> list[ZenAddress]:
         """Query which DALI control gear addresses are present in the database. Returns a list of ZenAddress instances."""
         response = await self._send_basic(controller, self.CMD["QUERY_CONTROL_GEAR_DALI_ADDRESSES"])
         if response and len(response) == 8:  # 8 data bytes representing addresses 0-63
-            addresses = []
+            addresses: list[ZenAddress] = []
             # Process each byte which represents 8 addresses
             for byte_index, byte_value in enumerate(response):
                 # Check each bit in the byte
@@ -1656,7 +934,7 @@ class ZenProtocol:
     
     async def dali_query_control_gear_status(self, address: ZenAddress) -> dict[str, Any] | None:
         """Query the Status for a DALI address (ECG or group or broadcast). Returns a dictionary of status flags."""
-        response = await self._send_basic(address.controller, self.CMD["DALI_QUERY_CONTROL_GEAR_STATUS"], address.ecg_or_group_or_broadcast(), cacheable=True)
+        response = await self._send_basic(address.controller, self.CMD["DALI_QUERY_CONTROL_GEAR_STATUS"], address.ecg_or_group_or_broadcast())
         if response and len(response) == 1:
             return {
                 "cg_failure": bool(response[0] & 0x01),
@@ -1678,7 +956,7 @@ class ZenProtocol:
                                 Returns empty list if device doesn't exist.
                                 Returns None if query fails.
         """
-        response = await self._send_basic(address.controller, self.CMD["DALI_QUERY_CG_TYPE"], address.ecg(), cacheable=True)
+        response = await self._send_basic(address.controller, self.CMD["DALI_QUERY_CG_TYPE"], address.ecg())
         if response and len(response) == 4:
             device_types = []
             # Process each byte which represents 8 device types
@@ -1747,7 +1025,7 @@ class ZenProtocol:
     
     async def query_dali_serial(self, address: ZenAddress) -> int | None:
         """Query a DALI address (ECG or ECD) for its Serial Number. Returns an integer if successful, None if query fails."""
-        response = await self._send_basic(address.controller, self.CMD["QUERY_DALI_SERIAL"], address.ecg_or_ecd(), cacheable=True)
+        response = await self._send_basic(address.controller, self.CMD["QUERY_DALI_SERIAL"], address.ecg_or_ecd())
         if response and len(response) == 8:
             # Convert 8 bytes to decimal integer
             serial = 0
@@ -1779,21 +1057,18 @@ class ZenProtocol:
         """Command a DALI Address (ECG or group) to go to its "Last Active" level. Returns True if successful, else False."""
         return await self._send_basic(address.controller, self.CMD["DALI_GO_TO_LAST_ACTIVE_LEVEL"], address.ecg_or_group(), return_type='ok')
     
-    async def query_dali_instance_label(self, instance: ZenInstance, generic_if_none: bool=False) -> str | None:
-        """Query the label for a DALI Instance. Returns a string, or None if not set. Optionally, returns a generic label if the instance label is not set."""
-        label = await self._send_basic(instance.address.controller, self.CMD["QUERY_DALI_INSTANCE_LABEL"], instance.address.ecd(), [0x00, 0x00, instance.number], return_type='str', cacheable=True)
-        if label is None and generic_if_none:
-            label = instance.type.name.title().replace("_", " ")  + " " + str(instance.number)
-        return label
+    async def query_dali_instance_label(self, instance: ZenInstance) -> str | None:
+        """Query the label for a DALI Instance. Returns a string, or None if not set."""
+        return await self._send_basic(instance.address.controller, self.CMD["QUERY_DALI_INSTANCE_LABEL"], instance.address.ecd(), [0x00, 0x00, instance.number], return_type='str')
 
-    async def change_profile_number(self, controller: ZenController, profile: int) -> bool | None:
+    async def change_profile_number(self, controller: ControllerRef, profile: int) -> bool | None:
         """Change the active profile number (0-65535). Returns True if successful, else False."""
         if not 0 <= profile <= 0xFFFF: raise ValueError("Profile number must be between 0 and 65535")
         profile_hi = (profile >> 8) & 0xFF
         profile_lo = profile & 0xFF
         return await self._send_basic(controller, self.CMD["CHANGE_PROFILE_NUMBER"], 0x00, [0x00, profile_hi, profile_lo], return_type='ok')
     
-    async def return_to_scheduled_profile(self, controller: ZenController) -> bool | None:
+    async def return_to_scheduled_profile(self, controller: ControllerRef) -> bool | None:
         """Return to the scheduled profile. Returns True if successful, else False."""
         return await self.change_profile_number(controller, 0xFFFF) # See docs page 91, 0xFFFF returns to scheduled profile
 
@@ -1828,25 +1103,25 @@ class ZenProtocol:
     
     async def query_dali_fitting_number(self, address: ZenAddress) -> str | None:
         """Query a DALI address (ECG or ECD) for its fitting number. Returns the fitting number (e.g. '1.2') or a generic identifier if the address doesn't exist, or None if the query fails."""
-        return await self._send_basic(address.controller, self.CMD["QUERY_DALI_FITTING_NUMBER"], address.ecg_or_ecd(), return_type='str', cacheable=True)
+        return await self._send_basic(address.controller, self.CMD["QUERY_DALI_FITTING_NUMBER"], address.ecg_or_ecd(), return_type='str')
         
     async def query_dali_instance_fitting_number(self, instance: ZenInstance) -> str | None:
         """Query a DALI instance for its fitting number. Returns a string (e.g. '1.2.0') or None if query fails."""
         return await self._send_basic(instance.address.controller, self.CMD["QUERY_DALI_INSTANCE_FITTING_NUMBER"], instance.address.ecd(), [0x00, 0x00, instance.number], return_type='str')
     
-    async def query_controller_label(self, controller: ZenController) -> str | None:
+    async def query_controller_label(self, controller: ControllerRef) -> str | None:
         """Request the label for the controller. Returns the controller's label string, or None if query fails."""
-        return await self._send_basic(controller, self.CMD["QUERY_CONTROLLER_LABEL"], return_type='str', cacheable=True)
+        return await self._send_basic(controller, self.CMD["QUERY_CONTROLLER_LABEL"], return_type='str')
     
-    async def query_controller_fitting_number(self, controller: ZenController) -> str | None:
+    async def query_controller_fitting_number(self, controller: ControllerRef) -> str | None:
         """Request the fitting number string for the controller itself. Returns the controller's fitting number (e.g. '1'), or None if query fails."""
         return await self._send_basic(controller, self.CMD["QUERY_CONTROLLER_FITTING_NUMBER"], return_type='str')
 
-    async def query_is_dali_ready(self, controller: ZenController) -> bool | None:
+    async def query_is_dali_ready(self, controller: ControllerRef) -> bool | None:
         """Query whether the DALI line is ready or has a fault. Returns True if DALI line is ready, False if there is a fault."""
         return await self._send_basic(controller, self.CMD["QUERY_IS_DALI_READY"], return_type='ok')
     
-    async def query_controller_startup_complete(self, controller: ZenController) -> bool | None:
+    async def query_controller_startup_complete(self, controller: ControllerRef) -> bool | None:
         """Query whether the controller has finished its startup sequence. Returns True if startup is complete, False if still in progress, None if the query fails.
 
         The startup sequence performs DALI queries such as device type, current arc-level, GTIN, 
@@ -1908,7 +1183,7 @@ class ZenProtocol:
                 'rgbwaf_channels': int,      # Number of RGBWAF channels (0-7)
             }
         """
-        response = await self._send_basic(address.controller, self.CMD["QUERY_DALI_COLOUR_FEATURES"], address.ecg(), cacheable=True)
+        response = await self._send_basic(address.controller, self.CMD["QUERY_DALI_COLOUR_FEATURES"], address.ecg())
         if response and len(response) == 1:
             features = response[0]
             return {
@@ -1943,7 +1218,7 @@ class ZenProtocol:
                 'step_value': int         # Step value (K)
             }
         """
-        response = await self._send_basic(address.controller, self.CMD["QUERY_DALI_COLOUR_TEMP_LIMITS"], address.ecg(), cacheable=True)
+        response = await self._send_basic(address.controller, self.CMD["QUERY_DALI_COLOUR_TEMP_LIMITS"], address.ecg())
         if response and len(response) == 10:
             return {
                 'physical_warmest': (response[0] << 8) | response[1],
@@ -1954,7 +1229,7 @@ class ZenProtocol:
             }
         return None
     
-    async def set_system_variable(self, controller: ZenController, variable: int, value: int) -> bool | None:
+    async def set_system_variable(self, controller: ControllerRef, variable: int, value: int) -> bool | None:
         """Set a system variable (0-147) value (-32768-32767) on the controller. Returns True if successful, else False."""
         if not 0 <= variable < Const.MAX_SYSVAR:
             raise ValueError(f"Variable number must be between 0 and {Const.MAX_SYSVAR}, received {variable}")
@@ -1970,7 +1245,7 @@ class ZenProtocol:
         # Else if abs(value) is less than 327600, use magitude 1 (signed 0x01)
         # Else if abs(value) is less than 3276000, use magitude 2 (signed 0x02)
     
-    async def query_system_variable(self, controller: ZenController, variable: int) -> int | None:
+    async def query_system_variable(self, controller: ControllerRef, variable: int) -> int | None:
         """Query the controller for the value of a system variable (0-147). Returns the variable's value (-32768-32767) if successful, else None."""
         if not 0 <= variable < Const.MAX_SYSVAR:
             raise ValueError(f"Variable number must be between 0 and {Const.MAX_SYSVAR}, received {variable}")
@@ -1980,8 +1255,8 @@ class ZenProtocol:
         else: # Value is unset
             return None
     
-    async def query_system_variable_name(self, controller: ZenController, variable: int) -> str | None:
+    async def query_system_variable_name(self, controller: ControllerRef, variable: int) -> str | None:
         """Query the name of a system variable (0-147). Returns the variable's name, or None if query fails."""
         if not 0 <= variable < Const.MAX_SYSVAR:
             raise ValueError(f"Variable number must be between 0 and {Const.MAX_SYSVAR}, received {variable}")
-        return await self._send_basic(controller, self.CMD["QUERY_SYSTEM_VARIABLE_NAME"], variable, return_type='str', cacheable=True)
+        return await self._send_basic(controller, self.CMD["QUERY_SYSTEM_VARIABLE_NAME"], variable, return_type='str')

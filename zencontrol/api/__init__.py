@@ -3,12 +3,13 @@ API-level models and protocol implementation.
 
 This module contains models and types that belong to the API layer:
 - ZenController, ZenAddress, ZenInstance (API-level concepts)
-- ZenProtocol (implements TPI commands)
+- ZenCommandClient (implements TPI commands)
 - ZenColour, ZenProfile (API-level concepts used by TPI protocol)
 - Types and enums used by the API layer
 """
 
 from .models import (
+    ControllerRef,
     DiscoveredController,
     ZenAddress,
     ZenColour,
@@ -16,29 +17,37 @@ from .models import (
     ZenInstance,
     ZenProfile,
 )
-from .protocol import ZenProtocol
+from .commands import ZenCommandClient
+from .event_decode import ZenEventCode, ZenEventMask
+from .event_router import EventHealth
+from .identity import IdentityLog
 from .types import (
+    Transport,
     ZenAddressType,
     ZenColourType,
-    ZenEventMask,
     ZenEventMode,
     ZenInstanceType,
 )
 
 __all__ = [
     # API-level models
+    "ControllerRef",
     "ZenController",
-    "ZenAddress", 
+    "ZenAddress",
     "ZenInstance",
     "ZenColour",
     "ZenProfile",
     "DiscoveredController",
-    "ZenProtocol",
-    
+    "IdentityLog",
+    "ZenCommandClient",
+
     # API-level types
     "ZenAddressType",
     "ZenInstanceType",
     "ZenColourType",
+    "Transport",
+    "ZenEventCode",
     "ZenEventMask",
     "ZenEventMode",
+    "EventHealth",
 ]

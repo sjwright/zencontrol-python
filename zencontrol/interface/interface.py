@@ -14,13 +14,28 @@ from ..api import (
     ZenColourType,
     ZenInstance,
     ZenInstanceType,
-    ZenProtocol,
 )
 from ..api import ZenController as SuperZenController
-from ..api.models import DiscoveredController
-from ..api.protocol import ZenCallbacks
-from ..api.types import Const, ZenEventMode
-from ..exceptions import ZenConnectionError
+from ..api.event_decode import (
+    AbsoluteInput,
+    ButtonHold,
+    ButtonPress,
+    ColourChange,
+    IsOccupied,
+    LevelChangeV2,
+    ProfileChange,
+    SceneChange,
+    SystemVariableChange,
+    ZenDecodedEvent,
+)
+from ..api.models import ControllerRef, DiscoveredController, mac_key, mac_to_bytes
+from ..api.event_router import EventHealth, Lease, ZenEventReceiver
+from ..api.commands import ZenCommandClient
+from .context import EntityContext
+from ..api.types import Const, Transport, ZenEventMode
+from ..exceptions import ZenConnectionError, ZenTimeoutError
+from ..io import ZenClient
+from .wiring import ZenEventWiring
 
 """
 ===================================================================================
@@ -31,7 +46,7 @@ intended for use in a control interface or home automation system written in Pyt
 
 
 Terms:
-ZenProtocol = A class which implements the ZenControl TPI Advanced API using zen_io.
+ZenCommandClient = Command plane (TPI over zen_io). ZenControl owns commands + context + event_receiver.
 ZenController = Represents a ZenControl controller.
 ZenAddress = Represents a DALI address.
 ZenInstance = Represents a DALI ECD instance.
@@ -130,6 +145,35 @@ def _loads_interview_data(data: str | dict[str, Any]) -> dict[str, Any]:
     return data
 
 
+def _or_group_label(label: str | None, number: int) -> str:
+    return label if label is not None else f"Group {number}"
+
+
+def _or_device_label(label: str | None, address: ZenAddress) -> str:
+    return label if label is not None else f"{address.controller.label} ECD {address.number}"
+
+
+def _or_instance_label(label: str | None, instance: ZenInstance) -> str:
+    if label is not None:
+        return label
+    return instance.type.name.title().replace("_", " ") + " " + str(instance.number)
+
+
+def _or_scene_label(label: str | None, scene: int) -> str:
+    return label if label is not None else f"Scene {scene}"
+
+
+async def _group_scene_labels(
+    commands: ZenCommandClient, address: ZenAddress
+) -> list[str | None]:
+    """Scene labels for a group, with generic names when the controller has none."""
+    scenes: list[str | None] = [None] * Const.MAX_SCENE
+    for scene in await commands.query_scene_numbers_for_group(address):
+        label = await commands.query_scene_label_for_group(address, scene)
+        scenes[scene] = _or_scene_label(label, scene)
+    return scenes
+
+
 class ZenControl:
     def __init__(self,
                  logger: logging.Logger | None = None,
@@ -137,19 +181,43 @@ class ZenControl:
                  unicast: bool = False,
                  listen_ip: str | None = None,
                  listen_port: int | None = None,
-                 cache: dict[bytes, dict[str, Any]] | None = None
                  ):
         self.logger = logger or logging.getLogger(__name__)
-        self.protocol: ZenProtocol = ZenProtocol(logger=self.logger, print_traffic=print_traffic, unicast=unicast, listen_ip=listen_ip, listen_port=listen_port, cache=cache if cache is not None else {})
+        # Preferred TPI event emit transport (not a socket bind).
+        self.unicast = unicast
+        self.commands: ZenCommandClient = ZenCommandClient(
+            logger=self.logger,
+            print_traffic=print_traffic,
+        )
+        self.context = EntityContext(commands=self.commands, logger=self.logger)
         self.controllers: list[ZenController] = []
-        # Each ZenControl instance gets its own callback registry so multiple
-        # instances (e.g. an integration and a test connection) cannot interfere.
-        self.protocol.callbacks = ZenCallbacks()
+        listen_ip_val = listen_ip if listen_ip else "0.0.0.0"
+        self.event_receiver = ZenEventReceiver(
+            logger=self.logger,
+            unicast_listen_ip=listen_ip_val if unicast else "0.0.0.0",
+            unicast_port=(listen_port if listen_port else 0) if unicast else 0,
+        )
+        self.identities = self.event_receiver.identities
+        self.identities.on_discovered = self._forward_discovered
+        self.event_receiver.on_unexpected_exit = self._on_listener_unexpected_exit
+        self._event_task: asyncio.Task[None] | None = None
+        self._disconnect_notified = False
+        self._wiring: ZenEventWiring | None = None
+        self._discovery_lease: Lease | None = None
         self._stopping = False
         self._supervisor_task: asyncio.Task[None] | None = None
         self._keepalive_task: asyncio.Task[None] | None = None
         self._first_connected = asyncio.Event()
+        # Set on session restore; also woken on stop / leases-idle so waiters
+        # can observe those terminal conditions without polling.
+        self._session_restored = asyncio.Event()
+        self.event_receiver.on_leases_idle = self._session_restored.set
         self._controller_status_change: CallbackControllerStatusChange | None = None
+        self._resync_callback: CallbackOnResync | None = None
+        self._enrich_locks: dict[str, asyncio.Lock] = {}
+        # Per-controller tail of scheduled event-dispatch tasks (I8: keep the
+        # funnel consumer free of entity/callback/device work).
+        self._event_dispatch_tail: dict[str, asyncio.Task[None]] = {}
         self.reconnect_min_delay = Const.RECONNECT_MIN_DELAY
         self.reconnect_max_delay = Const.RECONNECT_MAX_DELAY
         self.reconnect_healthy_seconds = Const.RECONNECT_HEALTHY_SECONDS
@@ -166,88 +234,98 @@ class ZenControl:
 
     def clear_entity_caches(self) -> None:
         """Clear entity singleton registries for this ZenControl instance."""
-        self.protocol.clear_entity_cache()
-
-    @property
-    def cache(self) -> dict[bytes, dict[str, Any]]:
-        return self.protocol.cache
+        self.context.clear_entity_cache()
 
     @property
     def on_connect(self) -> CallbackOnConnect | None:
-        return self.protocol.callbacks.on_connect
+        return self.context.callbacks.on_connect
     @on_connect.setter
     def on_connect(self, func: CallbackOnConnect | None) -> None:
-        self.protocol.callbacks.on_connect = func
+        self.context.callbacks.on_connect = func
 
     @property
     def on_disconnect(self) -> CallbackOnDisconnect | None:
-        return self.protocol.callbacks.on_disconnect
+        return self.context.callbacks.on_disconnect
     @on_disconnect.setter
     def on_disconnect(self, func: CallbackOnDisconnect | None) -> None:
-        self.protocol.callbacks.on_disconnect = func
+        self.context.callbacks.on_disconnect = func
+
+    @property
+    def on_resync(self) -> CallbackOnResync | None:
+        return self._resync_callback
+    @on_resync.setter
+    def on_resync(self, func: CallbackOnResync | None) -> None:
+        self._resync_callback = func
 
     @property
     def profile_change(self) -> CallbackProfileChange | None:
-        return self.protocol.callbacks.profile_change
+        return self.context.callbacks.profile_change
     @profile_change.setter
     def profile_change(self, func: CallbackProfileChange | None) -> None:
-        self.protocol.callbacks.profile_change = func
+        self.context.callbacks.profile_change = func
 
     @property
     def group_change(self) -> CallbackGroupChange | None:
-        return self.protocol.callbacks.group_change
+        return self.context.callbacks.group_change
     @group_change.setter
     def group_change(self, func: CallbackGroupChange | None) -> None:
-        self.protocol.callbacks.group_change = func
+        self.context.callbacks.group_change = func
 
     @property
     def light_change(self) -> CallbackLightChange | None:
-        return self.protocol.callbacks.light_change
+        return self.context.callbacks.light_change
     @light_change.setter
     def light_change(self, func: CallbackLightChange | None) -> None:
-        self.protocol.callbacks.light_change = func
+        self.context.callbacks.light_change = func
 
     @property
     def button_press(self) -> CallbackButtonPress | None:
-        return self.protocol.callbacks.button_press
+        return self.context.callbacks.button_press
     @button_press.setter
     def button_press(self, func: CallbackButtonPress | None) -> None:
-        self.protocol.callbacks.button_press = func
+        self.context.callbacks.button_press = func
     
     @property
     def button_long_press(self) -> CallbackButtonLongPress | None:
-        return self.protocol.callbacks.button_long_press
+        return self.context.callbacks.button_long_press
     @button_long_press.setter
     def button_long_press(self, func: CallbackButtonLongPress | None) -> None:
-        self.protocol.callbacks.button_long_press = func
+        self.context.callbacks.button_long_press = func
 
     @property
     def absolute_input_change(self) -> CallbackAbsoluteInputChange | None:
-        return self.protocol.callbacks.absolute_input_change
+        return self.context.callbacks.absolute_input_change
     @absolute_input_change.setter
     def absolute_input_change(self, func: CallbackAbsoluteInputChange | None) -> None:
-        self.protocol.callbacks.absolute_input_change = func
+        self.context.callbacks.absolute_input_change = func
 
     @property
     def motion_event(self) -> CallbackMotionEvent | None:
-        return self.protocol.callbacks.motion_event
+        return self.context.callbacks.motion_event
     @motion_event.setter
     def motion_event(self, func: CallbackMotionEvent | None) -> None:
-        self.protocol.callbacks.motion_event = func
+        self.context.callbacks.motion_event = func
     
     @property
     def system_variable_change(self) -> CallbackSystemVariableChange | None:
-        return self.protocol.callbacks.system_variable_change
+        return self.context.callbacks.system_variable_change
     @system_variable_change.setter
     def system_variable_change(self, func: CallbackSystemVariableChange | None) -> None:
-        self.protocol.callbacks.system_variable_change = func
+        self.context.callbacks.system_variable_change = func
 
     @property
     def controller_discovered(self) -> CallbackControllerDiscovered | None:
-        return self.protocol.callbacks.controller_discovered
+        return self.context.callbacks.controller_discovered
     @controller_discovered.setter
     def controller_discovered(self, func: CallbackControllerDiscovered | None) -> None:
-        self.protocol.callbacks.controller_discovered = func
+        self.context.callbacks.controller_discovered = func
+
+    @property
+    def controller_identified(self) -> CallbackControllerIdentified | None:
+        return self.context.callbacks.controller_identified
+    @controller_identified.setter
+    def controller_identified(self, func: CallbackControllerIdentified | None) -> None:
+        self.context.callbacks.controller_identified = func
 
     @property
     def controller_status_change(self) -> CallbackControllerStatusChange | None:
@@ -261,16 +339,94 @@ class ZenControl:
     @property
     def discovered_controllers(self) -> list[DiscoveredController]:
         """Controllers identified from multicast but not yet registered."""
-        return list(self.protocol.identified_controllers)
+        return list(self.identities.discovered)
+
+    def event_health_for(self, controller: ZenController | str) -> EventHealth | None:
+        """Per-binding event-plane health, or None if the controller is not attached."""
+        if self._wiring is None:
+            return None
+        binding = self._wiring.get(controller)
+        return None if binding is None else binding.event_health
+
+    @property
+    def event_task(self) -> asyncio.Task[None] | None:
+        """Funnel consumer task for the current session.
+
+        Prefers a live receiver consumer. Falls back to a stashed task from an
+        unexpected exit so the supervisor can await it once; never returns a
+        done receiver consumer that was not stashed (that would busy-spin).
+        """
+        live = self.event_receiver.consumer_task
+        if live is not None and not live.done():
+            return live
+        if self._event_task is not None:
+            return self._event_task
+        return None
+
+    def is_event_monitoring_active(self) -> bool:
+        """True while leases are held, transports are open, and the consumer runs."""
+        task = self.event_task
+        if task is None or task.done():
+            return False
+        return self.event_receiver.leased_transports_open()
+
+    def _has_event_leases(self) -> bool:
+        return (
+            self.event_receiver.lease_count(Transport.MULTICAST) > 0
+            or self.event_receiver.lease_count(Transport.UNICAST) > 0
+        )
+
+    async def notify_disconnect(self) -> None:
+        """Fire on_disconnect at most once per monitoring session."""
+        if self._disconnect_notified:
+            return
+        self._disconnect_notified = True
+        if not callable(self.context.callbacks.on_disconnect):
+            return
+        try:
+            await self.context.callbacks.on_disconnect()
+        except Exception as err:
+            self.logger.error(f"on_disconnect error: {err}")
+
+    async def _on_listener_unexpected_exit(self) -> None:
+        """Handle funnel consumer death. Recoverable gaps do not disconnect (I10)."""
+        self._event_task = self.event_receiver.consumer_task
+        if self._has_event_leases():
+            return
+        await self.notify_disconnect()
+
+    async def _forward_discovered(self, discovered: DiscoveredController) -> None:
+        callback = self.context.callbacks.controller_discovered
+        if not callable(callback):
+            return
+        try:
+            await callback(discovered)
+        except Exception as err:
+            self.logger.error(
+                "controller_discovered callback error: %s", err, exc_info=err
+            )
+
+    async def _notify_controller_identified(
+        self, controller: SuperZenController, mac: str
+    ) -> None:
+        callback = self.context.callbacks.controller_identified
+        if not callable(callback):
+            return
+        try:
+            await callback(controller, mac)
+        except Exception as err:
+            self.logger.error(
+                "controller_identified callback error: %s", err, exc_info=err
+            )
 
     # ============================
     # Setup / Start / Stop
     # ============================
 
     def add_controller(self, id: int, name: str, label: str, host: str, port: int = 5108, mac: str | None = None, filtering: bool = False) -> ZenController:
-        controller = ZenController(protocol=self.protocol, id=id, name=name, label=label, host=host, port=port, mac=mac, filtering=filtering)
+        controller = ZenController(ctx=self.context, id=id, name=name, label=label, host=host, port=port, mac=mac, filtering=filtering)
         self.controllers.append(controller)
-        self.protocol.set_controllers(self.controllers)
+        self.identities.forget(host=host, mac=mac)
         return controller
 
     async def remove_controller(self, controller: ZenController | str) -> None:
@@ -282,17 +438,21 @@ class ZenControl:
         name = controller if isinstance(controller, str) else controller.name
         removed = [c for c in self.controllers if c.name == name]
         self.controllers = [c for c in self.controllers if c.name != name]
-        self.protocol.set_controllers(self.controllers)
-        self.protocol.purge_controller_entities(name)
+        if self._wiring is not None:
+            await self._wiring.detach(name)
+        self._forget_event_dispatch(name)
+        self.context.purge_controller_entities(name)
         for ctrl in removed:
-            client = ctrl.client
-            ctrl.client = None
-            if client is None:
-                continue
-            try:
-                await client.close()
-            except Exception:
-                pass
+            await self.commands._invalidate_client(ctrl)
+
+    def _event_mode_for(self, controller: ZenController) -> ZenEventMode:
+        return ZenEventMode(
+            enabled=True,
+            filtering=controller.filtering,
+            transport=(
+                Transport.UNICAST if self.unicast else Transport.MULTICAST
+            ),
+        )
 
     async def configure_controller_events(self, controller: ZenController) -> bool:
         """Enable TPI event emit for one controller using this client's listen mode.
@@ -301,25 +461,22 @@ class ZenControl:
         newly attached controller joins the shared listener. Returns True when the
         emit-enable command succeeds.
         """
-        if self.protocol.event_listener is None:
+        if self._wiring is None:
             return False
-        unicast = self.protocol.unicast
-        await self.protocol.set_tpi_event_unicast_address(
-            controller,
-            ipaddr=self.protocol.local_ip if unicast else None,
-            port=self.protocol.listen_port if unicast else None,
-        )
-        return bool(
-            await self.protocol.tpi_event_emit(
-                controller,
-                ZenEventMode(
-                    enabled=True,
-                    filtering=controller.filtering,
-                    unicast=unicast,
-                    multicast=not unicast,
-                ),
+        mode = self._event_mode_for(controller)
+        try:
+            if self._wiring.get(controller) is not None:
+                await self._wiring.rearm(controller)
+            else:
+                await self._wiring.attach(controller, mode)
+            return True
+        except Exception as err:
+            self.logger.debug(
+                "configure_controller_events failed for %s: %s",
+                controller.name,
+                err,
             )
-        )
+            return False
 
     async def assert_controller_events(self, controller: ZenController) -> bool:
         """Ping event emit state and re-assert config if the controller lost it.
@@ -332,7 +489,15 @@ class ZenControl:
         Never re-asserts while ``is_controller_ready()`` is false — the startup
         sequence can take several minutes after a reboot.
         """
-        if self.protocol.event_listener is None:
+        if not self.is_event_monitoring_active():
+            return False
+        if self._wiring is not None and self._wiring.get(controller) is None:
+            # Binding was dropped (e.g. MAC promotion conflict) — do not keep
+            # confirming emit into a route that no longer exists.
+            self.logger.debug(
+                "No event binding for %s — skipping emit keepalive",
+                controller.name,
+            )
             return False
 
         ready = await controller.is_controller_ready()
@@ -351,20 +516,17 @@ class ZenControl:
             await self._notify_controller_status(controller, "starting")
             return True
 
-        unicast = self.protocol.unicast
+        unicast = self.unicast
         needs_reassert = False
-        info = await self.protocol.query_tpi_event_unicast_address(controller)
+        info = await self.commands.query_tpi_event_unicast_address(controller)
         if info is not None:
             mode = info["mode"]
             if not mode.enabled or bool(mode.unicast) != unicast:
                 needs_reassert = True
-            elif unicast and (
-                info.get("port") != self.protocol.listen_port
-                or info.get("ip") != self.protocol.local_ip
-            ):
+            elif unicast and self._unicast_target_mismatch(controller, info):
                 needs_reassert = True
         else:
-            enabled = await self.protocol.query_tpi_event_emit_state(controller)
+            enabled = await self.commands.query_tpi_event_emit_state(controller)
             if enabled is None:
                 self.logger.debug(
                     "No response from %s during event keepalive ping",
@@ -389,6 +551,23 @@ class ZenControl:
         await self._notify_controller_status(controller, "online")
         return True
 
+    def _unicast_target_mismatch(
+        self, controller: ZenController, info: dict[str, Any]
+    ) -> bool:
+        """True when the controller's programmed unicast target is wrong for it.
+
+        Compares against that controller's binding advertise (per-``toward``).
+        Without a live advertise there is nothing to compare — return False.
+        """
+        if self._wiring is None:
+            return False
+        binding = self._wiring.get(controller)
+        advertise = None if binding is None else binding.lease.advertise
+        if advertise is None:
+            return False
+        expected_ip, expected_port = advertise
+        return info.get("port") != expected_port or info.get("ip") != expected_ip
+
     async def _notify_controller_status(
         self, controller: ZenController, status: ControllerRuntimeStatus
     ) -> None:
@@ -404,48 +583,126 @@ class ZenControl:
                 err,
             )
 
+    async def enrich_discovered(
+        self, discovered: DiscoveredController
+    ) -> DiscoveredController:
+        """Probe ``QUERY_CONTROLLER_LABEL`` over the command plane and store the result.
+
+        Discovery on the identity log is host/mac only. Call this (or
+        ``discover()``, which enriches its return value) when a distinct label
+        is needed for UI listing. Uses a temporary controller name for the UDP
+        client; does not register the controller.
+        """
+        if discovered.label:
+            return discovered
+
+        key = mac_key(discovered.mac)
+        lock = self._enrich_locks.setdefault(key, asyncio.Lock())
+        async with lock:
+            current = self.identities.get(mac=discovered.mac) or discovered
+            if current.label:
+                return current
+
+            probe_name = f"_discover_{key.replace(':', '')}"
+            temp = SuperZenController(
+                id=f"discover-{key}",
+                name=probe_name,
+                label="",
+                host=discovered.host,
+                port=discovered.port,
+                mac=discovered.mac,
+            )
+            label: str | None = None
+            try:
+                label = await self.commands.query_controller_label(temp)
+            except ZenTimeoutError:
+                self.logger.info(
+                    "Discovered controller %s (%s) but label query timed out",
+                    discovered.host,
+                    discovered.mac,
+                )
+            except Exception as err:
+                self.logger.warning(
+                    "Discovered controller %s (%s) but label query failed: %s",
+                    discovered.host,
+                    discovered.mac,
+                    err,
+                )
+            finally:
+                await self.commands._invalidate_client(temp)
+
+            if not label:
+                return current
+
+            enriched = DiscoveredController(
+                host=current.host,
+                mac=current.mac,
+                label=label,
+                port=current.port,
+                first_seen=current.first_seen,
+                last_seen=current.last_seen,
+            )
+            self.identities.replace(enriched)
+            self.logger.info(
+                "Enriched discovered controller %s mac=%s label=%r",
+                enriched.host,
+                enriched.mac,
+                enriched.label,
+            )
+            return enriched
+
     async def discover(self, timeout: float = 5.0) -> list[DiscoveredController]:
-        """Listen for multicast and return controllers identified within ``timeout`` seconds.
+        """Listen for multicast and return controllers heard within ``timeout`` seconds.
 
         Starts event monitoring if needed. Works with zero registered controllers
-        and also reports controllers that are not already registered while running.
+        and also reports unregistered controllers while already running. Returns
+        identities with a packet in this window (``last_seen``), so a second call
+        on a long-lived instance still surfaces controllers that emit again —
+        required for HA "add another" / "try discovery again".
+
+        Opens a temporary multicast lease when multicast is not already up
+        (e.g. unicast-only runtime). Enriches each result with a command-plane
+        label probe after the listen window.
         """
-        before = {
-            (d.mac.upper().replace("-", ":"), d.host)
-            for d in self.protocol.identified_controllers
-        }
+        window_start = time.time()
         started_here = False
         if self._supervisor_task is None or self._supervisor_task.done():
             await self.start()
             started_here = True
+
+        temp_mcast: Lease | None = None
+        if not self.event_receiver.is_transport_open(Transport.MULTICAST):
+            temp_mcast = await self.event_receiver.acquire(Transport.MULTICAST)
+        # Snapshot before teardown: stop() → close() clears the identity log.
+        found: list[DiscoveredController] = []
         try:
             await asyncio.sleep(timeout)
+            found = self.identities.heard_since(window_start)
         finally:
+            if temp_mcast is not None:
+                await temp_mcast.release()
             if started_here:
                 await self.stop()
-        return [
-            d
-            for d in self.protocol.identified_controllers
-            if (d.mac.upper().replace("-", ":"), d.host) not in before
-        ]
+
+        return list(await asyncio.gather(*(self.enrich_discovered(d) for d in found)))
 
     async def start(self) -> None:
-        """Start event monitoring with automatic reconnect on unexpected loss."""
+        """Start event monitoring; bindings survive receiver session restarts (I10)."""
         self._stopping = False
         self._first_connected = asyncio.Event()
-        self.protocol.set_callbacks(
-            button_press_callback = self.button_press_event,
-            button_hold_callback = self.button_hold_event,
-            absolute_input_callback = self.absolute_input_event,
-            level_change_callback = self.level_change_event,
-            group_level_change_callback = self.level_change_event,
-            scene_change_callback = self.scene_change_event,
-            is_occupied_callback = self.is_occupied_event,
-            system_variable_change_callback = self.system_variable_change_event,
-            colour_change_callback = self.colour_change_event,
-            profile_change_callback = self.profile_change_event,
-            disconnect_callback = self._protocol_disconnect_event,
+        self._session_restored = asyncio.Event()
+        self.event_receiver.on_leases_idle = self._session_restored.set
+        self._wiring = ZenEventWiring(
+            self.event_receiver,
+            self.commands,
+            event_handler=self._on_controller_event,
+            logger=self.logger,
         )
+        self._wiring.on_resync = self._on_resync
+        self._wiring.on_identified = self._on_controller_identified
+        self._wiring.on_lost = self._on_binding_lost
+        # Wiring rearms emit; replace protocol's session-lease rearm path.
+        self.event_receiver.on_session_restored = self._on_session_restored
         if self._supervisor_task is None or self._supervisor_task.done():
             self._supervisor_task = asyncio.create_task(self._event_monitor_supervisor())
         if self._keepalive_task is None or self._keepalive_task.done():
@@ -473,19 +730,26 @@ class ZenControl:
         """Single shutdown path for ``stop`` and ``aclose``.
 
         Ownership:
-        - This layer owns the supervisor and keepalive tasks.
-        - ``ZenProtocol`` owns the packet listener session and fire-and-forget
-          background tasks (via ``stop_event_monitoring`` / ``aclose``).
+        - This layer owns wiring, the supervisor, and keepalive tasks.
+        - Bindings release leases; the receiver closes endpoints when refcounts hit 0.
         """
         self._stopping = True
-        was_running = self.protocol.is_event_monitoring_active()
+        self._session_restored.set()  # wake restore waiters to observe stop
+        was_running = self._wiring is not None
         await self._cancel_owned_tasks()
+        if self._wiring is not None:
+            await self._wiring.detach_all()
+            self._wiring = None
+        self._event_dispatch_tail.clear()
+        if self._discovery_lease is not None:
+            await self._discovery_lease.release()
+            self._discovery_lease = None
+        await self.event_receiver.close()
         if close_clients:
-            await self.protocol.aclose()
-        else:
-            await self.protocol.stop_event_monitoring()
+            await self.context.cancel_background_tasks()
+            await self.commands.close_all_clients()
         if was_running:
-            await self.protocol.notify_disconnect()
+            await self.notify_disconnect()
         if clear_caches:
             self.clear_entity_caches()
 
@@ -497,76 +761,180 @@ class ZenControl:
     async def _cancel_task(self, attr: str) -> None:
         task: asyncio.Task[None] | None = getattr(self, attr)
         setattr(self, attr, None)
-        await ZenProtocol._cancel_and_await(task)
+        await EntityContext.cancel_and_await(task)
+
+    async def _attach_bindings(self) -> None:
+        """Attach once: subscribe + lease + program emit for every controller."""
+        assert self._wiring is not None
+        self._disconnect_notified = False
+        for controller in self.controllers:
+            if self._wiring.get(controller) is not None:
+                continue
+            await self._wiring.attach(controller, self._event_mode_for(controller))
+        if not self.controllers and self._discovery_lease is None:
+            self._discovery_lease = await self.event_receiver.acquire(
+                Transport.MULTICAST
+            )
+
+    async def _on_session_restored(self) -> None:
+        """Receiver re-opened leased transports — re-arm emit, then resync."""
+        try:
+            self._disconnect_notified = False
+            self._event_task = None
+            if self._wiring is not None:
+                await self._wiring.rearm_all()
+        finally:
+            # Tell the supervisor — do not make it discover restore by polling.
+            self._session_restored.set()
+
+    async def _on_resync(self) -> None:
+        """Invoke consumer on_resync after a session gap (not a wire event)."""
+        callback = self._resync_callback
+        if not callable(callback):
+            return
+        try:
+            await callback()
+        except Exception as err:
+            self.logger.error(f"on_resync error: {err}", exc_info=True)
+
+    async def _on_controller_identified(
+        self, controller: SuperZenController, mac: str
+    ) -> None:
+        """Forward first-time MAC promotion so HA can persist the unique ID."""
+        await self._notify_controller_identified(controller, mac)
+
+    async def _on_binding_lost(
+        self, controller: SuperZenController, reason: str
+    ) -> None:
+        """Receiver dropped routing for this controller — surface as unreachable."""
+        self.logger.error(
+            "Event binding lost for %s (%s)",
+            controller.name,
+            reason,
+        )
+        self._forget_event_dispatch(controller.name)
+        await self._notify_controller_status(
+            cast(ZenController, controller), "unreachable"
+        )
+
+    def _forget_event_dispatch(self, name: str) -> None:
+        """Drop the per-controller dispatch-chain tail when a binding goes away."""
+        self._event_dispatch_tail.pop(name, None)
 
     async def _event_monitor_supervisor(self) -> None:
-        """Keep the event listener running; reconnect with backoff after unexpected loss."""
+        """Attach once; on consumer death wait for receiver recovery (do not re-attach)."""
         delay = self.reconnect_min_delay
+        attached = False
+        connect_notified = False
         while not self._stopping:
             try:
-                await self.protocol.start_event_monitoring()
+                if not attached:
+                    await self._attach_bindings()
+                    attached = True
             except asyncio.CancelledError:
                 raise
             except Exception as err:
-                self.logger.error(f"Failed to start event monitoring: {err}")
+                self.logger.error(f"Failed to attach event bindings: {err}")
                 if self._is_stopping():
                     return
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, self.reconnect_max_delay)
                 continue
 
-            if callable(self.protocol.callbacks.on_connect):
+            if not connect_notified and callable(self.context.callbacks.on_connect):
                 try:
-                    await self.protocol.callbacks.on_connect()
+                    await self.context.callbacks.on_connect()
                 except Exception as err:
                     self.logger.error(f"on_connect error: {err}")
+                connect_notified = True
             self._first_connected.set()
             delay = self.reconnect_min_delay
 
-            event_task = self.protocol.event_task
+            event_task = self.event_task
             if event_task is None:
-                continue
+                # Idle with nothing leased — nothing left to supervise.
+                if not self._has_event_leases():
+                    return
+                # Between sessions (recover in flight) — await the restore signal.
+                if await self._wait_for_session_restore(None):
+                    continue
+                return
 
-            session_start = time.time()
             try:
-                await event_task
+                # wait() returns when the consumer finishes (including if it was
+                # cancelled). CancelledError here means *this* supervisor was
+                # cancelled — HA unload — so re-raise and do not reconnect.
+                await asyncio.wait({event_task})
             except asyncio.CancelledError:
-                # HA (and asyncio) cancel tasks on shutdown before unload can set
-                # _stopping. Never reconnect on cancel — always exit.
                 raise
-            except Exception as err:
-                self.logger.error(f"Event monitor task error: {err}")
+
+            # Observed dead — drop the stash so event_task cannot keep
+            # handing back this corpse on the next iteration.
+            if self._event_task is event_task:
+                self._event_task = None
+
+            if event_task.cancelled():
+                self.logger.error("Event monitor consumer cancelled unexpectedly")
+            elif (exc := event_task.exception()) is not None:
+                self.logger.error(f"Event monitor task error: {exc}")
 
             if self._is_stopping():
                 return
 
-            session_secs = time.time() - session_start
-            if session_secs >= self.reconnect_healthy_seconds:
-                delay = self.reconnect_min_delay
-            else:
-                delay = min(max(delay, self.reconnect_min_delay) * 2, self.reconnect_max_delay)
+            # I10: leases/subscriptions survive; the receiver owns bind retry.
+            # Wait on the restore Event — do not poll or duplicate backoff.
+            if await self._wait_for_session_restore(event_task):
+                continue
+            # Stopping, or lease counts hit zero — nothing left to supervise.
+            return
 
-            await self._prepare_for_reconnect()
-            self.logger.warning(
-                "Event monitoring stopped; reconnecting in %.1fs", delay
-            )
+    def _session_is_restored(self, dead_task: asyncio.Task[None] | None) -> bool:
+        """True when a live consumer (not ``dead_task``) has open leased transports."""
+        live = self.event_receiver.consumer_task
+        if live is None or live.done():
+            return False
+        if dead_task is not None and live is dead_task:
+            return False
+        return self.event_receiver.leased_transports_open()
+
+    async def _wait_for_session_restore(
+        self,
+        dead_task: asyncio.Task[None] | None,
+        *,
+        timeout: float | None = None,
+    ) -> bool:
+        """True when a new consumer runs and every leased transport is open.
+
+        Awaits ``_session_restored`` (set from ``_on_session_restored``, stop, and
+        leases-idle). With ``timeout=None`` (default), waits until restored, stop,
+        or leases are gone. Bind retry/backoff lives on the receiver.
+        """
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while True:
+            if self._is_stopping() or not self._has_event_leases():
+                return False
+            if self._session_is_restored(dead_task):
+                return True
+
+            self._session_restored.clear()
+            # Restore / stop / idle may have raced between the checks and clear.
+            if self._is_stopping() or not self._has_event_leases():
+                return False
+            if self._session_is_restored(dead_task):
+                return True
+
+            wait_timeout = None
+            if deadline is not None:
+                wait_timeout = deadline - time.monotonic()
+                if wait_timeout <= 0:
+                    return False
             try:
-                await asyncio.sleep(delay)
+                await asyncio.wait_for(self._session_restored.wait(), timeout=wait_timeout)
+            except TimeoutError:
+                return False
             except asyncio.CancelledError:
                 raise
-
-    async def _prepare_for_reconnect(self) -> None:
-        """Drop stale clients and refresh DNS before binding the listener again."""
-        for controller in self.controllers:
-            controller.refresh_ip()
-            client = controller.client
-            controller.client = None
-            if client is None:
-                continue
-            try:
-                await client.close()
-            except Exception:
-                pass
+            # Woken — loop to classify restore vs stop vs idle.
 
     async def _event_keepalive_loop(self) -> None:
         """Periodically ping controllers and re-enable TPI events if needed."""
@@ -579,7 +947,7 @@ class ZenControl:
                 await asyncio.sleep(self.event_keepalive_interval)
             except asyncio.CancelledError:
                 raise
-            if self._stopping or self.protocol.event_listener is None:
+            if self._stopping or not self.is_event_monitoring_active():
                 continue
             for controller in list(self.controllers):
                 if self._is_stopping():
@@ -595,88 +963,176 @@ class ZenControl:
                         err,
                     )
 
-    async def _protocol_disconnect_event(self) -> None:
-        """Forward protocol-level disconnect to the high-level on_disconnect hook."""
-        if callable(self.protocol.callbacks.on_disconnect):
-            await self.protocol.callbacks.on_disconnect()
-
     # ============================
-    # ZenProtocol callbacks
-    # ============================ 
-        
-    async def button_press_event(self, instance: ZenInstance, payload: bytes) -> None:
-        await ZenButton(protocol=self.protocol, instance=instance)._event_received()
+    # Typed event dispatch
+    # ============================
 
-    async def button_hold_event(self, instance: ZenInstance, payload: bytes) -> None:
-        await ZenButton(protocol=self.protocol, instance=instance)._event_received(held=True)
+    def _ecd_instance(
+        self,
+        controller: ZenController,
+        target: int,
+        instance_type: ZenInstanceType,
+        number: int,
+    ) -> ZenInstance | None:
+        ecd = target - 64
+        if not 0 <= ecd <= 63:
+            self.logger.error(f"Invalid ECD event target: {target}")
+            return None
+        address = ZenAddress(controller=controller, type=ZenAddressType.ECD, number=ecd)
+        return ZenInstance(address=address, type=instance_type, number=number)
 
-    async def absolute_input_event(self, instance: ZenInstance, payload: bytes) -> None:
-        await ZenAbsoluteInput(protocol=self.protocol, instance=instance)._event_received(
-            payload
-        )
+    def _ecg_or_group(
+        self, controller: ZenController, target: int
+    ) -> ZenAddress | None:
+        if target <= 63:
+            return ZenAddress(controller=controller, type=ZenAddressType.ECG, number=target)
+        if 64 <= target <= 79:
+            return ZenAddress(
+                controller=controller, type=ZenAddressType.GROUP, number=target - 64
+            )
+        self.logger.error(f"Invalid gear/group event target: {target}")
+        return None
 
-    async def is_occupied_event(self, instance: ZenInstance, payload: bytes) -> None:
-        await ZenMotionSensor(protocol=self.protocol, instance=instance)._event_received()
+    async def _on_controller_event(
+        self, controller: SuperZenController, ev: ZenDecodedEvent
+    ) -> None:
+        """Subscription handler entry — returns immediately (I8).
 
-    async def level_change_event(self, address: ZenAddress, arc_level: int, payload: bytes) -> None:
-        # LEVEL_CHANGE_V2: payload[1] is the dimming destination — ignore current level in payload[0]
-        if len(payload) >= 2:
-            arc_level = payload[1]
-        if address.type == ZenAddressType.ECG:
-            light = ZenLight(protocol=self.protocol, address=address)
-            await light._event_received(level=arc_level)
+        Entity updates and application callbacks run on a per-controller task
+        chain so a slow callback or accidental device query cannot stall the
+        shared funnel consumer. The funnel drop counter therefore reflects
+        datagram bursts / parse backlog, not callback latency — slow work grows
+        this chain instead. Handlers must still avoid awaiting the command
+        plane; if they do, they only stall that controller's chain.
+        """
+        ctrl = cast(ZenController, controller)
+        name = ctrl.name
+        previous = self._event_dispatch_tail.get(name)
 
-            # Delay the light event to allow group updates to arrive and propogate
-            # async def delayed_event():
-            #     await asyncio.sleep(0.1)
-            #     await light._event_received(level=arc_level)
-            # asyncio.create_task(delayed_event())
-        elif address.type == ZenAddressType.GROUP:
-            group = ZenGroup(protocol=self.protocol, address=address)
-            await group._event_received(level=arc_level)
+        async def run() -> None:
+            if previous is not None and not previous.done():
+                try:
+                    await previous
+                except asyncio.CancelledError:
+                    # Predecessor may have been cancelled; ignore that. If *we*
+                    # were cancelled while waiting (shutdown), honour it.
+                    me = asyncio.current_task()
+                    if me is not None and me.cancelling():
+                        raise
+                except Exception:
+                    pass
+            try:
+                await self._dispatch_controller_event(ctrl, ev)
+            except asyncio.CancelledError:
+                raise
+            except Exception as err:
+                self.logger.error(
+                    "Event dispatch error for %s: %s", name, err, exc_info=True
+                )
 
-            # Don't cascade groups. Group change events are untrustworthy.
-            # for light in group.lights:
-            #     await light._event_received(level=arc_level, cascaded_from=group)
+        self._event_dispatch_tail[name] = self.context.track_task(run())
 
-    async def colour_change_event(self, address: ZenAddress, colour: ZenColour | None, payload: bytes) -> None:
-        # Protocol already parses payload via ZenColour.from_bytes before calling us
-        if colour is None:
-            return
-        if address.type == ZenAddressType.ECG:
-            # Delay the light event to allow group updates to arrive and propogate
-            ecg = ZenLight(protocol=self.protocol, address=address)
-            async def delayed_colour_event() -> None:
-                await asyncio.sleep(0.0)
-                await ecg._event_received(colour=colour)
-            self.protocol.track_task(delayed_colour_event())
-        elif address.type == ZenAddressType.GROUP:
-            group = ZenGroup(protocol=self.protocol, address=address)
-            await group._event_received(colour=colour)
-            for light in group.lights:
-                await light._event_received(colour=colour, cascaded_from=group)
+    async def _dispatch_controller_event(
+        self, ctrl: ZenController, ev: ZenDecodedEvent
+    ) -> None:
+        """Apply a decoded event to entities and fire application callbacks."""
+        match ev:
+            case ButtonPress(target, instance_num):
+                instance = self._ecd_instance(
+                    ctrl, target, ZenInstanceType.PUSH_BUTTON, instance_num
+                )
+                if instance is None:
+                    return
+                await ZenButton(ctx=self.context, instance=instance)._event_received()
 
-    async def scene_change_event(self, address: ZenAddress, scene: int, active: bool, payload: bytes) -> None:
-        if address.type == ZenAddressType.ECG:
-            # Delay the light event to allow group updates to arrive and propogate
-            ecg = ZenLight(protocol=self.protocol, address=address)
-            # Option 3: Inline async function with shorter name
-            async def delayed_scene_event() -> None:
-                await asyncio.sleep(0.0)
-                await ecg._event_received(scene=scene, active=active)
-            self.protocol.track_task(delayed_scene_event())
-        elif address.type == ZenAddressType.GROUP:
-            group = ZenGroup(protocol=self.protocol, address=address)
-            await group._event_received(scene=scene, active=active)
-            for light in group.lights:
-                await light._event_received(scene=scene, active=active, cascaded_from=group)
-    
-    async def system_variable_change_event(self, controller: ZenController, target: int, value: int, payload: bytes) -> None:
-        await ZenSystemVariable(protocol=self.protocol, controller=controller, id=target)._event_received(value)
+            case ButtonHold(target, instance_num):
+                instance = self._ecd_instance(
+                    ctrl, target, ZenInstanceType.PUSH_BUTTON, instance_num
+                )
+                if instance is None:
+                    return
+                await ZenButton(
+                    ctx=self.context, instance=instance
+                )._event_received(held=True)
 
-    async def profile_change_event(self, controller: ZenController, profile: int, payload: bytes) -> None:
-        await controller._event_received(profile=profile)
-    
+            case AbsoluteInput(target, instance_num, value):
+                instance = self._ecd_instance(
+                    ctrl, target, ZenInstanceType.ABSOLUTE_INPUT, instance_num
+                )
+                if instance is None:
+                    return
+                # Absolute-input entity still expects the wire payload shape
+                payload = bytes([instance_num, (value >> 8) & 0xFF, value & 0xFF])
+                await ZenAbsoluteInput(
+                    ctx=self.context, instance=instance
+                )._event_received(payload)
+
+            case IsOccupied(target, instance_num):
+                instance = self._ecd_instance(
+                    ctrl, target, ZenInstanceType.OCCUPANCY_SENSOR, instance_num
+                )
+                if instance is None:
+                    return
+                await ZenMotionSensor(
+                    ctx=self.context, instance=instance
+                )._event_received()
+
+            case LevelChangeV2(target, _current, level):
+                address = self._ecg_or_group(ctrl, target)
+                if address is None:
+                    return
+                if address.type == ZenAddressType.ECG:
+                    light = ZenLight(ctx=self.context, address=address)
+                    await light._event_received(level=level)
+                elif address.type == ZenAddressType.GROUP:
+                    group = ZenGroup(ctx=self.context, address=address)
+                    await group._event_received(level=level)
+
+            case ColourChange(target, colour_bytes):
+                address = self._ecg_or_group(ctrl, target)
+                if address is None:
+                    return
+                colour = ZenColour.from_bytes(colour_bytes)
+                if colour is None:
+                    return
+                if address.type == ZenAddressType.ECG:
+                    await ZenLight(
+                        ctx=self.context, address=address
+                    )._event_received(colour=colour)
+                elif address.type == ZenAddressType.GROUP:
+                    group = ZenGroup(ctx=self.context, address=address)
+                    await group._event_received(colour=colour)
+                    for light in group.lights:
+                        await light._event_received(colour=colour, cascaded_from=group)
+
+            case SceneChange(target, scene, active):
+                address = self._ecg_or_group(ctrl, target)
+                if address is None:
+                    return
+                if address.type == ZenAddressType.ECG:
+                    await ZenLight(
+                        ctx=self.context, address=address
+                    )._event_received(scene=scene, active=active)
+                elif address.type == ZenAddressType.GROUP:
+                    group = ZenGroup(ctx=self.context, address=address)
+                    await group._event_received(scene=scene, active=active)
+                    for light in group.lights:
+                        await light._event_received(
+                            scene=scene, active=active, cascaded_from=group
+                        )
+
+            case SystemVariableChange(target, value):
+                await ZenSystemVariable(
+                    ctx=self.context, controller=ctrl, id=target
+                )._event_received(value)
+
+            case ProfileChange(profile):
+                await ctrl._event_received(profile=profile)
+
+            case _:
+                # Deprecated level events and group occupancy — ignored
+                return
+
     # ============================
     # Abstraction layer commands
     # ============================ 
@@ -686,11 +1142,11 @@ class ZenControl:
         profiles: set[ZenProfile] = set()
         controllers = [controller] if controller else self.controllers
         for ctrl in controllers:
-            numbers = await self.protocol.query_profile_numbers(controller=ctrl)
+            numbers = await self.commands.query_profile_numbers(controller=ctrl)
             if numbers is None:
                 continue
             for number in numbers:
-                profile = await ZenProfile.create(protocol=self.protocol, controller=ctrl, number=number)
+                profile = await ZenProfile.create(ctx=self.context, controller=ctrl, number=number)
                 profiles.add(profile)
         return profiles
 
@@ -699,9 +1155,9 @@ class ZenControl:
         groups: set[ZenGroup] = set()
         controllers = [controller] if controller else self.controllers
         for ctrl in controllers:
-            addresses = await self.protocol.query_group_numbers(controller=ctrl)
+            addresses = await self.commands.query_group_numbers(controller=ctrl)
             for address in addresses:
-                group = await ZenGroup.create(protocol=self.protocol, address=address)
+                group = await ZenGroup.create(ctx=self.context, address=address)
                 groups.add(group)
         return groups
     
@@ -710,9 +1166,9 @@ class ZenControl:
         lights: set[ZenLight] = set()
         controllers = [controller] if controller else self.controllers
         for ctrl in controllers:
-            addresses = await self.protocol.query_control_gear_dali_addresses(controller=ctrl)
+            addresses = await self.commands.query_control_gear_dali_addresses(controller=ctrl)
             for address in addresses:
-                light = await ZenLight.create(protocol=self.protocol, address=address)
+                light = await ZenLight.create(ctx=self.context, address=address)
                 lights.add(light)
         # Second pass: labels are known; split shared comma-labels into sub_labels.
         _assign_light_sub_labels(lights)
@@ -728,7 +1184,7 @@ class ZenControl:
         seen: set[tuple[str, int]] = set()
         addresses: list[ZenAddress] = []
         for start in range(0, 128, 60):
-            batch = await self.protocol.query_dali_addresses_with_instances(
+            batch = await self.commands.query_dali_addresses_with_instances(
                 controller=controller, start_address=start
             )
             for addr in batch:
@@ -745,10 +1201,10 @@ class ZenControl:
         for ctrl in controllers:
             addresses = await self._get_addresses_with_instances(ctrl)
             for address in addresses:
-                instances = await self.protocol.query_instances_by_address(address=address)
+                instances = await self.commands.query_instances_by_address(address=address)
                 for instance in instances:
                     if instance.type == ZenInstanceType.PUSH_BUTTON:
-                        button = await ZenButton.create(protocol=self.protocol, instance=instance)
+                        button = await ZenButton.create(ctx=self.context, instance=instance)
                         buttons.add(button)
         return buttons
     
@@ -759,10 +1215,10 @@ class ZenControl:
         for ctrl in controllers:
             addresses = await self._get_addresses_with_instances(ctrl)
             for address in addresses:
-                instances = await self.protocol.query_instances_by_address(address=address)
+                instances = await self.commands.query_instances_by_address(address=address)
                 for instance in instances:
                     if instance.type == ZenInstanceType.OCCUPANCY_SENSOR:
-                        motion_sensor = await ZenMotionSensor.create(protocol=self.protocol, instance=instance)
+                        motion_sensor = await ZenMotionSensor.create(ctx=self.context, instance=instance)
                         motion_sensors.add(motion_sensor)
         return motion_sensors
 
@@ -775,11 +1231,11 @@ class ZenControl:
         for ctrl in controllers:
             addresses = await self._get_addresses_with_instances(ctrl)
             for address in addresses:
-                instances = await self.protocol.query_instances_by_address(address=address)
+                instances = await self.commands.query_instances_by_address(address=address)
                 for instance in instances:
                     if instance.type == ZenInstanceType.ABSOLUTE_INPUT:
                         absolute_input = await ZenAbsoluteInput.create(
-                            protocol=self.protocol, instance=instance
+                            ctx=self.context, instance=instance
                         )
                         absolute_inputs.add(absolute_input)
         return absolute_inputs
@@ -795,10 +1251,10 @@ class ZenControl:
         for ctrl in controllers:
             failed_attempts = 0
             for variable in range(Const.MAX_SYSVAR):
-                label = await self.protocol.query_system_variable_name(controller=ctrl, variable=variable)
+                label = await self.commands.query_system_variable_name(controller=ctrl, variable=variable)
                 if label:
                     failed_attempts = 0
-                    sysvar = await ZenSystemVariable.create(protocol=self.protocol, controller=ctrl, id=variable, label=label)
+                    sysvar = await ZenSystemVariable.create(ctx=self.context, controller=ctrl, id=variable, label=label)
                     sysvars.add(sysvar)
                 else:
                     failed_attempts += 1
@@ -811,8 +1267,9 @@ class ZenControl:
 # ============================ 
 
 class ZenController(SuperZenController):
-    # Narrow/override dataclass fields used by the interface layer
-    protocol: ZenProtocol
+    # Interface-owned references — not part of the API model (I9).
+    ctx: EntityContext
+    commands: ZenCommandClient
     version: str | None = None
 
     connected: bool = False
@@ -826,34 +1283,42 @@ class ZenController(SuperZenController):
     sysvars: set[ZenSystemVariable] = set()
     client_data: dict[str, Any] = {}
 
-    def __new__(cls, protocol: ZenProtocol, id: int, name: str, label: str, host: str, port: int = 5108, mac: str | None = None, filtering: bool = False) -> ZenController:
-        # Unique per protocol + controller name
-        registry = protocol.entity_registry.controllers
+    @property
+    def client(self) -> ZenClient | None:
+        """Compat shim: command clients live on commands, keyed by name."""
+        return self.commands.client_for(self)
+
+    @client.setter
+    def client(self, value: ZenClient | None) -> None:
+        self.commands.set_client(self, value)
+
+    def __new__(cls, ctx: EntityContext, id: int, name: str, label: str, host: str, port: int = 5108, mac: str | None = None, filtering: bool = False) -> ZenController:
+        # Unique per context + controller name
+        registry = ctx.registry.controllers
         if name not in registry:
             inst = super().__new__(cls)
             registry[name] = inst
             inst.connected = False
-            inst.client = None  # Will be initialized when first used
             object.__setattr__(inst, "_ip", None)
-            object.__setattr__(inst, "mac_bytes", None)
             object.__setattr__(inst, "_dataclass_initialized", False)
             inst._reset()
             # Don't call interview() here - it will be called async later
         inst = registry[name]
         # Always refresh config fields; never wipe transport/interview state via __init__
-        inst.protocol = protocol
+        inst.ctx = ctx
+        inst.commands = ctx.commands
         inst.id = str(id)
         inst.name = name
         inst.label = label
         inst.host = host
         inst.port = port
-        inst.mac = mac
+        inst.mac = mac  # mac_bytes is derived from mac
         inst.filtering = filtering
-        inst._update_mac_bytes(mac)
+        mac_to_bytes(mac)  # eager validate on config refresh
         return cast(ZenController, inst)
 
-    def __init__(self, protocol: ZenProtocol, id: int, name: str, label: str, host: str, port: int = 5108, mac: str | None = None, filtering: bool = False) -> None:
-        # Dataclass __init__ resets client/version/etc. Run only once per singleton.
+    def __init__(self, ctx: EntityContext, id: int, name: str, label: str, host: str, port: int = 5108, mac: str | None = None, filtering: bool = False) -> None:
+        # Dataclass __init__ resets version/etc. Run only once per singleton.
         if getattr(self, "_dataclass_initialized", False):
             return
         super().__init__(
@@ -863,15 +1328,16 @@ class ZenController(SuperZenController):
             host=host,
             port=port,
             mac=mac,
-            protocol=protocol,
             filtering=filtering,
         )
+        self.ctx = ctx
+        self.commands = ctx.commands
         object.__setattr__(self, "_dataclass_initialized", True)
     
     @classmethod
-    async def create(cls, protocol: ZenProtocol, id: int, name: str, label: str, host: str, port: int = 5108, mac: str | None = None, filtering: bool = False) -> ZenController:
+    async def create(cls, ctx: EntityContext, id: int, name: str, label: str, host: str, port: int = 5108, mac: str | None = None, filtering: bool = False) -> ZenController:
         """Async factory method for ZenController"""
-        controller = cls(protocol=protocol, id=id, name=name, label=label, host=host, port=port, mac=mac, filtering=filtering)
+        controller = cls(ctx=ctx, id=id, name=name, label=label, host=host, port=port, mac=mac, filtering=filtering)
         await controller.interview()
         return controller
     def __repr__(self) -> str:
@@ -889,7 +1355,7 @@ class ZenController(SuperZenController):
         self.sysvars = set()
         self.client_data = {}
     async def interview(self) -> bool:
-        protocol = self.protocol
+        protocol = self.commands
         if self.label is None or self.label == "":
             queried = await protocol.query_controller_label(self)
             if queried is not None:
@@ -897,22 +1363,22 @@ class ZenController(SuperZenController):
         self.version = await protocol.query_controller_version_number(self)
         current_profile = await protocol.query_current_profile_number(self)
         if current_profile is not None:
-            self.profile = ZenProfile(protocol=protocol, controller=self, number=current_profile)
+            self.profile = ZenProfile(ctx=self.ctx, controller=self, number=current_profile)
         self.connected = True
         return True
     async def _event_received(self, profile: int | None = None) -> None:
-        protocol = self.protocol
+        protocol = self.commands
         if profile is not None:
-            self.profile = ZenProfile(protocol=protocol, controller=self, number=profile)
-            cb = protocol.callbacks.profile_change
+            self.profile = ZenProfile(ctx=self.ctx, controller=self, number=profile)
+            cb = self.ctx.callbacks.profile_change
             if callable(cb):
                 await cb(profile=self.profile)
     def get_sysvar(self, id: int) -> ZenSystemVariable:
-        return ZenSystemVariable(protocol=self.protocol, controller=self, id=id)
+        return ZenSystemVariable(ctx=self.ctx, controller=self, id=id)
     async def is_controller_ready(self) -> bool | None:
-        return await self.protocol.query_controller_startup_complete(self)
+        return await self.commands.query_controller_startup_complete(self)
     async def is_dali_ready(self) -> bool | None:
-        return await self.protocol.query_is_dali_ready(self)
+        return await self.commands.query_is_dali_ready(self)
     async def switch_to_profile(self, profile: ZenProfile|int|str) -> bool:
         zp = None
         if isinstance(profile, ZenProfile):
@@ -924,45 +1390,57 @@ class ZenController(SuperZenController):
             for p in self.profiles:
                 if p.number == profile: zp = p
         if isinstance(zp, ZenProfile):
-            self.protocol.logger.debug("Switching to profile %s", zp)
-            result = await self.protocol.change_profile_number(self, zp.number)
+            self.commands.logger.debug("Switching to profile %s", zp)
+            result = await self.commands.change_profile_number(self, zp.number)
             return bool(result)
         else:
             return False
     async def return_to_scheduled_profile(self) -> bool | None:
-        return await self.protocol.return_to_scheduled_profile(self)
+        return await self.commands.return_to_scheduled_profile(self)
+
+
+def _registered(controller: ControllerRef) -> ZenController:
+    """Narrow ``address.controller`` to the interface subclass.
+
+    Addresses are typed with ``ControllerRef`` so ``api`` does not import this
+    layer; every registered controller is a ``ZenController`` instance.
+    """
+    return cast(ZenController, controller)
 
 
 class ZenProfile:
-    protocol: ZenProtocol
+    ctx: EntityContext
+    commands: ZenCommandClient
     controller: ZenController
     number: int
     label: str | None = None
     client_data: dict[str, Any] = {}
 
-    def __new__(cls, protocol: ZenProtocol, controller: ZenController, number: int) -> ZenProfile:
-        # Unique per protocol + controller + profile number
+    def __new__(cls, ctx: EntityContext, controller: ZenController, number: int) -> ZenProfile:
+        # Unique per context + controller + profile number
         compound_id = f"{controller.name} {number}"
-        registry = protocol.entity_registry.profiles
+        registry = ctx.registry.profiles
         if compound_id not in registry:
             inst = super().__new__(cls)
             registry[compound_id] = inst
-            inst.protocol = protocol
+            inst.ctx = ctx
+            inst.commands = ctx.commands
             inst.controller = controller
             inst.number = number
             inst._reset()
             # Don't call interview() here - it will be called async later
         return cast(ZenProfile, registry[compound_id])
 
-    def __init__(self, protocol: ZenProtocol, controller: ZenController, number: int) -> None:
-        self.protocol = protocol
+    def __init__(self, ctx: EntityContext, controller: ZenController, number: int) -> None:
+        self.ctx = ctx
+        self.commands = ctx.commands
         self.controller = controller
         self.number = number
     
     @classmethod
-    async def create(cls, protocol: ZenProtocol, controller: ZenController, number: int) -> ZenProfile:
+    async def create(cls, ctx: EntityContext, controller: ZenController, number: int) -> ZenProfile:
         """Async factory method for ZenProfile"""
-        profile = cls(protocol, controller, number)
+        profile = cls(ctx, controller, number)
         await profile.interview()
         return profile
     def __repr__(self) -> str:
@@ -984,17 +1462,18 @@ class ZenProfile:
         except Exception:
             return False
     async def interview(self) -> bool:
-        self.label = await self.protocol.query_profile_label(self.controller, self.number)
+        self.label = await self.commands.query_profile_label(self.controller, self.number)
         # Add self to controller's set of profiles
         self.controller.profiles.add(self)
         return True
     async def select(self) -> bool:
-        result = await self.protocol.change_profile_number(self.controller, self.number)
+        result = await self.commands.change_profile_number(self.controller, self.number)
         return bool(result)
 
 
 class ZenLight:
-    protocol: ZenProtocol
+    ctx: EntityContext
+    commands: ZenCommandClient
     address: ZenAddress
     label: str | None = None
     sub_label: str | None = None
@@ -1023,30 +1502,32 @@ class ZenLight:
     client_data: dict[str, Any] = {}
     _refresh_timer: asyncio.Task[None] | None = None
 
-    def __new__(cls, protocol: ZenProtocol, address: ZenAddress) -> Self:
+    def __new__(cls, ctx: EntityContext, address: ZenAddress) -> Self:
         # Inherited classes should bypass ZenLight __new__
         if cls is not ZenLight:
             return super().__new__(cls)
-        # Unique per protocol + controller + address
+        # Unique per context + controller + address
         compound_id = f"{address.controller.name} {address.number}"
-        registry = protocol.entity_registry.lights
+        registry = ctx.registry.lights
         if compound_id not in registry:
             inst = super().__new__(cls)
             registry[compound_id] = inst
-            inst.protocol = protocol
+            inst.ctx = ctx
+            inst.commands = ctx.commands
             inst.address = address
             inst._reset()
             # Don't call interview() here - it will be called async later
         return cast(Self, registry[compound_id])
 
-    def __init__(self, protocol: ZenProtocol, address: ZenAddress) -> None:
-        self.protocol = protocol
+    def __init__(self, ctx: EntityContext, address: ZenAddress) -> None:
+        self.ctx = ctx
+        self.commands = ctx.commands
         self.address = address
     
     @classmethod
-    async def create(cls, protocol: ZenProtocol, address: ZenAddress) -> ZenLight:
+    async def create(cls, ctx: EntityContext, address: ZenAddress) -> ZenLight:
         """Async factory method for ZenLight"""
-        instance = cls(protocol, address)
+        instance = cls(ctx, address)
         await instance.interview()
         return instance
     def __repr__(self) -> str:
@@ -1085,7 +1566,7 @@ class ZenLight:
         self.groups.clear()
         self.group_membership = list(membership)
         for group_address in self.group_membership:
-            group = ZenGroup(protocol=self.protocol, address=group_address)
+            group = ZenGroup(ctx=self.ctx, address=group_address)
             group.lights.add(self)
             self.groups.add(group)
     def interview_serialize(self) -> str:
@@ -1116,16 +1597,18 @@ class ZenLight:
                 for group in data.get("group_membership", [])
             ]
             self._apply_group_membership(membership)
-            self.address.controller.lights.add(self)
+            _registered(self.address.controller).lights.add(self)
             return True
         except Exception:
             return False
     async def interview(self) -> bool:
-        cgstatus = await self.protocol.dali_query_control_gear_status(self.address)
+        cgstatus = await self.commands.dali_query_control_gear_status(self.address)
         if cgstatus:
-            self.label = await self.protocol.query_dali_device_label(self.address, generic_if_none=True)
-            self.serial = await self.protocol.query_dali_serial(self.address)
-            self.cgtype = await self.protocol.dali_query_cg_type(self.address) or []
+            self.label = _or_device_label(
+                await self.commands.query_dali_device_label(self.address), self.address
+            )
+            self.serial = await self.commands.query_dali_serial(self.address)
+            self.cgtype = await self.commands.dali_query_cg_type(self.address) or []
             
             # If cgtype contains 6, it supports brightness
             if 6 in self.cgtype:
@@ -1133,7 +1616,7 @@ class ZenLight:
             
             # If cgtype contains 8, it supports some kind of colour
             if 8 in self.cgtype:
-                cgtype = await self.protocol.query_dali_colour_features(self.address)
+                cgtype = await self.commands.query_dali_colour_features(self.address)
                 # XY is independent of TC/RGBWAF; a fixture may support more than one.
                 if cgtype and cgtype.get("supports_xy", False) is True:
                     self.features["brightness"] = True
@@ -1141,7 +1624,7 @@ class ZenLight:
                 if cgtype and cgtype.get("supports_tunable", False) is True:
                     self.features["brightness"] = True
                     self.features["temperature"] = True
-                    colour_temp_limits = await self.protocol.query_dali_colour_temp_limits(self.address)
+                    colour_temp_limits = await self.commands.query_dali_colour_temp_limits(self.address)
                     if colour_temp_limits:
                         self.properties["min_kelvin"] = colour_temp_limits.get("soft_warmest", Const.DEFAULT_WARMEST_TEMP)
                         self.properties["max_kelvin"] = colour_temp_limits.get("soft_coolest", Const.DEFAULT_COOLEST_TEMP)
@@ -1156,15 +1639,15 @@ class ZenLight:
                     self.features["RGBWW"] = True
             
             # Scenes
-            self._scene_levels = await self.protocol.query_scene_levels_by_address(self.address)
-            self._scene_colours = await self.protocol.query_scene_colours_by_address(self.address)
+            self._scene_levels = await self.commands.query_scene_levels_by_address(self.address)
+            self._scene_colours = await self.commands.query_scene_colours_by_address(self.address)
 
             # Groups
-            groups = await self.protocol.query_group_membership_by_address(self.address)
+            groups = await self.commands.query_group_membership_by_address(self.address)
             self._apply_group_membership(groups or [])
             
             # Add to controller's set of lights
-            self.address.controller.lights.add(self)
+            _registered(self.address.controller).lights.add(self)
 
             return True
         else:
@@ -1172,11 +1655,11 @@ class ZenLight:
             return False
     async def refresh_state_from_controller(self, verifying: bool = False) -> None:
         
-        refreshed_level = await self.protocol.dali_query_level(self.address)
+        refreshed_level = await self.commands.dali_query_level(self.address)
         refreshed_colour = None
         refreshed_scene = None
-        if await self.protocol.dali_query_last_scene_is_current(self.address):
-            refreshed_scene = await self.protocol.dali_query_last_scene(self.address)
+        if await self.commands.dali_query_last_scene_is_current(self.address):
+            refreshed_scene = await self.commands.dali_query_last_scene(self.address)
         if (
             self.features.get("temperature")
             or self.features.get("RGB")
@@ -1184,20 +1667,20 @@ class ZenLight:
             or self.features.get("RGBWW")
             or self.features.get("XY")
         ):
-            refreshed_colour = await self.protocol.query_dali_colour(self.address)
+            refreshed_colour = await self.commands.query_dali_colour(self.address)
         
         if verifying:
             # Level is driven by LEVEL_CHANGE_V2 dimming-to events; query returns current arc mid-fade
             if refreshed_level is not None and self.level != refreshed_level:
-                self.protocol.logger.debug(
+                self.commands.logger.debug(
                     f"Light {self.address.number} queried level {refreshed_level} "
                     f"differs from tracked destination {self.level} (expected during fade)"
                 )
             refreshed_level = None
             if self.colour != refreshed_colour:
-                self.protocol.logger.error(f"Light {self.address.number} colour mismatch! We had {self.colour}, actual colour is {refreshed_colour}")
+                self.commands.logger.error(f"Light {self.address.number} colour mismatch! We had {self.colour}, actual colour is {refreshed_colour}")
             if self.scene != refreshed_scene:
-                self.protocol.logger.error(f"Light {self.address.number} scene mismatch! We had {self.scene}, actual scene is {refreshed_scene}")
+                self.commands.logger.error(f"Light {self.address.number} scene mismatch! We had {self.scene}, actual scene is {refreshed_scene}")
         
         # Mimic an incoming scene event when the controller reports the last
         # scene is current. This ensures we also update `self.scene`.
@@ -1223,7 +1706,7 @@ class ZenLight:
             except asyncio.CancelledError:
                 pass
         
-        self._refresh_timer = self.protocol.track_task(delayed_refresh())
+        self._refresh_timer = self.ctx.track_task(delayed_refresh())
 
     async def _event_received(self,
             level: int|None = 255,
@@ -1233,7 +1716,7 @@ class ZenLight:
             cascaded_from: ZenGroup | None = None,
             verifying: bool = False
         ) -> None:
-        # Called by ZenProtocol when a query command is issued or an event is received
+        # Called when a query command is issued or an event is received
         level_changed = False
         colour_changed = False
         scene_changed = False
@@ -1302,15 +1785,15 @@ class ZenLight:
         # Send callbacks to the application
         if type(self) is ZenGroup:
             if level_changed or colour_changed or scene_changed:
-                if callable(self.protocol.callbacks.group_change):
-                    await self.protocol.callbacks.group_change(group=self,
+                if callable(self.ctx.callbacks.group_change):
+                    await self.ctx.callbacks.group_change(group=self,
                                     level=self.level if level_changed else None,
                                     colour=self.colour if colour_changed else None,
                                     scene=self.scene if scene_changed else None)
         elif type(self) is ZenLight:
             if level_changed or colour_changed or scene_changed:
-                if callable(self.protocol.callbacks.light_change):
-                    await self.protocol.callbacks.light_change(light=self,
+                if callable(self.ctx.callbacks.light_change):
+                    await self.ctx.callbacks.light_change(light=self,
                                     level=self.level if level_changed else None,
                                     colour=self.colour if colour_changed else None,
                                     scene=self.scene if scene_changed else None)
@@ -1335,92 +1818,93 @@ class ZenLight:
     # -----------------------------------------------------------------------------------------
     async def on(self, fade: bool = True) -> bool | None:
         self._start_refresh_timer()
-        if not fade: await self.protocol.dali_enable_dapc_sequence(self.address)
-        return await self.protocol.dali_go_to_last_active_level(self.address)
+        if not fade: await self.commands.dali_enable_dapc_sequence(self.address)
+        return await self.commands.dali_go_to_last_active_level(self.address)
     async def off(self, fade: bool = True) -> bool | None:
         self._start_refresh_timer()
-        if fade: return await self.protocol.dali_arc_level(self.address, 0)
-        else: return await self.protocol.dali_off(self.address)
+        if fade: return await self.commands.dali_arc_level(self.address, 0)
+        else: return await self.commands.dali_off(self.address)
     async def set_scene(self, scene: int|str|dict[str, Any], fade: bool = True) -> bool | None:
         self._start_refresh_timer()
         if type(scene) is str:
             scene = next((i for i, s in enumerate(self._scene_labels) if s == scene), False)
         if type(scene) is int:
-            if not fade: await self.protocol.dali_enable_dapc_sequence(self.address)
-            return await self.protocol.dali_scene(self.address, scene)
+            if not fade: await self.commands.dali_enable_dapc_sequence(self.address)
+            return await self.commands.dali_scene(self.address, scene)
         return False
     async def set(self, level: int = 255, colour: ZenColour | None = None, fade: bool = True) -> bool | None:
         self._start_refresh_timer()
         if colour is not None and self.supports_colour(colour):
-            if not fade: await self.protocol.dali_enable_dapc_sequence(self.address)
-            return await self.protocol.dali_colour(self.address, colour, level)
+            if not fade: await self.commands.dali_enable_dapc_sequence(self.address)
+            return await self.commands.dali_colour(self.address, colour, level)
         if 0 <= level <= 254:
             if fade:
-                return await self.protocol.dali_arc_level(self.address, level)
+                return await self.commands.dali_arc_level(self.address, level)
             else:
-                return await self.protocol.dali_custom_fade(self.address, level, 0)
+                return await self.commands.dali_custom_fade(self.address, level, 0)
         return False
     async def dali_on_step_up(self) -> bool | None:
         self._start_refresh_timer()
-        return await self.protocol.dali_on_step_up(self.address)
+        return await self.commands.dali_on_step_up(self.address)
     async def dali_step_down_off(self) -> bool | None:
         self._start_refresh_timer()
-        return await self.protocol.dali_step_down_off(self.address)
+        return await self.commands.dali_step_down_off(self.address)
     async def dali_up(self) -> bool | None:
         self._start_refresh_timer()
-        return await self.protocol.dali_up(self.address)
+        return await self.commands.dali_up(self.address)
     async def dali_down(self) -> bool | None:
         self._start_refresh_timer()
-        return await self.protocol.dali_down(self.address)
+        return await self.commands.dali_down(self.address)
     async def dali_recall_max(self) -> bool | None:
         self._start_refresh_timer()
-        return await self.protocol.dali_recall_max(self.address)
+        return await self.commands.dali_recall_max(self.address)
     async def dali_recall_min(self) -> bool | None:
         self._start_refresh_timer()
-        return await self.protocol.dali_recall_min(self.address)
+        return await self.commands.dali_recall_min(self.address)
     async def dali_go_to_last_active_level(self) -> bool | None:
         self._start_refresh_timer()
-        return await self.protocol.dali_go_to_last_active_level(self.address)
+        return await self.commands.dali_go_to_last_active_level(self.address)
     async def dali_off(self) -> bool | None:
         self._start_refresh_timer()
-        return await self.protocol.dali_off(self.address)
+        return await self.commands.dali_off(self.address)
     async def dali_custom_fade(self, level: int, duration: int) -> bool | None:
         self._start_refresh_timer()
-        return await self.protocol.dali_custom_fade(self.address, level, duration)
+        return await self.commands.dali_custom_fade(self.address, level, duration)
     async def dali_stop_fade(self) -> bool | None:
         self._start_refresh_timer()
-        return await self.protocol.dali_stop_fade(self.address)
+        return await self.commands.dali_stop_fade(self.address)
     async def dali_enable_dapc_sequence(self) -> bool | None:
-        return await self.protocol.dali_enable_dapc_sequence(self.address)
+        return await self.commands.dali_enable_dapc_sequence(self.address)
     async def dali_inhibit(self, inhibit: bool = True) -> bool | None:
         time_seconds = 65535 if inhibit else 0
-        return await self.protocol.dali_inhibit(self.address, time_seconds)
+        return await self.commands.dali_inhibit(self.address, time_seconds)
         
 
 class ZenGroup(ZenLight):
     lights: set[ZenLight] = set()
 
-    def __new__(cls, protocol: ZenProtocol, address: ZenAddress) -> ZenGroup:
-        # Unique per protocol + controller + group address
+    def __new__(cls, ctx: EntityContext, address: ZenAddress) -> ZenGroup:
+        # Unique per context + controller + group address
         compound_id = f"{address.controller.name} g{address.number}"
-        registry = protocol.entity_registry.groups
+        registry = ctx.registry.groups
         if compound_id not in registry:
-            inst = super().__new__(cls, protocol=protocol, address=address)
+            inst = super().__new__(cls, ctx=ctx, address=address)
             registry[compound_id] = inst
-            inst.protocol = protocol
+            inst.ctx = ctx
+            inst.commands = ctx.commands
             inst.address = address
             inst.lights = set()  # member lights; managed via ZenLight._apply_group_membership
             inst._reset()
             # Don't call interview() here - it will be called async later
         return cast(ZenGroup, registry[compound_id])
 
-    def __init__(self, protocol: ZenProtocol, address: ZenAddress) -> None:
-        super().__init__(protocol, address)
+    def __init__(self, ctx: EntityContext, address: ZenAddress) -> None:
+        super().__init__(ctx, address)
     
     @classmethod
-    async def create(cls, protocol: ZenProtocol, address: ZenAddress) -> ZenGroup:
+    async def create(cls, ctx: EntityContext, address: ZenAddress) -> ZenGroup:
         """Async factory method for ZenGroup"""
-        group = cls(protocol, address)
+        group = cls(ctx, address)
         await group.interview()
         return group
     def __repr__(self) -> str:
@@ -1435,15 +1919,17 @@ class ZenGroup(ZenLight):
             data = _loads_interview_data(data)
             self.label = data.get("label")
             self._scene_labels = list(data.get("scene_labels", []))
-            self.address.controller.groups.add(self)
+            _registered(self.address.controller).groups.add(self)
             return True
         except Exception:
             return False
     async def interview(self) -> bool:
-        self.label = await self.protocol.query_group_label(self.address, generic_if_none=True)
-        self._scene_labels = await self.protocol.query_scenes_for_group(self.address, generic_if_none=True)
+        self.label = _or_group_label(
+            await self.commands.query_group_label(self.address), self.address.number
+        )
+        self._scene_labels = await _group_scene_labels(self.commands, self.address)
         # Add to controller's set of groups
-        self.address.controller.groups.add(self)
+        _registered(self.address.controller).groups.add(self)
         return True
     def supports_colour(self, colour: ZenColourType|ZenColour) -> bool:
         # If at least one light in the group supports this colour, return True
@@ -1475,8 +1961,8 @@ class ZenGroup(ZenLight):
         self.level = None
         self.colour = None
         self.scene = None
-        if callable(self.protocol.callbacks.group_change):
-            await self.protocol.callbacks.group_change(group=self,
+        if callable(self.ctx.callbacks.group_change):
+            await self.ctx.callbacks.group_change(group=self,
                                     discoordinated=True)
     def contains_dimmable_lights(self) -> bool:
         # Is there at least one ZenLight in self.lights that supports dimming?
@@ -1492,7 +1978,8 @@ class ZenGroup(ZenLight):
         return False
 
 class ZenButton:
-    protocol: ZenProtocol
+    ctx: EntityContext
+    commands: ZenCommandClient
     instance: ZenInstance
     serial: (int | str) | None = None
     label: str | None = None
@@ -1501,27 +1988,29 @@ class ZenButton:
     long_press_count: int = 0
     client_data: dict[str, Any] = {}
 
-    def __new__(cls, protocol: ZenProtocol, instance: ZenInstance) -> ZenButton:
-        # Unique per protocol + controller + address + instance
+    def __new__(cls, ctx: EntityContext, instance: ZenInstance) -> ZenButton:
+        # Unique per context + controller + address + instance
         compound_id = f"{instance.address.controller.name} {instance.address.number} {instance.number}"
-        registry = protocol.entity_registry.buttons
+        registry = ctx.registry.buttons
         if compound_id not in registry:
             inst = super().__new__(cls)
             registry[compound_id] = inst
-            inst.protocol = protocol
+            inst.ctx = ctx
+            inst.commands = ctx.commands
             inst.instance = instance
             inst._reset()
             # Don't call interview() here - it will be called async later
         return cast(ZenButton, registry[compound_id])
 
-    def __init__(self, protocol: ZenProtocol, instance: ZenInstance) -> None:
-        self.protocol = protocol
+    def __init__(self, ctx: EntityContext, instance: ZenInstance) -> None:
+        self.ctx = ctx
+        self.commands = ctx.commands
         self.instance = instance
     
     @classmethod
-    async def create(cls, protocol: ZenProtocol, instance: ZenInstance) -> ZenButton:
+    async def create(cls, ctx: EntityContext, instance: ZenInstance) -> ZenButton:
         """Async factory method for ZenButton"""
-        button = cls(protocol, instance)
+        button = cls(ctx, instance)
         await button.interview()
         return button
     def __repr__(self) -> str:
@@ -1547,26 +2036,31 @@ class ZenButton:
             self.instance_label = data.get("instance_label")
             self.instance.address.label = self.label
             self.instance.address.serial = cast(str | None, self.serial)
-            self.instance.address.controller.buttons.add(self)
+            _registered(self.instance.address.controller).buttons.add(self)
             return True
         except Exception:
             return False
     async def interview(self) -> bool:
         inst = self.instance
         addr = inst.address
-        ctrl = addr.controller
-        if addr.label is None: addr.label = await self.protocol.query_dali_device_label(addr, generic_if_none=True)
-        if addr.serial is None: addr.serial = cast(str | None, await self.protocol.query_dali_serial(addr))
+        ctrl = _registered(addr.controller)
+        if addr.label is None:
+            addr.label = _or_device_label(
+                await self.commands.query_dali_device_label(addr), addr
+            )
+        if addr.serial is None: addr.serial = cast(str | None, await self.commands.query_dali_serial(addr))
         self.label = addr.label
         self.serial = addr.serial
-        self.instance_label = await self.protocol.query_dali_instance_label(inst, generic_if_none=True)
+        self.instance_label = _or_instance_label(
+            await self.commands.query_dali_instance_label(inst), inst
+        )
         # Add to controller's set of buttons
         ctrl.buttons.add(self)
         return True
     async def _event_received(self, held: bool = False) -> None:
         if not held:
-            if callable(self.protocol.callbacks.button_press):
-                await self.protocol.callbacks.button_press(button=self)
+            if callable(self.ctx.callbacks.button_press):
+                await self.ctx.callbacks.button_press(button=self)
         else:
             seconds_since_last_press = time.time() - self.last_press_time
             # if there's been less than 500 msec between the last hold message, increment the hold count
@@ -1577,8 +2071,8 @@ class ZenButton:
             self.last_press_time = time.time()
             # if the hold count is exactly Const.LONG_PRESS_COUNT, call the long press callback
             if self.long_press_count == Const.LONG_PRESS_COUNT:
-                if callable(self.protocol.callbacks.button_long_press):
-                    await self.protocol.callbacks.button_long_press(button=self)
+                if callable(self.ctx.callbacks.button_long_press):
+                    await self.ctx.callbacks.button_long_press(button=self)
 
 
 class ZenAbsoluteInput:
@@ -1589,7 +2083,8 @@ class ZenAbsoluteInput:
     Payload matches ``_protocol.txt``: ``[instance, value_hi, value_lo]``.
     """
 
-    protocol: ZenProtocol
+    ctx: EntityContext
+    commands: ZenCommandClient
     instance: ZenInstance
     serial: (int | str) | None = None
     label: str | None = None
@@ -1597,25 +2092,27 @@ class ZenAbsoluteInput:
     _value: int | None = None
     client_data: dict[str, Any] = {}
 
-    def __new__(cls, protocol: ZenProtocol, instance: ZenInstance) -> ZenAbsoluteInput:
+    def __new__(cls, ctx: EntityContext, instance: ZenInstance) -> ZenAbsoluteInput:
         compound_id = f"{instance.address.controller.name} {instance.address.number} {instance.number}"
-        registry = protocol.entity_registry.absolute_inputs
+        registry = ctx.registry.absolute_inputs
         if compound_id not in registry:
             inst = super().__new__(cls)
             registry[compound_id] = inst
-            inst.protocol = protocol
+            inst.ctx = ctx
+            inst.commands = ctx.commands
             inst.instance = instance
             inst._reset()
         return cast(ZenAbsoluteInput, registry[compound_id])
 
-    def __init__(self, protocol: ZenProtocol, instance: ZenInstance) -> None:
-        self.protocol = protocol
+    def __init__(self, ctx: EntityContext, instance: ZenInstance) -> None:
+        self.ctx = ctx
+        self.commands = ctx.commands
         self.instance = instance
 
     @classmethod
-    async def create(cls, protocol: ZenProtocol, instance: ZenInstance) -> ZenAbsoluteInput:
+    async def create(cls, ctx: EntityContext, instance: ZenInstance) -> ZenAbsoluteInput:
         """Async factory method for ZenAbsoluteInput."""
-        absolute_input = cls(protocol, instance)
+        absolute_input = cls(ctx, instance)
         await absolute_input.interview()
         return absolute_input
 
@@ -1648,7 +2145,7 @@ class ZenAbsoluteInput:
             self.instance_label = data.get("instance_label")
             self.instance.address.label = self.label
             self.instance.address.serial = cast(str | None, self.serial)
-            self.instance.address.controller.absolute_inputs.add(self)
+            _registered(self.instance.address.controller).absolute_inputs.add(self)
             return True
         except Exception:
             return False
@@ -1656,15 +2153,17 @@ class ZenAbsoluteInput:
     async def interview(self) -> bool:
         inst = self.instance
         addr = inst.address
-        ctrl = addr.controller
+        ctrl = _registered(addr.controller)
         if addr.label is None:
-            addr.label = await self.protocol.query_dali_device_label(addr, generic_if_none=True)
+            addr.label = _or_device_label(
+                await self.commands.query_dali_device_label(addr), addr
+            )
         if addr.serial is None:
-            addr.serial = cast(str | None, await self.protocol.query_dali_serial(addr))
+            addr.serial = cast(str | None, await self.commands.query_dali_serial(addr))
         self.label = addr.label
         self.serial = addr.serial
-        self.instance_label = await self.protocol.query_dali_instance_label(
-            inst, generic_if_none=True
+        self.instance_label = _or_instance_label(
+            await self.commands.query_dali_instance_label(inst), inst
         )
         ctrl.absolute_inputs.add(self)
         return True
@@ -1680,14 +2179,15 @@ class ZenAbsoluteInput:
         new_value = (payload[1] << 8) | payload[2]
         changed = new_value != self._value
         self._value = new_value
-        if changed and callable(self.protocol.callbacks.absolute_input_change):
-            await self.protocol.callbacks.absolute_input_change(
+        if changed and callable(self.ctx.callbacks.absolute_input_change):
+            await self.ctx.callbacks.absolute_input_change(
                 absolute_input=self, value=new_value
             )
 
 
 class ZenMotionSensor:
-    protocol: ZenProtocol
+    ctx: EntityContext
+    commands: ZenCommandClient
     instance: ZenInstance
     hold_time: int = Const.DEFAULT_HOLD_TIME
     hold_expiry_task: asyncio.Task[None] | None = None
@@ -1699,27 +2199,29 @@ class ZenMotionSensor:
     _occupied: bool | None = None
     client_data: dict[str, Any] = {}
 
-    def __new__(cls, protocol: ZenProtocol, instance: ZenInstance) -> ZenMotionSensor:
-        # Unique per protocol + controller + address + instance
+    def __new__(cls, ctx: EntityContext, instance: ZenInstance) -> ZenMotionSensor:
+        # Unique per context + controller + address + instance
         compound_id = f"{instance.address.controller.name} {instance.address.number} {instance.number}"
-        registry = protocol.entity_registry.motion_sensors
+        registry = ctx.registry.motion_sensors
         if compound_id not in registry:
             inst = super().__new__(cls)
             registry[compound_id] = inst
-            inst.protocol = protocol
+            inst.ctx = ctx
+            inst.commands = ctx.commands
             inst.instance = instance
             inst._reset()
             # Don't call interview() here - it will be called async later
         return cast(ZenMotionSensor, registry[compound_id])
 
-    def __init__(self, protocol: ZenProtocol, instance: ZenInstance) -> None:
-        self.protocol = protocol
+    def __init__(self, ctx: EntityContext, instance: ZenInstance) -> None:
+        self.ctx = ctx
+        self.commands = ctx.commands
         self.instance = instance
     
     @classmethod
-    async def create(cls, protocol: ZenProtocol, instance: ZenInstance) -> ZenMotionSensor:
+    async def create(cls, ctx: EntityContext, instance: ZenInstance) -> ZenMotionSensor:
         """Async factory method for ZenMotionSensor"""
-        sensor = cls(protocol, instance)
+        sensor = cls(ctx, instance)
         await sensor.interview()
         return sensor
     def __repr__(self) -> str:
@@ -1755,19 +2257,23 @@ class ZenMotionSensor:
             self._occupied = None
             self.instance.address.label = self.label
             self.instance.address.serial = cast(str | None, self.serial)
-            self.instance.address.controller.motion_sensors.add(self)
+            _registered(self.instance.address.controller).motion_sensors.add(self)
             return True
         except Exception:
             return False
     async def interview(self) -> bool:
         inst = self.instance
         addr = inst.address
-        ctrl = addr.controller
-        occupancy_timers = await self.protocol.query_occupancy_instance_timers(inst)
+        ctrl = _registered(addr.controller)
+        occupancy_timers = await self.commands.query_occupancy_instance_timers(inst)
         if occupancy_timers is not None:
-            self.serial = await self.protocol.query_dali_serial(addr)
-            self.label = await self.protocol.query_dali_device_label(addr, generic_if_none=True)
-            self.instance_label = await self.protocol.query_dali_instance_label(inst, generic_if_none=True)
+            self.serial = await self.commands.query_dali_serial(addr)
+            self.label = _or_device_label(
+                await self.commands.query_dali_device_label(addr), addr
+            )
+            self.instance_label = _or_instance_label(
+                await self.commands.query_dali_instance_label(inst), inst
+            )
             self.deadtime = occupancy_timers["deadtime"]
             self.hold_time = occupancy_timers["hold"]
             self.last_detect = time.time() - occupancy_timers["last_detect"]
@@ -1782,7 +2288,7 @@ class ZenMotionSensor:
     async def refresh_state_from_controller(self) -> bool:
         """Query controller and update runtime occupancy fields."""
         inst = self.instance
-        occupancy_timers = await self.protocol.query_occupancy_instance_timers(inst)
+        occupancy_timers = await self.commands.query_occupancy_instance_timers(inst)
         if occupancy_timers is None:
             self.last_detect = None
             self._occupied = None
@@ -1807,7 +2313,7 @@ class ZenMotionSensor:
         # if occupied but a hold task isn't running, start one with the time remaining
         if within_hold_time and self.hold_expiry_task is None:
             seconds_until_hold_time_expires = self.hold_time - seconds_since_last_motion
-            self.hold_expiry_task = self.protocol.track_task(self._timeout_after_delay(seconds_until_hold_time_expires))
+            self.hold_expiry_task = self.ctx.track_task(self._timeout_after_delay(seconds_until_hold_time_expires))
         return within_hold_time
 
     @occupied.setter 
@@ -1823,7 +2329,7 @@ class ZenMotionSensor:
             # The occupied=True callback is fired by _event_received (which is
             # async and can await it properly).
             self.last_detect = time.time()
-            self.hold_expiry_task = self.protocol.track_task(self._timeout_after_delay(self.hold_time))
+            self.hold_expiry_task = self.ctx.track_task(self._timeout_after_delay(self.hold_time))
             self._occupied = True
         else:
             self._occupied = False
@@ -1832,9 +2338,9 @@ class ZenMotionSensor:
             # This branch is only reached when occupied is set to False directly
             # (not via _timeout_after_delay which handles the callback itself).
             if old_value is True:
-                cb = self.protocol.callbacks.motion_event
+                cb = self.ctx.callbacks.motion_event
                 if callable(cb):
-                    self.protocol.track_task(cast(Coroutine[Any, Any, None], cb(sensor=self, occupied=False)))
+                    self.ctx.track_task(cast(Coroutine[Any, Any, None], cb(sensor=self, occupied=False)))
 
     async def _timeout_after_delay(self, delay: float) -> None:
         """Async method to handle motion sensor timeout"""
@@ -1843,20 +2349,21 @@ class ZenMotionSensor:
         self.last_detect = None
         self.hold_expiry_task = None
         # Trigger motion event callback
-        if callable(self.protocol.callbacks.motion_event):
-            await self.protocol.callbacks.motion_event(sensor=self, occupied=False)
+        if callable(self.ctx.callbacks.motion_event):
+            await self.ctx.callbacks.motion_event(sensor=self, occupied=False)
 
     async def _event_received(self) -> None:
         # Capture old state before the setter updates it so we can fire the
         # callback with await instead of asyncio.create_task (fire-and-forget).
         was_occupied = self._occupied or False
         self.occupied = True
-        if not was_occupied and callable(self.protocol.callbacks.motion_event):
-            await self.protocol.callbacks.motion_event(sensor=self, occupied=True)
+        if not was_occupied and callable(self.ctx.callbacks.motion_event):
+            await self.ctx.callbacks.motion_event(sensor=self, occupied=True)
 
 
 class ZenSystemVariable:
-    protocol: ZenProtocol
+    ctx: EntityContext
+    commands: ZenCommandClient
     controller: ZenController
     id: int
     label: str | None = None
@@ -1864,14 +2371,15 @@ class ZenSystemVariable:
     _future_value: int | None = None
     client_data: dict[str, Any] = {}
 
-    def __new__(cls, protocol: ZenProtocol, controller: ZenController, id: int, value: int | None = None, label: str | None = None) -> ZenSystemVariable:
-        # Unique per protocol + controller + id
+    def __new__(cls, ctx: EntityContext, controller: ZenController, id: int, value: int | None = None, label: str | None = None) -> ZenSystemVariable:
+        # Unique per context + controller + id
         compound_id = f"{controller.name} {id}"
-        registry = protocol.entity_registry.system_variables
+        registry = ctx.registry.system_variables
         if compound_id not in registry:
             inst = super().__new__(cls)
             registry[compound_id] = inst
-            inst.protocol = protocol
+            inst.ctx = ctx
+            inst.commands = ctx.commands
             inst.controller = controller
             inst.id = id
             inst._reset()
@@ -1880,8 +2388,9 @@ class ZenSystemVariable:
             # Don't call interview() here - it will be called async later
         return cast(ZenSystemVariable, registry[compound_id])
 
-    def __init__(self, protocol: ZenProtocol, controller: ZenController, id: int, value: int | None = None, label: str | None = None) -> None:
-        self.protocol = protocol
+    def __init__(self, ctx: EntityContext, controller: ZenController, id: int, value: int | None = None, label: str | None = None) -> None:
+        self.ctx = ctx
+        self.commands = ctx.commands
         self.controller = controller
         self.id = id
         if value is not None:
@@ -1890,9 +2399,9 @@ class ZenSystemVariable:
             self.label = label
     
     @classmethod
-    async def create(cls, protocol: ZenProtocol, controller: ZenController, id: int, value: int | None = None, label: str | None = None) -> ZenSystemVariable:
+    async def create(cls, ctx: EntityContext, controller: ZenController, id: int, value: int | None = None, label: str | None = None) -> ZenSystemVariable:
         """Async factory method for ZenSystemVariable"""
-        sysvar = cls(protocol, controller, id, value, label)
+        sysvar = cls(ctx, controller, id, value, label)
         await sysvar.interview()
         return sysvar
     def __repr__(self) -> str:
@@ -1918,9 +2427,9 @@ class ZenSystemVariable:
     async def interview(self) -> bool:
         ctrl = self.controller
         if self.label is None:
-            self.label = await self.protocol.query_system_variable_name(ctrl, self.id)
+            self.label = await self.commands.query_system_variable_name(ctrl, self.id)
         if self._value is None:
-            self._value = await self.protocol.query_system_variable(ctrl, self.id)
+            self._value = await self.commands.query_system_variable(ctrl, self.id)
         # Add to controller's set of system variables
         ctrl.sysvars.add(self)
         return True
@@ -1930,8 +2439,8 @@ class ZenSystemVariable:
         self._value = new_value
         self._future_value = None
         if changed:
-            if callable(self.protocol.callbacks.system_variable_change):
-                await self.protocol.callbacks.system_variable_change(system_variable=self,
+            if callable(self.ctx.callbacks.system_variable_change):
+                await self.ctx.callbacks.system_variable_change(system_variable=self,
                                   value=self._value,
                                   changed=changed,
                                   by_me=by_me)
@@ -1948,24 +2457,25 @@ class ZenSystemVariable:
     async def get_value(self) -> int | None:
         """Get the current value of the system variable, querying the controller if unknown."""
         if self._value is None:
-            self._value = await self.protocol.query_system_variable(self.controller, self.id)
+            self._value = await self.commands.query_system_variable(self.controller, self.id)
         return self._value
 
     async def refresh_state_from_controller(self) -> None:
         """Query the controller and update this system variable's runtime value."""
-        new_value = await self.protocol.query_system_variable(self.controller, self.id)
+        new_value = await self.commands.query_system_variable(self.controller, self.id)
         await self._event_received(new_value)
     
     async def set_value(self, new_value: int) -> None:
         """Set the value of the system variable"""
         self._future_value = new_value # If we get this value back as an event, we'll know it's from us
-        await self.protocol.set_system_variable(self.controller, self.id, new_value)
+        await self.commands.set_system_variable(self.controller, self.id, new_value)
 
 
 # Callback type definitions (moved here after class definitions)
 type ControllerRuntimeStatus = Literal["online", "starting", "unreachable"]
 type CallbackOnConnect = Callable[[], Awaitable[None]]
 type CallbackOnDisconnect = Callable[[], Awaitable[None]]
+type CallbackOnResync = Callable[[], Awaitable[None]]
 type CallbackProfileChange = Callable[[ZenProfile], Awaitable[None]]
 type CallbackGroupChange = Callable[[ZenGroup, int], Awaitable[None]]
 type CallbackLightChange = Callable[[ZenLight, int, ZenColour, int], Awaitable[None]]
@@ -1975,6 +2485,7 @@ type CallbackAbsoluteInputChange = Callable[[ZenAbsoluteInput, int], Awaitable[N
 type CallbackMotionEvent = Callable[[ZenMotionSensor, bool], Awaitable[None]]
 type CallbackSystemVariableChange = Callable[[ZenSystemVariable, int, bool, bool], Awaitable[None]]
 type CallbackControllerDiscovered = Callable[[DiscoveredController], Awaitable[None]]
+type CallbackControllerIdentified = Callable[[SuperZenController, str], Awaitable[None]]
 type CallbackControllerStatusChange = Callable[
     [ZenController, ControllerRuntimeStatus], Awaitable[None]
 ]

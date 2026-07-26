@@ -27,22 +27,24 @@ Example usage:
             await light.set(level=50)
 
     # Low-level API access (for advanced users)
-    async with zencontrol.ZenProtocol() as protocol:
-        controller = zencontrol.ZenController(protocol=protocol, ...)
-        await protocol.dali_arc_level(address, 50)
+    async with zencontrol.ZenControl() as zen:
+        zen.add_controller(id=1, name="living", label="Living Room", host="192.168.1.100")
+        await zen.start()
+        for light in await zen.get_lights():
+            await light.set(level=50)
 """
 
 # High-level interface (recommended for most users)
 # API-level models (used by zen_api)
 from .api.models import DiscoveredController, ZenAddress, ZenColour, ZenInstance
-from .api.protocol import ZenProtocol
 
 # Shared types and exceptions
+from .api.event_decode import ZenEventCode, ZenEventMask
+from .api.event_router import EventHealth
 from .api.types import (
+    Transport,
     ZenAddressType,
     ZenColourType,
-    ZenEventCode,
-    ZenEventMask,
     ZenEventMode,
     ZenInstanceType,
 )
@@ -54,6 +56,7 @@ from .exceptions import (
     ZenTimeoutError,
 )
 from .interface import (
+    EntityContext,
     ZenAbsoluteInput,
     ZenButton,
     ZenControl,
@@ -73,7 +76,6 @@ from .io import (
     ResponseType,
     ZenClient,
     ZenEvent,
-    ZenListener,
 )
 
 # Utilities
@@ -86,7 +88,8 @@ __author__ = "Simon Wright"
 __all__ = [
     # High-level interface (recommended)
     "ZenControl",
-    
+    "EntityContext",
+
     # High-level models (for most users)
     "ZenController",
     "ZenProfile",
@@ -100,13 +103,11 @@ __all__ = [
     # API-level models (for advanced users)
     "ZenAddress",
     "ZenInstance",
-    "ZenProtocol",
     "ZenColour",
     "DiscoveredController",
 
     # Low-level models (for advanced users)
     "ZenClient",
-    "ZenListener",
     "ZenEvent",
     "Request",
     "RequestType",
@@ -124,9 +125,11 @@ __all__ = [
     "ZenAddressType",
     "ZenInstanceType",
     "ZenColourType",
+    "Transport",
     "ZenEventCode",
     "ZenEventMask",
     "ZenEventMode",
+    "EventHealth",
     
     # Utilities
     "run_with_keyboard_interrupt",

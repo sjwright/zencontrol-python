@@ -10,8 +10,10 @@ if str(ROOT) not in sys.path:
 import yaml
 
 from zencontrol import ZenAddress, ZenController
-from zencontrol.api.protocol import ZenProtocol
-from zencontrol.api.types import ZenAddressType, ZenEventCode
+from zencontrol.interface import EntityContext
+from zencontrol.api.commands import ZenCommandClient
+from zencontrol.api.event_decode import ZenEventCode
+from zencontrol.api.types import ZenAddressType
 from zencontrol.utils import run_with_keyboard_interrupt
 
 CONFIG_PATH = Path(__file__).resolve().parents[2] / "tests" / "config.yaml"
@@ -25,15 +27,15 @@ async def test_level_change_v2():
     event_received = asyncio.Event()
     received: dict = {}
 
-    async with ZenProtocol(print_traffic=True) as tpi:
-        ctrl = ZenController(protocol=tpi, **config["zencontrol"][0])
-        tpi.set_controllers([ctrl])
+    async with ZenCommandClient(print_traffic=True) as tpi:
+        ctx = EntityContext(commands=tpi)
+        ctrl = ZenController(ctx=ctx, **config["zencontrol"][0])
 
         original_process = tpi._process_zen_event
 
         async def capture_level_change_v2(event):
             if (
-                event.event_code == ZenEventCode.LEVEL_CHANGE_V2.value
+                event.code == ZenEventCode.LEVEL_CHANGE_V2
                 and event.target == ECG_ADDRESS
             ):
                 received["event"] = event
@@ -58,8 +60,8 @@ async def test_level_change_v2():
             await tpi.stop_event_monitoring()
 
     event = received["event"]
-    if event.event_code != ZenEventCode.LEVEL_CHANGE_V2.value:
-        raise RuntimeError(f"Expected LEVEL_CHANGE_V2, got event code {event.event_code}")
+    if event.code != ZenEventCode.LEVEL_CHANGE_V2:
+        raise RuntimeError(f"Expected LEVEL_CHANGE_V2, got event code {event.code}")
     if event.target != ECG_ADDRESS:
         raise RuntimeError(f"Expected target {ECG_ADDRESS}, got {event.target}")
 

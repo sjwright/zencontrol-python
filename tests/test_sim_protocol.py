@@ -12,7 +12,7 @@ pytestmark = pytest.mark.simulator
 
 @pytest.mark.asyncio
 async def test_controller_identity_and_readiness(live_sim):
-    p, c = live_sim.protocol, live_sim.controller
+    p, c = live_sim.commands, live_sim.controller
     version = await p.query_controller_version_number(c)
     assert version is not None
     assert "2" in version
@@ -23,7 +23,7 @@ async def test_controller_identity_and_readiness(live_sim):
 
 @pytest.mark.asyncio
 async def test_discover_gear_groups_and_devices(live_sim):
-    p, c = live_sim.protocol, live_sim.controller
+    p, c = live_sim.commands, live_sim.controller
 
     gears = await p.query_control_gear_dali_addresses(c)
     assert sorted(a.number for a in gears) == list(range(12))
@@ -44,7 +44,7 @@ async def test_discover_gear_groups_and_devices(live_sim):
 
 @pytest.mark.asyncio
 async def test_light_identity_features_and_membership(live_sim):
-    p = live_sim.protocol
+    p = live_sim.commands
     ecg0 = live_sim.ecg(0)
     ecg1 = live_sim.ecg(1)
 
@@ -69,7 +69,7 @@ async def test_light_identity_features_and_membership(live_sim):
 
 @pytest.mark.asyncio
 async def test_arc_level_off_and_on(live_sim):
-    p = live_sim.protocol
+    p = live_sim.commands
     addr = live_sim.ecg(1)
 
     assert await p.dali_arc_level(addr, 77) is LEGACY_ACK
@@ -84,7 +84,7 @@ async def test_arc_level_off_and_on(live_sim):
 
 @pytest.mark.asyncio
 async def test_group_arc_and_mixed_level_query(live_sim):
-    p = live_sim.protocol
+    p = live_sim.commands
     g0 = live_sim.group(0)
 
     assert await p.dali_arc_level(g0, 40) is LEGACY_ACK
@@ -99,7 +99,7 @@ async def test_group_arc_and_mixed_level_query(live_sim):
 
 @pytest.mark.asyncio
 async def test_scene_recall_and_queries(live_sim):
-    p = live_sim.protocol
+    p = live_sim.commands
     addr = live_sim.ecg(0)
 
     assert await p.dali_scene(addr, 1) is LEGACY_ACK
@@ -115,7 +115,7 @@ async def test_scene_recall_and_queries(live_sim):
 
 @pytest.mark.asyncio
 async def test_group_scene_recall(live_sim):
-    p = live_sim.protocol
+    p = live_sim.commands
     g0 = live_sim.group(0)
 
     scenes = await p.query_scene_numbers_for_group(g0)
@@ -130,7 +130,7 @@ async def test_group_scene_recall(live_sim):
 
 @pytest.mark.asyncio
 async def test_colour_tc_and_rgb(live_sim):
-    p = live_sim.protocol
+    p = live_sim.commands
 
     tc = ZenColour(type=ZenColourType.TC, kelvin=4000)
     assert await p.dali_colour(live_sim.ecg(0), tc) is True
@@ -149,7 +149,7 @@ async def test_colour_tc_and_rgb(live_sim):
 
 @pytest.mark.asyncio
 async def test_profiles_and_system_variables(live_sim):
-    p, c = live_sim.protocol, live_sim.controller
+    p, c = live_sim.commands, live_sim.controller
 
     numbers = await p.query_profile_numbers(c)
     assert numbers is not None
@@ -167,7 +167,7 @@ async def test_profiles_and_system_variables(live_sim):
 
 @pytest.mark.asyncio
 async def test_tpi_event_mode_and_filters(live_sim):
-    p, c = live_sim.protocol, live_sim.controller
+    p, c = live_sim.commands, live_sim.controller
 
     assert await p.tpi_event_emit(
         c, ZenEventMode(enabled=True, filtering=False, unicast=False, multicast=True)
@@ -188,7 +188,7 @@ async def test_tpi_event_mode_and_filters(live_sim):
 
 @pytest.mark.asyncio
 async def test_level_change_event_via_protocol(live_sim):
-    p = live_sim.protocol
+    p = live_sim.commands
     events: list[tuple[int, int]] = []
 
     async def on_level(*, address, arc_level, payload):
@@ -205,7 +205,7 @@ async def test_level_change_event_via_protocol(live_sim):
 
 @pytest.mark.asyncio
 async def test_injected_button_and_occupancy_events(live_sim):
-    p = live_sim.protocol
+    p = live_sim.commands
     buttons: list[tuple[int, int]] = []
     occupied: list[tuple[int, int]] = []
 
@@ -231,7 +231,7 @@ async def test_injected_button_and_occupancy_events(live_sim):
 
 @pytest.mark.asyncio
 async def test_injected_absolute_input_event(live_sim):
-    p = live_sim.protocol
+    p = live_sim.commands
     events: list[tuple[int, int, bytes]] = []
 
     async def on_absolute(*, instance, payload):
@@ -254,7 +254,7 @@ async def test_query_absolute_input_instance(live_sim):
     """Demo ECD 13 exposes a discoverable absolute_input instance."""
     from zencontrol import ZenAddress, ZenAddressType, ZenInstanceType
 
-    p = live_sim.protocol
+    p = live_sim.commands
     c = live_sim.controller
     addr = ZenAddress(controller=c, type=ZenAddressType.ECD, number=13)
     instances = await p.query_instances_by_address(address=addr)
@@ -268,8 +268,7 @@ async def test_query_absolute_input_instance(live_sim):
 async def test_timeout_when_simulator_stopped(live_sim):
     from zencontrol import ZenTimeoutError
 
-    p, c = live_sim.protocol, live_sim.controller
-    # Use a non-cacheable query so the second call must hit the wire.
+    p, c = live_sim.commands, live_sim.controller
     assert await p.query_system_variable(c, 0) is not None
     await live_sim.sim.stop()
     with pytest.raises(ZenTimeoutError):
@@ -283,7 +282,7 @@ async def test_timeout_when_simulator_stopped(live_sim):
 
 @pytest.mark.asyncio
 async def test_step_up_down_and_step_down_off(live_sim):
-    p = live_sim.protocol
+    p = live_sim.commands
     addr = live_sim.ecg(1)
 
     await p.dali_arc_level(addr, 10)
@@ -305,7 +304,7 @@ async def test_step_up_down_and_step_down_off(live_sim):
 
 @pytest.mark.asyncio
 async def test_recall_max_min_and_last_active(live_sim):
-    p = live_sim.protocol
+    p = live_sim.commands
     addr = live_sim.ecg(1)
     live_sim.world.lights[1].max_level = 200
     live_sim.world.lights[1].min_level = 5
@@ -323,7 +322,7 @@ async def test_recall_max_min_and_last_active(live_sim):
 
 @pytest.mark.asyncio
 async def test_min_max_level_queries(live_sim):
-    p = live_sim.protocol
+    p = live_sim.commands
     addr = live_sim.ecg(0)
     assert await p.dali_query_min_level(addr) == live_sim.world.lights[0].min_level
     assert await p.dali_query_max_level(addr) == live_sim.world.lights[0].max_level
@@ -331,7 +330,7 @@ async def test_min_max_level_queries(live_sim):
 
 @pytest.mark.asyncio
 async def test_inhibit_and_group_inhibit(live_sim):
-    p = live_sim.protocol
+    p = live_sim.commands
     addr = live_sim.ecg(1)
     assert await p.dali_inhibit(addr, 10) is True
     assert live_sim.world.lights[1].is_inhibited() is True
@@ -348,11 +347,10 @@ async def test_inhibit_and_group_inhibit(live_sim):
 
 @pytest.mark.asyncio
 async def test_custom_fade_stop_and_auto_complete(live_sim):
-    p = live_sim.protocol
+    p = live_sim.commands
     addr = live_sim.ecg(1)
     await p.dali_arc_level(addr, 0)
     assert await p.dali_custom_fade(addr, 100, 5) is True
-    p.cache.clear()
     status = await p.dali_query_control_gear_status(addr)
     assert status is not None
     assert status["fade_running"] is True
@@ -360,7 +358,6 @@ async def test_custom_fade_stop_and_auto_complete(live_sim):
     assert level is not None and 0 <= level <= 100
 
     assert await p.dali_stop_fade(addr) is True
-    p.cache.clear()
     status2 = await p.dali_query_control_gear_status(addr)
     assert status2 is not None
     assert status2["fade_running"] is False
@@ -373,13 +370,12 @@ async def test_custom_fade_stop_and_auto_complete(live_sim):
         timeout=2.0,
         message="expected fade to complete at level 50",
     )
-    p.cache.clear()
     assert await p.dali_query_level(addr) == 50
 
 
 @pytest.mark.asyncio
 async def test_dapc_sequence_is_no_answer(live_sim):
-    p = live_sim.protocol
+    p = live_sim.commands
     # PDF: DAPC replies NO_ANSWER (legacy); library maps that to None.
     assert await p.dali_enable_dapc_sequence(live_sim.ecg(1)) is None
 
@@ -391,7 +387,7 @@ async def test_dapc_sequence_is_no_answer(live_sim):
 
 @pytest.mark.asyncio
 async def test_colour_xy_set_and_query(live_sim):
-    p = live_sim.protocol
+    p = live_sim.commands
     addr = live_sim.ecg(3)
     features = await p.query_dali_colour_features(addr)
     assert features is not None
@@ -409,7 +405,7 @@ async def test_colour_xy_set_and_query(live_sim):
 
 @pytest.mark.asyncio
 async def test_colour_scenes_include_8_11(live_sim):
-    p = live_sim.protocol
+    p = live_sim.commands
     addr = live_sim.ecg(0)
     membership = await p.query_colour_scene_membership_by_address(addr)
     assert 0 in membership and 1 in membership
@@ -432,7 +428,7 @@ async def test_colour_scenes_include_8_11(live_sim):
 
 @pytest.mark.asyncio
 async def test_empty_colour_membership_for_dimmer(live_sim):
-    p = live_sim.protocol
+    p = live_sim.commands
     membership = await p.query_colour_scene_membership_by_address(live_sim.ecg(1))
     assert membership == [] or membership is None
 
@@ -444,7 +440,7 @@ async def test_empty_colour_membership_for_dimmer(live_sim):
 
 @pytest.mark.asyncio
 async def test_broadcast_arc_off_scene_and_colour(live_sim):
-    p = live_sim.protocol
+    p = live_sim.commands
     bcast = live_sim.broadcast()
 
     assert await p.dali_arc_level(bcast, 33) is LEGACY_ACK
@@ -466,7 +462,7 @@ async def test_broadcast_arc_off_scene_and_colour(live_sim):
 
 @pytest.mark.asyncio
 async def test_group_last_scene_and_status(live_sim):
-    p = live_sim.protocol
+    p = live_sim.commands
     g0 = live_sim.group(0)
     assert await p.dali_scene(g0, 1) is LEGACY_ACK
     assert await p.dali_query_last_scene(g0) == 1
@@ -477,7 +473,6 @@ async def test_group_last_scene_and_status(live_sim):
 
     await p.dali_arc_level(live_sim.ecg(1), 0)
     assert await p.dali_custom_fade(live_sim.ecg(1), 80, 5) is True
-    p.cache.clear()
     status = await p.dali_query_control_gear_status(g0)
     assert status is not None
     assert status["fade_running"] is True
@@ -485,20 +480,20 @@ async def test_group_last_scene_and_status(live_sim):
 
 @pytest.mark.asyncio
 async def test_group_by_number_and_scenes_list(live_sim):
-    p = live_sim.protocol
+    p = live_sim.commands
     live_sim.world.lights[0].set_level(10)
     live_sim.world.lights[1].set_level(77)
     info = await p.query_group_by_number(live_sim.group(0))
     assert info == (0, True, 77)
     assert await p.query_group_by_number(live_sim.group(15)) is None
 
-    scenes = await p.query_scenes_for_group(live_sim.group(0), generic_if_none=False)
+    scenes = await p.query_scenes_for_group(live_sim.group(0))
     assert scenes[1] == "Relax"
 
 
 @pytest.mark.asyncio
 async def test_instance_ecd_labels_and_fitting_numbers(live_sim):
-    p = live_sim.protocol
+    p = live_sim.commands
     assert await p.query_dali_device_label(live_sim.ecd(0)) == "Living Room Switch"
     assert await p.query_dali_device_label(live_sim.ecd(1)) == "Kitchen Switch"
     assert await p.query_dali_instance_label(live_sim.instance(0, 0)) == "On/Off"
@@ -523,7 +518,7 @@ async def test_instance_ecd_labels_and_fitting_numbers(live_sim):
 
 @pytest.mark.asyncio
 async def test_occupancy_timers(live_sim):
-    p = live_sim.protocol
+    p = live_sim.commands
     inst = live_sim.instance(0, 2, type_code=3)
     timers = await p.query_occupancy_instance_timers(inst)
     assert timers is not None
@@ -534,7 +529,7 @@ async def test_occupancy_timers(live_sim):
 
 @pytest.mark.asyncio
 async def test_readiness_flags_and_unknown_sysvars(live_sim):
-    p, c = live_sim.protocol, live_sim.controller
+    p, c = live_sim.commands, live_sim.controller
 
     live_sim.world.startup_complete = False
     assert await p.query_controller_startup_complete(c) is not True
@@ -549,7 +544,7 @@ async def test_readiness_flags_and_unknown_sysvars(live_sim):
 
 @pytest.mark.asyncio
 async def test_return_to_scheduled_profile(live_sim):
-    p, c = live_sim.protocol, live_sim.controller
+    p, c = live_sim.commands, live_sim.controller
     live_sim.world.last_scheduled_profile = 1
     assert await p.change_profile_number(c, 3) is True
     assert await p.return_to_scheduled_profile(c) is True
@@ -558,21 +553,19 @@ async def test_return_to_scheduled_profile(live_sim):
 
 @pytest.mark.asyncio
 async def test_dali_query_fade_running(live_sim):
-    p = live_sim.protocol
+    p = live_sim.commands
     addr = live_sim.ecg(1)
     await p.dali_arc_level(addr, 0)
     assert await p.dali_query_fade_running(addr) is False
     assert await p.dali_custom_fade(addr, 100, 5) is True
-    p.cache.clear()
     assert await p.dali_query_fade_running(addr) is True
     assert await p.dali_stop_fade(addr) is True
-    p.cache.clear()
     assert await p.dali_query_fade_running(addr) is False
 
 
 @pytest.mark.asyncio
 async def test_operating_mode_and_button_led_stubs(live_sim):
-    p = live_sim.protocol
+    p = live_sim.commands
     assert await p.query_operating_mode_by_address(live_sim.ecg(0)) == 0
     assert await p.query_operating_mode_by_address(live_sim.ecd(0)) == 0
 
@@ -584,7 +577,7 @@ async def test_operating_mode_and_button_led_stubs(live_sim):
 
 @pytest.mark.asyncio
 async def test_query_instance_groups(live_sim):
-    p = live_sim.protocol
+    p = live_sim.commands
     groups = await p.query_instance_groups(live_sim.instance(0, 0))
     assert groups == (0, 1, None)
     motion = await p.query_instance_groups(live_sim.instance(0, 2, type_code=3))
@@ -597,7 +590,7 @@ async def test_query_instance_groups(live_sim):
 @pytest.mark.asyncio
 async def test_query_profile_information(live_sim):
     """PDF: header + records; bit0=disabled, bits1–2=priority (0 scheduled, 1+, …)."""
-    p, c = live_sim.protocol, live_sim.controller
+    p, c = live_sim.commands, live_sim.controller
     result = await p.query_profile_information(c)
     assert result is not None
     state, profiles = result
@@ -614,7 +607,7 @@ async def test_query_profile_information(live_sim):
 
 @pytest.mark.asyncio
 async def test_colour_only_preserves_level(live_sim):
-    p = live_sim.protocol
+    p = live_sim.commands
     addr = live_sim.ecg(0)
     assert await p.dali_arc_level(addr, 77) is LEGACY_ACK
     colour = ZenColour(type=ZenColourType.TC, kelvin=4200)
@@ -628,7 +621,7 @@ async def test_colour_only_preserves_level(live_sim):
 @pytest.mark.asyncio
 async def test_clear_tpi_event_unicast_address(live_sim):
     """Sim extension: omit IP/port (zeros) clears unicast targeting."""
-    p, c = live_sim.protocol, live_sim.controller
+    p, c = live_sim.commands, live_sim.controller
     await p.set_tpi_event_unicast_address(c, ipaddr="127.0.0.1", port=6970)
     await p.set_tpi_event_unicast_address(c)
     info = await p.query_tpi_event_unicast_address(c)

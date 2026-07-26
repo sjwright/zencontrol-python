@@ -2,10 +2,11 @@
 Wire-level protocol implementation.
 
 This module contains the lowest-level communication components:
-- ZenClient, ZenListener - Raw UDP communication
-- ZenEvent - Raw event data from wire
-- Message framing and parsing
-- Connection management
+- ZenClient, ZenEndpoint - Raw UDP communication
+- ZenEvent / parse_frame - Envelope validation (codes opaque)
+- Message framing and connection management
+
+Event queuing and routing live in ``zencontrol.api.event_router`` (one funnel).
 """
 
 from .command import (
@@ -16,14 +17,15 @@ from .command import (
     ResponseType,
     ZenClient,
 )
-from .event import EventConst, ZenEvent, ZenListener
+from .event import EventConst, ZenEndpoint, ZenEvent, parse_frame
 
 __all__ = [
     "ZenClient",
-    "ZenListener", 
+    "ZenEndpoint",
     "ZenEvent",
+    "parse_frame",
     "Request",
-    "Response", 
+    "Response",
     "ResponseType",
     "RequestType",
     "EventConst",

@@ -65,11 +65,11 @@ async def test_light_set_and_query(live_zen):
     light = lights[1]
 
     assert await light.set(level=50, fade=True) is LEGACY_ACK
-    assert await zen.protocol.dali_query_level(light.address) == 50
+    assert await zen.commands.dali_query_level(light.address) == 50
     assert live_sim.world.lights[1].level == 50
 
     assert await light.off(fade=False) is LEGACY_ACK
-    assert await zen.protocol.dali_query_level(light.address) == 0
+    assert await zen.commands.dali_query_level(light.address) == 0
 
 
 @pytest.mark.asyncio
@@ -84,7 +84,7 @@ async def test_tunable_colour_via_interface(live_zen):
     assert live_sim.world.lights[0].colour is not None
     assert live_sim.world.lights[0].colour.kelvin == 4000
 
-    queried = await zen.protocol.query_dali_colour(lights[0].address)
+    queried = await zen.commands.query_dali_colour(lights[0].address)
     assert queried is not None
     assert queried.kelvin == 4000
 
@@ -117,7 +117,7 @@ async def test_system_variable_set_via_interface(live_zen):
     svar = next(v for v in sysvars if v.id == 0)
     await svar.set_value(42)
     assert live_sim.world.system_variables[0].value == 42
-    assert await zen.protocol.query_system_variable(ctrl, 0) == 42
+    assert await zen.commands.query_system_variable(ctrl, 0) == 42
 
 
 @pytest.mark.asyncio
@@ -261,7 +261,7 @@ async def test_light_scene_and_on_off_via_interface(live_zen):
 
     assert await light.set_scene(1) is LEGACY_ACK
     assert live_sim.world.lights[0].level == 80
-    assert await zen.protocol.dali_query_last_scene(light.address) == 1
+    assert await zen.commands.dali_query_last_scene(light.address) == 1
 
     assert await light.set(level=120) is LEGACY_ACK
     assert await light.off(fade=False) is LEGACY_ACK
@@ -382,7 +382,7 @@ async def test_light_fade_step_and_refresh_via_interface(live_zen):
     assert live_sim.world.lights[1].level == 0
 
     # Mutate controller under the entity, then refresh entity state.
-    assert await zen.protocol.dali_arc_level(light.address, 123) is LEGACY_ACK
+    assert await zen.commands.dali_arc_level(light.address, 123) is LEGACY_ACK
     light.level = None
     await light.refresh_state_from_controller()
     assert light.level == 123

@@ -8,8 +8,12 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
+from helpers_endpoints import fake_endpoint_factory
 from zencontrol import ZenController
-from zencontrol.api.protocol import ZenProtocol
+from zencontrol.interface import EntityContext
+from zencontrol.api.commands import ZenCommandClient
+from zencontrol.api.event_router import ZenEventReceiver
+from zencontrol.api.types import Transport
 from zencontrol.exceptions import ZenTimeoutError
 from zencontrol.io.command import (
     ClientConst,
@@ -18,87 +22,76 @@ from zencontrol.io.command import (
     ResponseType,
     ZenClient,
 )
-from zencontrol.io.event import EventConst, ZenEvent, ZenListener
+from zencontrol.io.event import EventConst, ZenEndpoint
 from zencontrol.utils import local_ip_for_remote
 
 
-def _make_event(code: int = 1) -> ZenEvent:
-    return ZenEvent(
-        raw_data=b"",
-        event_code=code,
-        target=0,
-        payload=b"",
-        mac_address=b"\x00" * 6,
-        ip_address="127.0.0.1",
-        ip_port=6969,
-    )
+@pytest.mark.asyncio
+async def test_event_funnel_drop_oldest_under_backpressure() -> None:
+    receiver = ZenEventReceiver(max_queue_size=2)
+    addr = ("127.0.0.1", 1)
+    receiver._enqueue_datagram(b"\x01", addr)
+    receiver._enqueue_datagram(b"\x02", addr)
+    assert receiver.dropped_datagrams == 0
+
+    receiver._enqueue_datagram(b"\x03", addr)
+    assert receiver.dropped_datagrams == 1
+    assert receiver._funnel.qsize() == 2
+
+    first = receiver._funnel.get_nowait()
+    second = receiver._funnel.get_nowait()
+    assert first[0] == b"\x02"
+    assert second[0] == b"\x03"
 
 
 @pytest.mark.asyncio
-async def test_event_queue_drop_oldest_under_backpressure() -> None:
-    listener = ZenListener(max_queue_size=2)
-    listener._enqueue_event(_make_event(1))
-    listener._enqueue_event(_make_event(2))
-    assert listener.dropped_events == 0
-
-    listener._enqueue_event(_make_event(3))
-    assert listener.dropped_events == 1
-    assert listener._event_queue.qsize() == 2
-
-    first = listener._event_queue.get_nowait()
-    second = listener._event_queue.get_nowait()
-    assert first.event_code == 2
-    assert second.event_code == 3
-
-
-@pytest.mark.asyncio
-async def test_listener_run_stop_owns_consumer_lifecycle() -> None:
-    """ZenListener.run/stop own the consumer task and unexpected-exit hook."""
-    listener = ZenListener()
-    received: list[int] = []
+async def test_receiver_acquire_release_owns_consumer_lifecycle() -> None:
+    """Acquire starts the shared consumer; last release stops it intentionally."""
+    receiver = ZenEventReceiver()
+    receiver._endpoint_factory = fake_endpoint_factory()
     unexpected = AsyncMock()
+    receiver.on_unexpected_exit = unexpected
 
-    async def on_event(event: ZenEvent) -> None:
-        received.append(event.event_code)
+    lease = await receiver.acquire(Transport.UNICAST)
+    task = receiver.consumer_task
+    assert task is not None and not task.done()
 
-    # No socket: feed the queue directly and end the stream via stop_event
-    listener._enqueue_event(_make_event(7))
-    task = listener.run(on_event, on_unexpected_exit=unexpected)
-    assert listener.is_running()
-
-    for _ in range(20):
-        if received == [7]:
-            break
-        await asyncio.sleep(0.01)
-    else:
-        pytest.fail("handler did not receive enqueued event")
-
-    await listener.stop()
-    assert not listener.is_running()
+    await lease.release()
+    assert receiver.consumer_task is None
     assert task.cancelled() or task.done()
     unexpected.assert_not_awaited()
 
-    # Second stop is idempotent
-    await listener.stop()
+    # Second release is idempotent
+    await lease.release()
 
 
 @pytest.mark.asyncio
-async def test_listener_unexpected_exit_invokes_hook() -> None:
-    listener = ZenListener()
+async def test_receiver_unexpected_exit_invokes_hook() -> None:
+    receiver = ZenEventReceiver()
+    receiver._endpoint_factory = fake_endpoint_factory()
     unexpected = AsyncMock()
+    receiver.on_unexpected_exit = unexpected
 
-    async def on_event(event: ZenEvent) -> None:
+    lease = await receiver.acquire(Transport.UNICAST)
+    task = receiver.consumer_task
+    assert task is not None
+    # Let _consume reach funnel.get(); cancel-before-start skips its finally.
+    await asyncio.sleep(0)
+
+    # Cancel without intentional stop — mimics consumer death
+    task.cancel()
+    try:
+        await asyncio.wait_for(task, timeout=1.0)
+    except asyncio.CancelledError:
         pass
 
-    # End the events() loop immediately by setting stop before run pumps
-    listener._stop_event.set()
-    task = listener.run(on_event, on_unexpected_exit=unexpected)
-    await asyncio.wait_for(task, timeout=1.0)
     unexpected.assert_awaited_once()
+    await receiver.close()
+    await lease.release()
 
 
 @pytest.mark.asyncio
-async def test_multicast_listener_joins_before_endpoint_and_drops_on_stop() -> None:
+async def test_multicast_endpoint_joins_before_bind_and_drops_on_close() -> None:
     """Reuse/join must happen before asyncio owns the socket; DROP before close."""
     fake_sock = MagicMock()
     fake_transport = MagicMock()
@@ -113,11 +106,14 @@ async def test_multicast_listener_joins_before_endpoint_and_drops_on_stop() -> N
             new_callable=AsyncMock,
             return_value=(fake_transport, MagicMock()),
         ) as create_endpoint:
-            listener = await ZenListener.create(unicast=False)
+            endpoint = await ZenEndpoint.open(
+                unicast=False,
+                sink=lambda _data, _addr: None,
+            )
 
     create_endpoint.assert_awaited_once()
     assert create_endpoint.await_args.kwargs["sock"] is fake_sock
-    assert listener._mreq is not None
+    assert endpoint._mreq is not None
 
     # First setsockopt should be SO_REUSEADDR (before bind); ADD_MEMBERSHIP after bind
     first_opt = fake_sock.setsockopt.call_args_list[0].args[:2]
@@ -130,7 +126,7 @@ async def test_multicast_listener_joins_before_endpoint_and_drops_on_stop() -> N
         for c in fake_sock.setsockopt.call_args_list
         if c.args[:2] == (socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP)
     )
-    assert add_call.args[2] == listener._mreq
+    assert add_call.args[2] == endpoint._mreq
     bind_pos = next(
         i for i, (name, *_) in enumerate(fake_sock.method_calls) if name == "bind"
     )
@@ -143,7 +139,7 @@ async def test_multicast_listener_joins_before_endpoint_and_drops_on_stop() -> N
     assert bind_pos < add_pos
 
     joined_mreq = add_call.args[2]
-    await listener.stop_listening()
+    await endpoint.close()
 
     drop_calls = [
         c
@@ -153,7 +149,7 @@ async def test_multicast_listener_joins_before_endpoint_and_drops_on_stop() -> N
     assert len(drop_calls) == 1
     assert drop_calls[0].args[2] == joined_mreq
     fake_transport.close.assert_called_once()
-    assert listener._mreq is None
+    assert endpoint._mreq is None
 
 
 def test_local_ip_for_remote_returns_ipv4() -> None:
@@ -162,6 +158,38 @@ def test_local_ip_for_remote_returns_ipv4() -> None:
     # Loopback route should advertise a local address (often 127.0.0.1)
     parts = [int(p) for p in ip.split(".")]
     assert all(0 <= p <= 255 for p in parts)
+
+
+def test_resolve_host_sync_skips_dns_for_ipv4_literal() -> None:
+    from zencontrol.utils import resolve_host_sync
+
+    with patch("zencontrol.utils.socket.gethostbyname") as dns:
+        assert resolve_host_sync("192.168.1.50") == "192.168.1.50"
+        dns.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_resolve_host_runs_dns_in_executor() -> None:
+    from zencontrol.utils import resolve_host
+
+    with patch(
+        "zencontrol.utils.socket.gethostbyname", return_value="10.0.0.1"
+    ) as dns:
+        assert await resolve_host("controller.local") == "10.0.0.1"
+        dns.assert_called_once_with("controller.local")
+
+
+def test_subscribe_does_not_call_gethostbyname() -> None:
+    from zencontrol.api.event_router import ZenEventReceiver
+
+    receiver = ZenEventReceiver()
+
+    async def handler(_ev: object) -> None:
+        pass
+
+    with patch("socket.gethostbyname") as dns:
+        receiver.subscribe(handler, host="192.168.1.50")
+        dns.assert_not_called()
 
 
 def test_is_connected_false_when_transport_closing() -> None:
@@ -198,16 +226,15 @@ def test_mark_disconnected_unblocks_pending_with_timeout() -> None:
 
 @pytest.mark.asyncio
 async def test_send_packet_timeout_invalidates_client_and_refreshes_ip() -> None:
-    protocol = ZenProtocol()
+    protocol = ZenCommandClient()
     controller = ZenController(
         id=1,
         name="ctrl",
         label="Ctrl",
         host="zen.local",
         port=5108,
-        protocol=protocol,
+        ctx=EntityContext(commands=protocol),
     )
-    protocol.set_controllers([controller])
 
     fake_client = MagicMock()
     fake_client.is_connected.return_value = True
@@ -216,7 +243,7 @@ async def test_send_packet_timeout_invalidates_client_and_refreshes_ip() -> None
     )
     fake_client.close = AsyncMock()
     controller.client = fake_client
-    controller._ip = "192.0.2.10"
+    controller.set_resolved_ip("192.0.2.10")
 
     with patch.object(controller, "refresh_ip", wraps=controller.refresh_ip) as refresh:
         with pytest.raises(ZenTimeoutError):
@@ -232,14 +259,14 @@ async def test_send_packet_timeout_invalidates_client_and_refreshes_ip() -> None
 
 @pytest.mark.asyncio
 async def test_ensure_client_recreates_when_disconnected() -> None:
-    protocol = ZenProtocol()
+    protocol = ZenCommandClient()
     controller = ZenController(
         id=1,
         name="ctrl",
         label="Ctrl",
         host="127.0.0.1",
         port=5108,
-        protocol=protocol,
+        ctx=EntityContext(commands=protocol),
     )
     stale = MagicMock()
     stale.is_connected.return_value = False
@@ -249,7 +276,7 @@ async def test_ensure_client_recreates_when_disconnected() -> None:
     new_client = MagicMock()
     new_client.is_connected.return_value = True
     with patch(
-        "zencontrol.api.protocol.ZenClient.create",
+        "zencontrol.api.commands.ZenClient.create",
         new=AsyncMock(return_value=new_client),
     ) as create:
         await protocol._ensure_client(controller)
@@ -257,32 +284,6 @@ async def test_ensure_client_recreates_when_disconnected() -> None:
     stale.close.assert_awaited()
     create.assert_awaited_once()
     assert controller.client is new_client
-
-
-def test_resolve_unicast_advertise_ip_uses_explicit_listen_ip() -> None:
-    protocol = ZenProtocol(unicast=True, listen_ip="10.0.0.5")
-    assert protocol.local_ip == "10.0.0.5"
-    assert protocol._resolve_unicast_advertise_ip() == "10.0.0.5"
-
-
-def test_resolve_unicast_advertise_ip_uses_route_via_controller() -> None:
-    protocol = ZenProtocol(unicast=True)
-    assert protocol.local_ip is None
-    controller = ZenController(
-        id=1,
-        name="ctrl",
-        label="Ctrl",
-        host="127.0.0.1",
-        port=5108,
-        protocol=protocol,
-    )
-    protocol.set_controllers([controller])
-    with patch(
-        "zencontrol.api.protocol.local_ip_for_remote",
-        return_value="192.168.1.50",
-    ) as route:
-        assert protocol._resolve_unicast_advertise_ip() == "192.168.1.50"
-        route.assert_called_once_with(controller.ip)
 
 
 def test_default_retries_constant() -> None:
@@ -353,14 +354,14 @@ async def test_invalid_checksum_completes_pending_as_invalid() -> None:
 async def test_send_packet_error_returns_without_raising() -> None:
     from zencontrol.api.types import ZenErrorCode
 
-    protocol = ZenProtocol()
+    protocol = ZenCommandClient()
     controller = ZenController(
         id=1,
         name="ctrl",
         label="Ctrl",
         host="127.0.0.1",
         port=5108,
-        protocol=protocol,
+        ctx=EntityContext(commands=protocol),
     )
     fake_client = MagicMock()
     fake_client.is_connected.return_value = True
@@ -381,7 +382,7 @@ async def test_send_packet_error_returns_without_raising() -> None:
 
 
 def test_mac_requires_six_bytes() -> None:
-    protocol = ZenProtocol()
+    protocol = ZenCommandClient()
     with pytest.raises(ValueError, match="6 bytes"):
         ZenController(
             id=1,
@@ -390,7 +391,7 @@ def test_mac_requires_six_bytes() -> None:
             host="127.0.0.1",
             port=5108,
             mac="aa:bb",
-            protocol=protocol,
+            ctx=EntityContext(commands=protocol),
         )
 
     ctrl = ZenController(
@@ -400,7 +401,7 @@ def test_mac_requires_six_bytes() -> None:
         host="127.0.0.1",
         port=5108,
         mac="aa:bb:cc:dd:ee:ff",
-        protocol=protocol,
+        ctx=EntityContext(commands=protocol),
     )
     assert ctrl.mac_bytes == bytes.fromhex("aabbccddeeff")
 

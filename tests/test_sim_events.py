@@ -12,7 +12,7 @@ pytestmark = pytest.mark.simulator
 
 @pytest.mark.asyncio
 async def test_scene_and_colour_events_via_protocol(live_sim):
-    p = live_sim.protocol
+    p = live_sim.commands
     scenes: list[tuple[str, int, int]] = []
     colours: list[tuple[int, object]] = []
 
@@ -44,7 +44,7 @@ async def test_scene_and_colour_events_via_protocol(live_sim):
 
 @pytest.mark.asyncio
 async def test_group_level_event_via_protocol(live_sim):
-    p = live_sim.protocol
+    p = live_sim.commands
     group_events: list[tuple[int, int]] = []
 
     async def on_level(*, address, arc_level, payload):
@@ -69,7 +69,7 @@ async def test_group_level_event_via_protocol(live_sim):
 
 @pytest.mark.asyncio
 async def test_member_events_on_group_scene(live_sim):
-    p = live_sim.protocol
+    p = live_sim.commands
     scenes: list[tuple[str, int, int]] = []
     levels: list[tuple[str, int, int]] = []
 
@@ -97,7 +97,7 @@ async def test_member_events_on_group_scene(live_sim):
 
 @pytest.mark.asyncio
 async def test_profile_and_sysvar_events_via_protocol(live_sim):
-    p, c = live_sim.protocol, live_sim.controller
+    p, c = live_sim.commands, live_sim.controller
     profiles: list[int] = []
     sysvars: list[tuple[int, int]] = []
 
@@ -123,7 +123,7 @@ async def test_profile_and_sysvar_events_via_protocol(live_sim):
 
 @pytest.mark.asyncio
 async def test_button_hold_and_occupancy_inject(live_sim):
-    p = live_sim.protocol
+    p = live_sim.commands
     presses: list[tuple[int, int]] = []
     holds: list[tuple[int, int]] = []
     occupied: list[tuple[int, int, bytes]] = []
@@ -159,7 +159,7 @@ async def test_button_hold_and_occupancy_inject(live_sim):
 
 @pytest.mark.asyncio
 async def test_absolute_input_inject(live_sim):
-    p = live_sim.protocol
+    p = live_sim.commands
     events: list[tuple[int, int, bytes]] = []
 
     async def on_absolute(*, instance, payload):
@@ -183,7 +183,7 @@ async def test_absolute_input_inject(live_sim):
 async def test_inject_level_scene_colour_profile_events(live_sim):
     from zencontrol_simulator.world import Colour
 
-    p = live_sim.protocol
+    p = live_sim.commands
     levels: list[tuple[int, int]] = []
     scenes: list[tuple[int, int]] = []
     colours: list[tuple[int, object]] = []

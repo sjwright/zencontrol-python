@@ -8,43 +8,91 @@ This module contains models that belong to the zen_api layer:
 """
 
 import logging
-import socket
 import struct
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Self
+from typing import Protocol, Self
 
-from ..io import ZenClient
 from .types import Const, ZenAddressType, ZenColourType, ZenInstanceType
-
-if TYPE_CHECKING:
-    # Addresses are only ever built from registered controllers, which are
-    # interface-layer objects. Type-only import; at runtime the interface layer
-    # imports this module, so importing it here would be circular.
-    from ..interface.interface import ZenController as ZenInterfaceController
-
 
 DEFAULT_CONTROLLER_PORT = 5108
 
 
+class ControllerRef(Protocol):
+    """What the API layer needs from a controller (address + command path).
+
+    Both ``ZenController`` and the interface-layer subclass satisfy this
+    structurally — no upward import from ``api`` into ``interface``.
+    """
+
+    id: str
+    name: str
+    label: str
+    host: str
+    port: int
+
+    @property
+    def ip(self) -> str: ...
+
+    def refresh_ip(self) -> str: ...
+
+
+def mac_to_bytes(mac: str | None) -> bytes | None:
+    """Parse a colon/hyphen MAC string to 6 bytes, or None."""
+    if mac is None:
+        return None
+    try:
+        raw = bytes.fromhex(mac.replace(":", "").replace("-", ""))
+    except ValueError as err:
+        raise ValueError(f"Invalid MAC address {mac!r}") from err
+    if len(raw) != 6:
+        raise ValueError(f"MAC address must be 6 bytes, got {len(raw)} from {mac!r}")
+    return raw
+
+
+def mac_bytes_to_str(mac: bytes) -> str:
+    """Format 6 MAC bytes as uppercase colon-separated hex."""
+    return ":".join(f"{b:02X}" for b in mac)
+
+
+def mac_key(mac: bytes | str) -> str:
+    """Canonical MAC dict key: uppercase colon-separated."""
+    if isinstance(mac, bytes):
+        return mac_bytes_to_str(mac)
+    return mac.upper().replace("-", ":")
+
+
 @dataclass(frozen=True, slots=True)
 class DiscoveredController:
-    """A controller identified from multicast events (not yet registered)."""
+    """A controller identified from multicast events (not yet registered).
+
+    ``label`` is left None on the consumer path — enrich via an explicit probe
+    that uses the command plane, never from the event receiver.
+
+    ``last_seen`` updates on every subsequent identity packet so a discover
+    window can report controllers heard again, not only first-ever sightings.
+    """
 
     host: str
     mac: str
     label: str | None = None
     port: int = DEFAULT_CONTROLLER_PORT
+    first_seen: float = 0.0
+    last_seen: float = 0.0
 
 
 @dataclass
 class ZenController:
-    """Base class holding a controller's config and transport state.
+    """Controller identity and config — no transport back-references (I9).
 
     ``zencontrol.ZenController`` (the interface layer) subclasses this and adds
     entity state; that subclass is what ``ZenControl.add_controller()`` returns
     and what registered controllers always are. This base exists so the API
     layer can talk about controllers without importing the interface layer.
+
+    Command clients and the protocol instance live outside the model: the
+    protocol owns UDP clients keyed by controller name; the interface layer
+    holds the protocol reference.
 
     The 'host' field can be any resolvable hostname or IP address.
     The 'ip' property will resolve the hostname to an IP address and cache it.
@@ -55,59 +103,45 @@ class ZenController:
     host: str
     port: int
     mac: str | None = None
-    mac_bytes: bytes | None = field(init=False, default=None)
-    # Any avoids an import cycle with protocol.py (which imports this module).
-    protocol: Any | None = None
     version: str | None = None
     startup_complete: bool = False
     dali_ready: bool = False
     filtering: bool = False
     last_seen: float = field(default_factory=time.time)
-    client: ZenClient | None = None
     _ip: str | None = field(init=False, repr=False, default=None)
 
     def __post_init__(self) -> None:
-        self._update_mac_bytes(self.mac)
+        mac_to_bytes(self.mac)  # eager validate; mac_bytes is derived
 
-    def __setattr__(self, name: str, value: object) -> None:
-        object.__setattr__(self, name, value)
-        # After init, keep mac_bytes in sync when mac is assigned.
-        if name == "mac" and "mac_bytes" in self.__dict__:
-            self._update_mac_bytes(value if isinstance(value, str) or value is None else None)
+    @property
+    def mac_bytes(self) -> bytes | None:
+        """Wire MAC derived from ``mac`` — cannot desync from a stored copy."""
+        return mac_to_bytes(self.mac)
 
-    def _update_mac_bytes(self, value: str | None) -> None:
-        """Update mac_bytes from a MAC string (or clear it)."""
-        if value is not None:
-            try:
-                mac_bytes = bytes.fromhex(value.replace(":", "").replace("-", ""))
-            except ValueError as err:
-                raise ValueError(f"Invalid MAC address {value!r}") from err
-            if len(mac_bytes) != 6:
-                raise ValueError(
-                    f"MAC address must be 6 bytes, got {len(mac_bytes)} from {value!r}"
-                )
-            object.__setattr__(self, "mac_bytes", mac_bytes)
-        else:
-            object.__setattr__(self, "mac_bytes", None)
-    
     @property
     def ip(self) -> str:
-        """Get the resolved IP address from the host field.
-        
-        Resolves DNS names to IP addresses and caches the result.
-        If resolution fails, returns the original host value.
+        """Resolved IPv4 for ``host``, cached.
+
+        IPv4 literals skip DNS. Hostname lookup uses ``gethostbyname`` and
+        **blocks** — prefer ``await resolve_host(controller.host)`` then
+        ``set_resolved_ip`` from async code / the HA event loop.
         """
         if self._ip is None:
-            try:
-                # Try to resolve the hostname to an IP address
-                self._ip = socket.gethostbyname(self.host)
-            except (socket.gaierror, socket.herror):
-                # If resolution fails, use the host value as-is (might already be an IP)
-                self._ip = self.host
+            from ..utils import resolve_host_sync
+
+            self._ip = resolve_host_sync(self.host)
         return self._ip
-    
+
+    def set_resolved_ip(self, ip: str) -> None:
+        """Seed the ``ip`` cache from an async-safe resolve (e.g. ``resolve_host``)."""
+        self._ip = ip
+
     def refresh_ip(self) -> str:
-        """Force a fresh DNS lookup and return the resolved IP address."""
+        """Force a fresh DNS lookup and return the resolved IP address.
+
+        Blocking — see ``ip``. From async code use ``await resolve_host`` and
+        ``set_resolved_ip``.
+        """
         self._ip = None
         return self.ip
 
@@ -115,14 +149,14 @@ class ZenController:
 @dataclass(slots=True)
 class ZenAddress:
     """Represents a DALI address"""
-    controller: ZenInterfaceController
+    controller: ControllerRef
     type: ZenAddressType
     number: int
     label: str | None = field(default=None, init=False)
     serial: str | None = field(default=None, init=False)
-    
+
     @classmethod
-    def broadcast(cls, controller: ZenInterfaceController) -> Self:
+    def broadcast(cls, controller: ControllerRef) -> Self:
         return cls(controller=controller, type=ZenAddressType.BROADCAST, number=255)
     
     def ecg(self) -> int:
@@ -324,7 +358,7 @@ class ZenProfile:
     controller: ZenController
     address: ZenAddress
     profile: int
-    
+
     def __post_init__(self) -> None:
         if not (0 <= self.profile <= 255):
             raise ValueError(f"Profile must be 0-255, got {self.profile}")

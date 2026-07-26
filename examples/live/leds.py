@@ -1,7 +1,8 @@
 import asyncio
 import yaml
 from pathlib import Path
-from zencontrol import ZenProtocol, ZenController, ZenAddress, ZenAddressType, run_with_keyboard_interrupt
+from zencontrol import ZenCommandClient, ZenController, ZenAddress, ZenAddressType, run_with_keyboard_interrupt
+from zencontrol.interface import EntityContext
 
 async def main():
     """Test LED control queries"""
@@ -9,9 +10,9 @@ async def main():
     config = yaml.safe_load(open(Path(__file__).resolve().parents[2] / "tests" / "config.yaml"))
     
     # Create protocol and controller
-    async with ZenProtocol(print_traffic=False) as tpi:
-        ctrl = ZenController(protocol=tpi, **config.get('zencontrol')[0])
-        tpi.set_controllers([ctrl])
+    async with ZenCommandClient(print_traffic=False) as tpi:
+        ctx = EntityContext(commands=tpi)
+        ctrl = ZenController(ctx=ctx, **config.get('zencontrol')[0])
         
         print("Testing LED control queries...")
         print("=" * 50)
@@ -24,7 +25,13 @@ async def main():
 
             for instance in instances:
                 
-                instance_label = await tpi.query_dali_instance_label(instance, generic_if_none=True)
+                instance_label = await tpi.query_dali_instance_label(instance)
+                if instance_label is None:
+                    instance_label = (
+                        instance.type.name.title().replace("_", " ")
+                        + " "
+                        + str(instance.number)
+                    )
                 print(f"      {instance.number} - {instance_label}")
 
                 last_known_led_state = await tpi.query_last_known_dali_button_led_state(instance)

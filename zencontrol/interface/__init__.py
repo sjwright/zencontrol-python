@@ -7,6 +7,7 @@ This module contains models that belong to the zen_interface layer:
 - Business logic and convenience methods
 """
 
+from .context import EntityContext, EntityRegistry, ZenCallbacks
 from .interface import (
     ZenAbsoluteInput,
     ZenButton,
@@ -22,7 +23,10 @@ from .interface import (
 __all__ = [
     # High-level client
     "ZenControl",
-    
+    "EntityContext",
+    "EntityRegistry",
+    "ZenCallbacks",
+
     # High-level models
     "ZenController",
     "ZenProfile",

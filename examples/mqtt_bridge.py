@@ -7,13 +7,11 @@ import re
 from pathlib import Path
 from typing import Any
 import zencontrol
-from zencontrol import ZenController, ZenProtocol, ZenClient, ZenColour, ZenColourType, ZenProfile, ZenLight, ZenGroup, ZenButton, ZenMotionSensor, ZenSystemVariable, ZenTimeoutError, ZenAddressType
-from zencontrol.api.types import Const as ApiConst
+from zencontrol import ZenController, ZenClient, ZenColour, ZenColourType, ZenProfile, ZenLight, ZenGroup, ZenButton, ZenMotionSensor, ZenSystemVariable, ZenTimeoutError, ZenAddressType
 import aiomqtt
 import logging
 from logging.handlers import RotatingFileHandler
 import math
-import pickle
 import traceback
 try:
     from colorama import Fore, Style
@@ -158,10 +156,6 @@ class ZenMQTTBridge:
 
         # Begin listening for zen events (reconnects automatically on loss)
         await self.zen.start()
-
-        with open(self.example_dir / "cache.pkl", "wb") as f:
-            pickle.dump(self.zen.cache, f)
-
 
         clist = []
         for c in sorted(self.control, key=lambda x: x.id):
@@ -354,47 +348,9 @@ class ZenMQTTBridge:
     #              ZEN
     # ================================
 
-    def _load_cache(self) -> dict:
-        """Load and validate persisted protocol query cache, or return empty dict."""
-        cache_path = self.example_dir / "cache.pkl"
-        try:
-            with open(cache_path, "rb") as infile:
-                raw = pickle.load(infile)
-        except FileNotFoundError:
-            return {}
-        except (OSError, pickle.UnpicklingError, EOFError, AttributeError) as e:
-            self.logger.warning(f"Ignoring corrupt cache {cache_path}: {e}")
-            return {}
-
-        if not isinstance(raw, dict):
-            self.logger.warning(f"Ignoring invalid cache {cache_path}: expected dict, got {type(raw).__name__}")
-            return {}
-
-        cache: dict = {}
-        now = time.time()
-        for key, entry in raw.items():
-            if not isinstance(key, bytes) or not isinstance(entry, dict):
-                continue
-            data = entry.get("d")
-            resp_type = entry.get("c")
-            timestamp = entry.get("t")
-            if not isinstance(data, bytes) or not isinstance(resp_type, int) or not isinstance(timestamp, (int, float)):
-                continue
-            if now - timestamp >= ApiConst.CACHE_TIMEOUT:
-                continue
-            cache[key] = {"d": data, "c": resp_type, "t": timestamp}
-
-        skipped = len(raw) - len(cache)
-        if skipped:
-            self.logger.info(f"Loaded {len(cache)} cache entries from {cache_path} ({skipped} invalid or expired)")
-        elif cache:
-            self.logger.info(f"Loaded {len(cache)} cache entries from {cache_path}")
-        return cache
-
     async def setup_zen(self) -> None:
         try:
-            cache = self._load_cache()
-            self.zen: zencontrol.ZenControl = zencontrol.ZenControl(logger=self.logger, print_traffic=True, cache=cache)
+            self.zen: zencontrol.ZenControl = zencontrol.ZenControl(logger=self.logger, print_traffic=True)
             self.zen.on_connect = self._zen_on_connect
             self.zen.on_disconnect = self._zen_on_disconnect
             self.zen.profile_change = self._zen_profile_change

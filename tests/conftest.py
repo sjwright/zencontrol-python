@@ -83,11 +83,11 @@ def _simulator_config_path() -> Path:
 
 @dataclass
 class LiveSimulator:
-    """Running simulator paired with a ZenProtocol unicast client."""
+    """Running simulator paired with a ``ZenProtocol`` test facade."""
 
     world: Any
     sim: Any
-    protocol: Any
+    commands: Any
     controller: Any
 
     def ecg(self, number: int):
@@ -142,12 +142,13 @@ class LiveSimulator:
 
 @pytest.fixture
 async def live_sim() -> LiveSimulator:
-    """Start zencontrol-simulator on an ephemeral port with a ZenProtocol client."""
+    """Start zencontrol-simulator on an ephemeral port with a ZenProtocol facade."""
     _require_simulator()
     from zencontrol_simulator.server import Simulator
     from zencontrol_simulator.world import load_world
 
-    from zencontrol import ZenController, ZenProtocol
+    from zencontrol import ZenController
+    from zencontrol.testing import ZenProtocol
 
     config = _simulator_config_path()
     world = load_world(config)
@@ -168,12 +169,12 @@ async def live_sim() -> LiveSimulator:
         host="127.0.0.1",
         port=port,
         mac=mac,
-        protocol=protocol,
+        ctx=protocol.context,
     )
     protocol.set_controllers([controller])
 
     live = LiveSimulator(
-        world=world, sim=sim, protocol=protocol, controller=controller
+        world=world, sim=sim, commands=protocol, controller=controller
     )
     try:
         yield live

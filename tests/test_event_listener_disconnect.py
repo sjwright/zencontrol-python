@@ -3,157 +3,69 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from zencontrol.api.protocol import ZenProtocol
-from zencontrol.api.types import ZenEventMode
+from helpers_endpoints import fake_endpoint_factory
+from zencontrol.api.types import Transport, ZenEventMode
 from zencontrol.interface.interface import ZenControl
-from zencontrol.io.event import ZenEvent
-
-EventHandler = Callable[[ZenEvent], Awaitable[None]]
-UnexpectedExitHandler = Callable[[], Awaitable[None]]
-
-
-class _FakeListener:
-    """Duck-typed listener implementing the ZenListener session API."""
-
-    def __init__(self, *, raise_error: Exception | None = None) -> None:
-        self._raise_error = raise_error
-        self.listen_port = 6969
-        self.closed = False
-        self.close_calls = 0
-        self._consumer_task: asyncio.Task[None] | None = None
-        self._on_event: EventHandler | None = None
-        self._on_unexpected_exit: UnexpectedExitHandler | None = None
-
-    @property
-    def consumer_task(self) -> asyncio.Task[None] | None:
-        return self._consumer_task
-
-    def is_running(self) -> bool:
-        return self._consumer_task is not None and not self._consumer_task.done()
-
-    def run(
-        self,
-        on_event: EventHandler,
-        *,
-        on_unexpected_exit: UnexpectedExitHandler | None = None,
-    ) -> asyncio.Task[None]:
-        self._on_event = on_event
-        self._on_unexpected_exit = on_unexpected_exit
-        self._consumer_task = asyncio.create_task(self._consume())
-        return self._consumer_task
-
-    async def _consume(self) -> None:
-        unexpected = True
-        try:
-            async for event in self.events():
-                if self._on_event is not None:
-                    await self._on_event(event)
-        except asyncio.CancelledError:
-            unexpected = False
-            raise
-        except Exception:
-            pass
-        finally:
-            await self.close()
-            if unexpected and callable(self._on_unexpected_exit):
-                await self._on_unexpected_exit()
-
-    async def events(self):
-        if self._raise_error is not None:
-            raise self._raise_error
-        return
-        yield  # pragma: no cover — makes this an async generator
-
-    async def stop(self) -> None:
-        task = self._consumer_task
-        self._consumer_task = None
-        if task is not None and not task.done():
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-        await self.close()
-
-    async def close(self) -> None:
-        self.close_calls += 1
-        self.closed = True
 
 
 @pytest.mark.asyncio
-async def test_listener_error_fires_on_disconnect_once() -> None:
-    protocol = ZenProtocol()
+async def test_consumer_crash_fires_on_disconnect_once() -> None:
+    zen = ZenControl()
+    zen.reconnect_min_delay = 10.0
     on_disconnect = AsyncMock()
-    protocol.disconnect_callback = on_disconnect
+    zen.on_disconnect = on_disconnect
+    zen.event_receiver._endpoint_factory = fake_endpoint_factory()
+    zen.commands.set_tpi_event_unicast_address = AsyncMock()
+    zen.commands.tpi_event_emit = AsyncMock(return_value=True)
 
-    fake = _FakeListener(raise_error=RuntimeError("socket died"))
+    await zen.start()
+    task = zen.event_receiver.consumer_task
+    assert task is not None
 
-    with patch(
-        "zencontrol.api.protocol.ZenListener.create",
-        new=AsyncMock(return_value=fake),
-    ):
-        await protocol.start_event_monitoring()
-        assert protocol.event_task is not None
-        await asyncio.wait_for(protocol.event_task, timeout=1.0)
+    # Crash the consumer with a real exception (not CancelledError)
+    async def boom(_event) -> None:
+        raise RuntimeError("socket died")
 
-    on_disconnect.assert_awaited_once()
-    assert protocol._disconnect_notified is True
-    assert protocol.event_listener is None
+    zen.event_receiver.handle = boom  # type: ignore[method-assign]
 
+    def _xor(buf: bytes) -> int:
+        acc = 0
+        for b in buf:
+            acc ^= b
+        return acc & 0xFF
 
-@pytest.mark.asyncio
-async def test_listener_clean_exit_fires_on_disconnect() -> None:
-    protocol = ZenProtocol()
-    on_disconnect = AsyncMock()
-    protocol.disconnect_callback = on_disconnect
+    body = bytes([0x5A, 0x43]) + b"\x02\x00\x00\x00\x00\x01" + b"\x00\x40\x00\x01\x01"
+    zen.event_receiver.inject(body + bytes([_xor(body)]), ("127.0.0.1", 1))
+    await asyncio.wait_for(task, timeout=1.0)
 
-    fake = _FakeListener()
-
-    with patch(
-        "zencontrol.api.protocol.ZenListener.create",
-        new=AsyncMock(return_value=fake),
-    ):
-        await protocol.start_event_monitoring()
-        assert protocol.event_task is not None
-        await asyncio.wait_for(protocol.event_task, timeout=1.0)
-
-    on_disconnect.assert_awaited_once()
+    # Recoverable gap: no disconnect — session restores and re-arms (I10).
+    on_disconnect.assert_not_awaited()
+    for _ in range(40):
+        live = zen.event_receiver.consumer_task
+        if live is not None and not live.done() and live is not task:
+            break
+        await asyncio.sleep(0.05)
+    else:
+        pytest.fail("session was not restored after consumer crash")
+    assert zen.is_event_monitoring_active()
 
 
 @pytest.mark.asyncio
 async def test_intentional_stop_fires_on_disconnect_once() -> None:
     zen = ZenControl()
-    zen.reconnect_min_delay = 10.0  # avoid reconnect during this test
+    zen.reconnect_min_delay = 10.0
     on_disconnect = AsyncMock()
     zen.on_disconnect = on_disconnect
+    zen.event_receiver._endpoint_factory = fake_endpoint_factory()
+    zen.commands.set_tpi_event_unicast_address = AsyncMock()
+    zen.commands.tpi_event_emit = AsyncMock(return_value=True)
 
-    # Keep the listener alive until stop cancels it
-    started = asyncio.Event()
-
-    class _BlockingListener(_FakeListener):
-        async def events(self):
-            started.set()
-            try:
-                while True:
-                    await asyncio.sleep(3600)
-                    yield  # pragma: no cover
-            except asyncio.CancelledError:
-                raise
-
-    fake = _BlockingListener()
-
-    with patch(
-        "zencontrol.api.protocol.ZenListener.create",
-        new=AsyncMock(return_value=fake),
-    ):
-        await zen.start()
-        await asyncio.wait_for(started.wait(), timeout=1.0)
-        await zen.stop()
+    await zen.start()
+    await zen.stop()
 
     on_disconnect.assert_awaited_once()
 
@@ -161,22 +73,23 @@ async def test_intentional_stop_fires_on_disconnect_once() -> None:
 @pytest.mark.asyncio
 async def test_stop_after_crash_does_not_double_notify() -> None:
     zen = ZenControl()
-    zen.reconnect_min_delay = 10.0  # stop before reconnect sleep elapses
+    zen.reconnect_min_delay = 10.0
     on_disconnect = AsyncMock()
     zen.on_disconnect = on_disconnect
+    zen.event_receiver._endpoint_factory = fake_endpoint_factory()
+    zen.commands.set_tpi_event_unicast_address = AsyncMock()
+    zen.commands.tpi_event_emit = AsyncMock(return_value=True)
 
-    fake = _FakeListener(raise_error=RuntimeError("boom"))
-
-    with patch(
-        "zencontrol.api.protocol.ZenListener.create",
-        new=AsyncMock(return_value=fake),
-    ):
-        await zen.start()
-        assert zen.protocol.event_task is not None
-        await asyncio.wait_for(zen.protocol.event_task, timeout=1.0)
-        # Allow disconnect callback to run
-        await asyncio.sleep(0.05)
-        await zen.stop()
+    await zen.start()
+    task = zen.event_receiver.consumer_task
+    assert task is not None
+    task.cancel()
+    try:
+        await asyncio.wait_for(task, timeout=1.0)
+    except asyncio.CancelledError:
+        pass
+    await asyncio.sleep(0.05)
+    await zen.stop()
 
     on_disconnect.assert_awaited_once()
 
@@ -185,78 +98,69 @@ def _mock_controller(name: str) -> MagicMock:
     ctrl = MagicMock()
     ctrl.name = name
     ctrl.filtering = False
+    ctrl.ip = "127.0.0.1"
+    ctrl.mac_bytes = None
+    ctrl.host = "127.0.0.1"
+    ctrl.port = 5108
+    ctrl.mac = None
+    ctrl.id = "1"
     return ctrl
 
 
 @pytest.mark.asyncio
-async def test_partial_start_closes_listener_and_disables_enabled_controllers() -> None:
-    """If controller config fails mid-loop, the socket is closed and prior enables undone."""
-    protocol = ZenProtocol()
-    ctrl_a = _mock_controller("ctrl-a")
-    ctrl_b = _mock_controller("ctrl-b")
-    protocol.controllers = [ctrl_a, ctrl_b]
-
-    fake = _FakeListener()
-    enabled: list[str] = []
-    disabled: list[str] = []
+async def test_partial_attach_leaves_no_binding_when_emit_fails() -> None:
+    """If emit programming fails, wiring does not retain a binding for that controller."""
+    zen = ZenControl()
+    zen.reconnect_min_delay = 10.0
+    zen.event_receiver._endpoint_factory = fake_endpoint_factory()
+    zen.commands.set_tpi_event_unicast_address = AsyncMock(return_value=None)
 
     async def emit(controller: MagicMock, mode: ZenEventMode | None = None) -> bool:
         assert mode is not None
-        if mode.enabled:
-            if controller is ctrl_b:
-                raise RuntimeError("config failed")
-            enabled.append(controller.name)
-        else:
-            disabled.append(controller.name)
+        if controller.name == "ctrl-b" and mode.enabled:
+            raise RuntimeError("config failed")
         return True
 
-    protocol.set_tpi_event_unicast_address = AsyncMock(return_value=None)
-    protocol.tpi_event_emit = AsyncMock(side_effect=emit)
+    zen.commands.tpi_event_emit = AsyncMock(side_effect=emit)
+    ctrl_a = _mock_controller("ctrl-a")
+    ctrl_b = _mock_controller("ctrl-b")
+    ctrl_b.ip = "127.0.0.2"
+    ctrl_b.host = "127.0.0.2"
+    zen.controllers = [ctrl_a, ctrl_b]
 
-    with patch(
-        "zencontrol.api.protocol.ZenListener.create",
-        new=AsyncMock(return_value=fake),
-    ):
-        with pytest.raises(RuntimeError, match="config failed"):
-            await protocol.start_event_monitoring()
+    # Attach ctrl-a succeeds; ctrl-b fails and rolls back its subscription/lease.
+    from zencontrol.interface.wiring import ZenEventWiring
 
-    assert fake.closed
-    assert fake.close_calls >= 1
-    assert protocol.event_listener is None
-    assert protocol.event_task is None
-    assert enabled == ["ctrl-a"]
-    assert disabled == ["ctrl-a"]
+    wiring = ZenEventWiring(
+        zen.event_receiver,
+        zen.commands,
+        event_handler=AsyncMock(),
+        logger=zen.logger,
+    )
+    mode = ZenEventMode(enabled=True, filtering=False, transport=Transport.MULTICAST)
+    await wiring.attach(ctrl_a, mode)
+    with pytest.raises(RuntimeError, match="config failed"):
+        await wiring.attach(ctrl_b, mode)
+
+    assert wiring.get("ctrl-a") is not None
+    assert wiring.get("ctrl-b") is None
+    await wiring.detach_all()
+    assert zen.event_receiver.lease_count(Transport.MULTICAST) == 0
 
 
 @pytest.mark.asyncio
 async def test_stop_event_monitoring_is_idempotent() -> None:
-    protocol = ZenProtocol()
+    zen = ZenControl()
+    zen.reconnect_min_delay = 10.0
+    zen.event_receiver._endpoint_factory = fake_endpoint_factory()
+    zen.commands.set_tpi_event_unicast_address = AsyncMock(return_value=None)
+    zen.commands.tpi_event_emit = AsyncMock(return_value=True)
 
-    class _BlockingListener(_FakeListener):
-        async def events(self):
-            try:
-                while True:
-                    await asyncio.sleep(3600)
-                    yield  # pragma: no cover
-            except asyncio.CancelledError:
-                raise
+    await zen.start()
+    assert zen.is_event_monitoring_active()
 
-    blocking = _BlockingListener()
+    await zen.stop()
+    assert not zen.is_event_monitoring_active()
 
-    with patch(
-        "zencontrol.api.protocol.ZenListener.create",
-        new=AsyncMock(return_value=blocking),
-    ):
-        protocol.set_tpi_event_unicast_address = AsyncMock(return_value=None)
-        protocol.tpi_event_emit = AsyncMock(return_value=True)
-        await protocol.start_event_monitoring()
-        assert protocol.is_event_monitoring_active()
-
-        await protocol.stop_event_monitoring()
-        assert not protocol.is_event_monitoring_active()
-        assert protocol.event_listener is None
-        assert blocking.closed
-
-        # Second stop must not raise
-        await protocol.stop_event_monitoring()
-        assert not protocol.is_event_monitoring_active()
+    await zen.stop()
+    assert not zen.is_event_monitoring_active()

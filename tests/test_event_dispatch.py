@@ -1,0 +1,150 @@
+"""I8: entity/callback work must not run inline on the funnel consumer."""
+
+from __future__ import annotations
+
+import asyncio
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
+from helpers_endpoints import fake_endpoint_factory
+from zencontrol.api.event_decode import LevelChangeV2
+from zencontrol.interface.interface import ZenControl
+
+
+def _xor(buf: bytes) -> int:
+    acc = 0
+    for b in buf:
+        acc ^= b
+    return acc & 0xFF
+
+
+def _level_frame(*, mac: bytes, level: int, host: str = "127.0.0.1") -> tuple[bytes, tuple[str, int]]:
+    # LEVEL_CHANGE_V2: code 0x0B, payload [current, target]
+    payload = bytes([level, level])
+    body = (
+        bytes([0x5A, 0x43])
+        + mac
+        + (0).to_bytes(2, "big")  # ECG 0
+        + bytes([0x0B, len(payload)])
+        + payload
+    )
+    return body + bytes([_xor(body)]), (host, 1)
+
+
+@pytest.mark.asyncio
+async def test_subscription_handler_returns_before_callback_runs() -> None:
+    """Consumer path schedules dispatch; application callbacks run afterward."""
+    zen = ZenControl()
+    zen.event_receiver._endpoint_factory = fake_endpoint_factory()
+    zen.commands.set_tpi_event_unicast_address = AsyncMock()
+    zen.commands.tpi_event_emit = AsyncMock(return_value=True)
+
+    ctrl = zen.add_controller(
+        id=1,
+        name="house",
+        label="House",
+        host="127.0.0.1",
+        mac="02:00:00:00:00:01",
+    )
+    # Ensure a light singleton exists for address 0.
+    from zencontrol import ZenAddress, ZenAddressType, ZenLight
+
+    light = ZenLight(
+        ctx=zen.context,
+        address=ZenAddress(controller=ctrl, type=ZenAddressType.ECG, number=0),
+    )
+    light.features = {"brightness": True}
+
+    release_callback = asyncio.Event()
+    callback_started = asyncio.Event()
+    order: list[str] = []
+
+    async def on_light_change(**kwargs) -> None:
+        order.append("callback")
+        callback_started.set()
+        await release_callback.wait()
+
+    zen.light_change = on_light_change
+    await zen.start()
+
+    data, addr = _level_frame(mac=b"\x02\x00\x00\x00\x00\x01", level=128)
+    # Drive the consumer the same way a socket would.
+    zen.event_receiver.inject(data, addr)
+
+    # Handler/dispatch was scheduled; callback may not have started yet, but
+    # the funnel consumer must not be blocked waiting on it.
+    for _ in range(50):
+        if callback_started.is_set():
+            break
+        await asyncio.sleep(0.01)
+    assert callback_started.is_set()
+    assert "callback" in order
+
+    # While the callback is still awaiting, the consumer task must still be live.
+    consumer = zen.event_receiver.consumer_task
+    assert consumer is not None and not consumer.done()
+
+    release_callback.set()
+    await asyncio.sleep(0.05)
+    assert light.level == 128
+
+    await zen.stop()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_chain_ignores_predecessor_cancel_but_honours_own() -> None:
+    """Awaiting a cancelled predecessor must not swallow this task's CancelledError."""
+    zen = ZenControl()
+    ctrl = zen.add_controller(
+        id=1,
+        name="house",
+        label="House",
+        host="127.0.0.1",
+        mac="02:00:00:00:00:01",
+    )
+    ev = LevelChangeV2(target=0, current=1, level=2)
+    dispatched: list[int] = []
+
+    async def record_dispatch(_ctrl, _ev) -> None:
+        dispatched.append(1)
+
+    with patch.object(zen, "_dispatch_controller_event", side_effect=record_dispatch):
+        # Predecessor stuck until cancelled.
+        stuck = asyncio.get_running_loop().create_future()
+
+        async def predecessor() -> None:
+            await stuck
+
+        prev = asyncio.create_task(predecessor())
+        zen._event_dispatch_tail[ctrl.name] = prev
+
+        await zen._on_controller_event(ctrl, ev)
+        chain = zen._event_dispatch_tail[ctrl.name]
+        assert chain is not prev
+
+        # Cancel predecessor — chain should continue and dispatch.
+        prev.cancel()
+        await asyncio.wait_for(chain, timeout=1.0)
+        assert dispatched == [1]
+
+        # New link waiting on a live predecessor; cancel the link itself.
+        dispatched.clear()
+        stuck2 = asyncio.get_running_loop().create_future()
+
+        async def predecessor2() -> None:
+            await stuck2
+
+        prev2 = asyncio.create_task(predecessor2())
+        zen._event_dispatch_tail[ctrl.name] = prev2
+        await zen._on_controller_event(ctrl, ev)
+        chain2 = zen._event_dispatch_tail[ctrl.name]
+        await asyncio.sleep(0)  # let chain2 reach await previous
+        chain2.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await chain2
+        assert dispatched == []
+        # Cancelling chain2 may have cancelled the Future it was awaiting.
+        if not prev2.done():
+            stuck2.set_result(None)
+            await prev2

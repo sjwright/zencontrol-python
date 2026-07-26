@@ -3,13 +3,22 @@ API-level type definitions.
 
 This module contains types and enums that belong to the API layer:
 - DALI address types, instance types, color types
-- Event masks and modes used by the TPI protocol
+- Event delivery mode (multicast / unicast)
 - Constants used by the API layer
+
+Event vocabulary (``ZenEventCode``, ``ZenEventMask``) lives in ``event_decode``.
 """
 
 from dataclasses import dataclass
 from enum import Enum
 from typing import Self
+
+
+class Transport(Enum):
+    """Event delivery transport. A controller emits on exactly one (I3)."""
+
+    MULTICAST = "multicast"
+    UNICAST = "unicast"
 
 
 class ZenAddressType(Enum):
@@ -51,117 +60,68 @@ class ZenErrorCode(Enum):
 
 @dataclass(slots=True)
 class ZenEventMode:
+    """TPI event emit mode. Exactly one transport — dual bools are unrepresentable."""
+
     enabled: bool = False
     filtering: bool = False
-    unicast: bool = False
-    multicast: bool = False
-    
+    transport: Transport = Transport.MULTICAST
+
+    def __init__(
+        self,
+        enabled: bool = False,
+        filtering: bool = False,
+        transport: Transport | None = None,
+        *,
+        unicast: bool | None = None,
+        multicast: bool | None = None,
+    ) -> None:
+        object.__setattr__(self, "enabled", enabled)
+        object.__setattr__(self, "filtering", filtering)
+        if transport is not None:
+            if unicast is not None or multicast is not None:
+                raise ValueError("pass transport= or unicast=/multicast=, not both")
+            object.__setattr__(self, "transport", transport)
+        elif unicast is not None or multicast is not None:
+            u = bool(unicast)
+            m = bool(multicast) if multicast is not None else not u
+            if u and m:
+                raise ValueError("a controller emits on exactly one transport (I3)")
+            object.__setattr__(
+                self, "transport", Transport.UNICAST if u else Transport.MULTICAST
+            )
+        else:
+            object.__setattr__(self, "transport", Transport.MULTICAST)
+
+    @property
+    def unicast(self) -> bool:
+        return self.transport is Transport.UNICAST
+
+    @property
+    def multicast(self) -> bool:
+        return self.transport is Transport.MULTICAST
+
     def bitmask(self) -> int:
+        # 0x80 is inverted: set when multicast is OFF.
+        # MULTICAST → neither 0x40 nor 0x80; UNICAST → both.
         mode_flag = 0x00
-        if self.enabled: mode_flag |= 0x01
-        if self.filtering: mode_flag |= 0x02
-        if self.unicast: mode_flag |= 0x40
-        if not self.multicast: mode_flag |= 0x80
+        if self.enabled:
+            mode_flag |= 0x01
+        if self.filtering:
+            mode_flag |= 0x02
+        if self.transport is Transport.UNICAST:
+            mode_flag |= 0x40
+            mode_flag |= 0x80
         return mode_flag
-    
+
     @classmethod
     def from_byte(cls, mode_flag: int) -> Self:
         return cls(
-            enabled = (mode_flag & 0x01) != 0,
-            filtering = (mode_flag & 0x02) != 0,
-            unicast = (mode_flag & 0x40) != 0,
-            multicast = (mode_flag & 0x80) == 0
+            enabled=(mode_flag & 0x01) != 0,
+            filtering=(mode_flag & 0x02) != 0,
+            transport=(
+                Transport.UNICAST if (mode_flag & 0x40) != 0 else Transport.MULTICAST
+            ),
         )
-
-
-class ZenEventCode(Enum):
-    BUTTON_PRESS = 0x00
-    BUTTON_HOLD = 0x01
-    ABSOLUTE_INPUT = 0x02
-    LEVEL_CHANGE = 0x03
-    GROUP_LEVEL_CHANGE = 0x04
-    SCENE_CHANGE = 0x05
-    IS_OCCUPIED = 0x06
-    SYSTEM_VARIABLE_CHANGE = 0x07
-    COLOUR_CHANGE = 0x08
-    PROFILE_CHANGE = 0x09
-    GROUP_OCCUPIED = 0x0A
-    LEVEL_CHANGE_V2 = 0x0B
-
-
-@dataclass(slots=True)
-class ZenEventMask:
-    button_press: bool = False
-    button_hold: bool = False
-    absolute_input: bool = False
-    level_change: bool = False
-    group_level_change: bool = False
-    scene_change: bool = False
-    is_occupied: bool = False
-    system_variable_change: bool = False
-    colour_change: bool = False
-    profile_change: bool = False
-    group_occupied: bool = False
-    level_change_v2: bool = False
-    
-    @classmethod
-    def all_events(cls) -> Self:
-        # Exclude deprecated level_change / group_level_change — use level_change_v2 (spec V2.001.121+)
-        return cls(
-            button_press = True,
-            button_hold = True,
-            absolute_input = True,
-            scene_change = True,
-            is_occupied = True,
-            system_variable_change = True,
-            colour_change = True,
-            profile_change = True,
-            group_occupied = True,
-            level_change_v2 = True
-        )
-    
-    @classmethod
-    def from_upper_lower(cls, upper: int, lower: int) -> Self:
-        return cls.from_double_byte((upper << 8) | lower)
-    
-    @classmethod
-    def from_double_byte(cls, event_mask: int) -> Self:
-        return cls(
-            button_press = (event_mask & (1 << ZenEventCode.BUTTON_PRESS.value)) != 0,
-            button_hold = (event_mask & (1 << ZenEventCode.BUTTON_HOLD.value)) != 0,
-            absolute_input = (event_mask & (1 << ZenEventCode.ABSOLUTE_INPUT.value)) != 0,
-            level_change = (event_mask & (1 << ZenEventCode.LEVEL_CHANGE.value)) != 0,
-            group_level_change = (event_mask & (1 << ZenEventCode.GROUP_LEVEL_CHANGE.value)) != 0,
-            scene_change = (event_mask & (1 << ZenEventCode.SCENE_CHANGE.value)) != 0,
-            is_occupied = (event_mask & (1 << ZenEventCode.IS_OCCUPIED.value)) != 0,
-            system_variable_change = (event_mask & (1 << ZenEventCode.SYSTEM_VARIABLE_CHANGE.value)) != 0,
-            colour_change = (event_mask & (1 << ZenEventCode.COLOUR_CHANGE.value)) != 0,
-            profile_change = (event_mask & (1 << ZenEventCode.PROFILE_CHANGE.value)) != 0,
-            group_occupied = (event_mask & (1 << ZenEventCode.GROUP_OCCUPIED.value)) != 0,
-            level_change_v2 = (event_mask & (1 << ZenEventCode.LEVEL_CHANGE_V2.value)) != 0
-        )
-    
-    def bitmask(self) -> int:
-        event_mask = 0x00
-        if self.button_press: event_mask |= (1 << ZenEventCode.BUTTON_PRESS.value)
-        if self.button_hold: event_mask |= (1 << ZenEventCode.BUTTON_HOLD.value)
-        if self.absolute_input: event_mask |= (1 << ZenEventCode.ABSOLUTE_INPUT.value)
-        if self.level_change: event_mask |= (1 << ZenEventCode.LEVEL_CHANGE.value)
-        if self.group_level_change: event_mask |= (1 << ZenEventCode.GROUP_LEVEL_CHANGE.value)
-        if self.scene_change: event_mask |= (1 << ZenEventCode.SCENE_CHANGE.value)
-        if self.is_occupied: event_mask |= (1 << ZenEventCode.IS_OCCUPIED.value)
-        if self.system_variable_change: event_mask |= (1 << ZenEventCode.SYSTEM_VARIABLE_CHANGE.value)
-        if self.colour_change: event_mask |= (1 << ZenEventCode.COLOUR_CHANGE.value)
-        if self.profile_change: event_mask |= (1 << ZenEventCode.PROFILE_CHANGE.value)
-        if self.group_occupied: event_mask |= (1 << ZenEventCode.GROUP_OCCUPIED.value)
-        if self.level_change_v2: event_mask |= (1 << ZenEventCode.LEVEL_CHANGE_V2.value)
-        return event_mask
-    
-    def upper(self) -> int:
-        return (self.bitmask() >> 8) & 0xFF
-    
-    def lower(self) -> int:
-        return self.bitmask() & 0xFF
 
 
 # API-level constants
@@ -196,9 +156,6 @@ class Const:
     LONG_PRESS_COUNT = 2
     DEFAULT_HOLD_TIME = 60
 
-    # Cache
-    CACHE_TIMEOUT = 1*60*60  # 1 hour
-
     # Event-listener reconnect (ZenControl supervisor)
     RECONNECT_MIN_DELAY = 1.0
     RECONNECT_MAX_DELAY = 30.0
@@ -207,3 +164,8 @@ class Const:
     # Periodic emit-state check — controllers that reboot while our listener
     # stays up lose TPI event config until we re-assert it.
     EVENT_KEEPALIVE_INTERVAL = 30.0
+
+    # Event-plane silence: RECEIVING demotes to SILENT when last_seen is older
+    # than this. Absence is ambiguous — expose it for diagnostics, do not
+    # treat it as transport failure.
+    EVENT_SILENT_AFTER = 60.0

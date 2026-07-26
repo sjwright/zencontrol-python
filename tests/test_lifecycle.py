@@ -36,19 +36,29 @@ async def test_remove_controller_closes_client_and_purges_cache() -> None:
     fake_client.close = AsyncMock()
     ctrl_a.client = fake_client
     address = ZenAddress(controller=ctrl_a, type=ZenAddressType.ECG, number=1)
-    ZenLight(protocol=zen.protocol, address=address)
-    assert "ctrl-a 1" in zen.protocol.entity_registry.lights
+    ZenLight(ctx=zen.context, address=address)
+    assert "ctrl-a 1" in zen.context.registry.lights
+
+    # Stale dispatch-tail entry must not survive remove.
+    async def _noop() -> None:
+        return None
+
+    zen._event_dispatch_tail["ctrl-a"] = asyncio.create_task(_noop())
+    zen._event_dispatch_tail["ctrl-b"] = asyncio.create_task(_noop())
 
     await zen.remove_controller(ctrl_a)
 
     fake_client.close.assert_awaited()
     assert ctrl_a.client is None
     assert zen.controllers == [ctrl_b]
-    assert "ctrl-a" not in zen.protocol.entity_registry.controllers
-    assert "ctrl-a 1" not in zen.protocol.entity_registry.lights
-    assert "ctrl-b" in zen.protocol.entity_registry.controllers
+    assert "ctrl-a" not in zen.context.registry.controllers
+    assert "ctrl-a 1" not in zen.context.registry.lights
+    assert "ctrl-b" in zen.context.registry.controllers
+    assert "ctrl-a" not in zen._event_dispatch_tail
+    assert "ctrl-b" in zen._event_dispatch_tail
 
     await zen.aclose()
+    assert zen._event_dispatch_tail == {}
 
 
 @pytest.mark.asyncio
@@ -67,16 +77,16 @@ async def test_aclose_closes_clients_and_clears_instances() -> None:
     ctrl.client = fake_client
 
     address = ZenAddress(controller=ctrl, type=ZenAddressType.ECG, number=1)
-    ZenLight(protocol=zen.protocol, address=address)
-    assert "ctrl-a 1" in zen.protocol.entity_registry.lights
-    assert "ctrl-a" in zen.protocol.entity_registry.controllers
+    ZenLight(ctx=zen.context, address=address)
+    assert "ctrl-a 1" in zen.context.registry.lights
+    assert "ctrl-a" in zen.context.registry.controllers
 
     await zen.aclose()
 
     fake_client.close.assert_awaited()
     assert ctrl.client is None
-    assert zen.protocol.entity_registry.lights == {}
-    assert zen.protocol.entity_registry.controllers == {}
+    assert zen.context.registry.lights == {}
+    assert zen.context.registry.controllers == {}
 
 
 @pytest.mark.asyncio
@@ -93,15 +103,15 @@ async def test_aclose_cancels_tracked_background_tasks() -> None:
             cancelled.set()
             raise
 
-    task = zen.protocol.track_task(long_running())
+    task = zen.context.track_task(long_running())
     await asyncio.wait_for(started.wait(), timeout=1.0)
-    assert task in zen.protocol._bg_tasks
+    assert task in zen.context._bg_tasks
 
     await zen.aclose()
 
     assert task.cancelled() or task.done()
     await asyncio.wait_for(cancelled.wait(), timeout=1.0)
-    assert zen.protocol._bg_tasks == set()
+    assert zen.context._bg_tasks == set()
 
 
 @pytest.mark.asyncio
@@ -115,28 +125,24 @@ async def test_stop_does_not_clear_entity_caches() -> None:
         port=5108,
     )
     address = ZenAddress(controller=ctrl, type=ZenAddressType.ECG, number=2)
-    ZenLight(protocol=zen.protocol, address=address)
+    ZenLight(ctx=zen.context, address=address)
 
-    with patch(
-        "zencontrol.api.protocol.ZenListener.create",
-        new=AsyncMock(),
-    ):
-        # stop without ever starting should be a no-op for disconnect
-        await zen.stop()
+    # stop without ever starting should be a no-op for disconnect
+    await zen.stop()
 
-    assert "ctrl-b 2" in zen.protocol.entity_registry.lights
-    assert "ctrl-b" in zen.protocol.entity_registry.controllers
+    assert "ctrl-b 2" in zen.context.registry.lights
+    assert "ctrl-b" in zen.context.registry.controllers
     await zen.aclose()
 
 
-def test_clear_entity_caches_clears_protocol_registry() -> None:
+def test_clear_entity_caches_clears_context_registry() -> None:
     zen = ZenControl()
-    zen.protocol.entity_registry.controllers["x"] = MagicMock()
-    zen.protocol.entity_registry.lights["x"] = MagicMock()
-    zen.protocol.entity_registry.groups["x"] = MagicMock()
+    zen.context.registry.controllers["x"] = MagicMock()
+    zen.context.registry.lights["x"] = MagicMock()
+    zen.context.registry.groups["x"] = MagicMock()
 
     zen.clear_entity_caches()
 
-    assert zen.protocol.entity_registry.controllers == {}
-    assert zen.protocol.entity_registry.lights == {}
-    assert zen.protocol.entity_registry.groups == {}
+    assert zen.context.registry.controllers == {}
+    assert zen.context.registry.lights == {}
+    assert zen.context.registry.groups == {}
