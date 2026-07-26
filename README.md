@@ -6,9 +6,13 @@ This is an implementation of the **Zencontrol TPI Advanced** protocol, written i
 - zencontrol.api: Implementation of most TPI Advanced API commands and events;
 - zencontrol.interface: An opinionated abstraction layer suitable for integration into smart building control software. It provides methods, objects, and callbacks for managing lights, groups, profiles, buttons, motion sensors, and system variables.
 
-This library has now undergone validation in multiple environments. There is an extensive test suite, some of which uses
+[**Documentation**](docs/overview.md)
+
+In addition to an extensive test suite, this library is extensively tested by
 [zencontrol-simulator](https://github.com/sjwright/zencontrol-simulator), a nearly feature-complete simulator of zencontrol hardware.
-A practical demonstration is [zencontrol-homeassistant](https://github.com/sjwright/zencontrol-homeassistant), a comprehensive Home Assistant integration.
+As part of its own test suite, the simulator imports and implements this library to a substantial extent.
+
+This library is actively used as a central part of [zencontrol-homeassistant](https://github.com/sjwright/zencontrol-homeassistant), a Home Assistant integration. This integration gives you GUI access to most zencontrol-python features, making it an excellent practical demonstration of the library.
 
 ## Features
 

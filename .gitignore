@@ -13,5 +13,5 @@ pyvenv.cfg
 *.pkl
 *.log.*
 config.yaml
-/docs
+/docs/*.pdf
 .DS_Store
