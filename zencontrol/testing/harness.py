@@ -32,9 +32,10 @@ from ..api.event_decode import (
     ZenDecodedEvent,
 )
 from ..api.event_router import ZenEventReceiver
-from ..api.models import ControllerRef, ZenAddress, ZenColour, ZenController, ZenInstance
+from ..api.models import ControllerRef, ZenAddress, ZenColour, ZenInstance
 from ..api.types import Transport, ZenAddressType, ZenEventMode, ZenInstanceType
 from ..interface.context import EntityContext
+from ..interface.entities import ZenController
 from ..interface.wiring import ZenEventWiring
 
 LegacyCallback = Callable[..., Awaitable[None]]
