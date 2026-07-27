@@ -1,12 +1,17 @@
 """
-API-level type definitions.
+API enums and constants
+=======================
 
-This module contains types and enums that belong to the API layer:
-- DALI address types, instance types, color types
-- Event delivery mode (multicast / unicast)
-- Constants used by the API layer
+This module holds vocabulary shared by commands, models, and the event plane.
 
-Event vocabulary (``ZenEventCode``, ``ZenEventMask``) lives in ``event_decode``.
+"ZenAddressType", "ZenInstanceType", and "ZenColourType" describe DALI targets
+and colour modes. "ZenErrorCode" names TPI error replies.
+
+"Transport" and "ZenEventMode" describe how a controller emits events
+(multicast or unicast) and build the emit-state bitmask for the command plane.
+
+"Const" is a collection of constants and defaults used throughout the API.
+
 """
 
 from dataclasses import dataclass
@@ -60,7 +65,7 @@ class ZenErrorCode(Enum):
 
 @dataclass(slots=True)
 class ZenEventMode:
-    """TPI event emit mode. Exactly one transport — dual bools are unrepresentable."""
+    """TPI event emit mode. Exactly one transport - dual bools are unrepresentable."""
 
     enabled: bool = False
     filtering: bool = False
@@ -100,7 +105,7 @@ class ZenEventMode:
 
     def bitmask(self) -> int:
         # 0x80 is inverted: set when multicast is OFF.
-        # MULTICAST → neither 0x40 nor 0x80; UNICAST → both.
+        # MULTICAST -> neither 0x40 nor 0x80; UNICAST -> both.
         mode_flag = 0x00
         if self.enabled:
             mode_flag |= 0x01
@@ -123,7 +128,7 @@ class ZenEventMode:
 # API-level constants
 class Const:
     """API-level constants"""
-    # UDP / connection — keep in sync with ClientConst.DEFAULT_TIMEOUT
+    # UDP / connection - keep in sync with ClientConst.DEFAULT_TIMEOUT
     RESPONSE_TIMEOUT = 1.5
     # ZenControl.start() waits this long for the first successful event-listener connect
     START_TIMEOUT = 30.0
@@ -157,11 +162,11 @@ class Const:
     RECONNECT_MAX_DELAY = 30.0
     RECONNECT_HEALTHY_SECONDS = 60.0
     
-    # Periodic emit-state check — controllers that reboot while our listener
+    # Periodic emit-state check - controllers that reboot while our listener
     # stays up lose TPI event config until we re-assert it.
     EVENT_KEEPALIVE_INTERVAL = 30.0
 
     # Event-plane silence: RECEIVING demotes to SILENT when last_seen is older
-    # than this. Absence is ambiguous — expose it for diagnostics, do not
+    # than this. Absence is ambiguous - expose it for diagnostics, do not
     # treat it as transport failure.
     EVENT_SILENT_AFTER = 60.0

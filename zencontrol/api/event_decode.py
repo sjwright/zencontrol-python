@@ -1,11 +1,34 @@
 """
-TPI event vocabulary and payload decoding.
+TPI event vocabulary and payload decoding
+=========================================
 
-Pure module: takes a validated ``ZenEvent`` envelope and returns a typed value.
-No I/O, no logging, no controller lookup.
+This module turns a well-formed "ZenEvent" envelope into a typed dataclass.
+It is a pure module with no I/O, no logging, no controller lookup, no sockets.
 
-``ZenEventCode`` and ``ZenEventMask`` live here — event vocabulary, not
-generic API types.
+"ZenEventDecode(event)" is the single entry point. It returns a typed
+dataclass (e.g. "ButtonPress") or None if the event is unknown or the payload
+is the wrong length. No exceptions are ever raised.
+
+"ZenEventCode" is the wire vocabulary.
+
+"ZenEventMask" uses that vocabulary to build bitmasks to enable or filter
+events on the controller.
+
+-----------------------------------------------------
+Basic example:
+
+    from zencontrol.io.event import parse_frame
+    from zencontrol.api.event_decode import ZenEventDecode
+
+    event = parse_frame(datagram, addr)
+    if event is None:
+        return
+    decoded = ZenEventDecode(event)
+    if decoded is None:
+        return
+    print(decoded)
+
+-----------------------------------------------------
 """
 
 from __future__ import annotations
@@ -201,12 +224,12 @@ ZenDecodedEvent = (
 )
 
 
-def decode(event: ZenEvent) -> ZenDecodedEvent | None:
-    """Interpret ``event``'s code and payload. Returns None if unknown or wrong length.
+def ZenEventDecode(event: ZenEvent) -> ZenDecodedEvent | None:
+    """Interpret event code and payload. Returns None if unknown or wrong length.
 
-    Fixed-size codes require ``len(payload) == N`` — trailing junk on a
-    checksummed frame is rejection, not silent ignore. ``COLOUR_CHANGE`` is
-    variable (3–7 bytes) per DALI colour type.
+    Fixed-size codes require len(payload) == N - trailing junk on a
+    checksummed frame is rejection, not silent ignore. COLOUR_CHANGE is
+    variable (3-7 bytes) per DALI colour type.
     """
     try:
         code = ZenEventCode(event.code)
@@ -253,7 +276,7 @@ def decode(event: ZenEvent) -> ZenDecodedEvent | None:
             )
 
         case ZenEventCode.IS_OCCUPIED:
-            # Wire: [instance, unused] — PDF example unused byte is 0x01.
+            # Wire: [instance, unused] - PDF example unused byte is 0x01.
             if len(payload) != 2:
                 return None
             return IsOccupied(target=target, instance=payload[0])

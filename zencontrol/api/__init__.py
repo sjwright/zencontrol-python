@@ -1,9 +1,5 @@
 """
 API layer: TPI command client, event receiver, and wire-facing models.
-
-- ``ZenCommandClient`` — command plane (UDP request/response)
-- ``ZenEventReceiver`` / ``Lease`` / ``Subscription`` — event plane
-- ``ZenController``, ``ZenAddress``, ``ZenInstance``, ``ZenColour`` — models
 """
 
 from .commands import ZenCommandClient

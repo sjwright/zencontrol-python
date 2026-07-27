@@ -1,8 +1,23 @@
 """
-ZenControl API-level models.
+API wire-facing models
+======================
 
-Controller identity, addresses, instances, colour payloads, and discovery DTOs.
-High-level profile entities live in ``zencontrol.interface`` (``ZenProfile``).
+This module holds classes used to describe the contents of a controller,
+e.g. DALI addresses, instances, and colour payloads.
+
+A "ZenController" represents a controller's identity and configuration.
+The interface layer subclasses it for its own entity state. "ControllerRef"
+is the structural protocol both satisfy so the API layer never imports
+from the interface layer.
+
+A "ZenAddress" represents a single DALI address on a specific controller.
+It could be an ECG, ECD, or Group address.
+
+A "ZenInstance" represents a single instance of an specific ZenAddress.
+
+A "ZenColour" represents an luminere state. It's uesd as both targets and
+payloads for the various commands and events throughout the API.
+
 """
 
 import logging
@@ -19,8 +34,8 @@ DEFAULT_CONTROLLER_PORT = 5108
 class ControllerRef(Protocol):
     """What the API layer needs from a controller (address + command path).
 
-    Both ``ZenController`` and the interface-layer subclass satisfy this
-    structurally — no upward import from ``api`` into ``interface``.
+    Both "ZenController" and the interface-layer subclass satisfy this
+    structurally - no upward import from "api" into "interface".
     """
 
     id: str
@@ -64,10 +79,10 @@ def mac_key(mac: bytes | str) -> str:
 class DiscoveredController:
     """A controller identified from multicast events (not yet registered).
 
-    ``label`` is left None on the consumer path — enrich via an explicit probe
+    "label" is left None on the consumer path - enrich via an explicit probe
     that uses the command plane, never from the event receiver.
 
-    ``last_seen`` updates on every subsequent identity packet so a discover
+    "last_seen" updates on every subsequent identity packet so a discover
     window can report controllers heard again, not only first-ever sightings.
     """
 
@@ -81,15 +96,15 @@ class DiscoveredController:
 
 @dataclass
 class ZenController:
-    """Controller identity and config — no transport back-references (I9).
+    """Controller identity and config - no transport back-references (I9).
 
-    ``zencontrol.ZenController`` (the interface layer) subclasses this and adds
-    entity state; that subclass is what ``ZenControl.add_controller()`` returns
+    "zencontrol.ZenController" (the interface layer) subclasses this and adds
+    entity state; that subclass is what "ZenControl.add_controller()" returns
     and what registered controllers always are. This base exists so the API
     layer can talk about controllers without importing the interface layer.
 
-    Transports live outside the model: ``ZenCommandClient`` owns UDP clients
-    keyed by controller name; ``ZenControl`` / ``EntityContext`` hold the
+    Transports live outside the model: "ZenCommandClient" owns UDP clients
+    keyed by controller name; "ZenControl" / "EntityContext" hold the
     command client and (for the high-level path) the event session.
 
     The 'host' field can be any resolvable hostname or IP address.
@@ -113,16 +128,16 @@ class ZenController:
 
     @property
     def mac_bytes(self) -> bytes | None:
-        """Wire MAC derived from ``mac`` — cannot desync from a stored copy."""
+        """Wire MAC derived from "mac" - cannot desync from a stored copy."""
         return mac_to_bytes(self.mac)
 
     @property
     def ip(self) -> str:
-        """Resolved IPv4 for ``host``, cached.
+        """Resolved IPv4 for "host", cached.
 
-        IPv4 literals skip DNS. Hostname lookup uses ``gethostbyname`` and
-        **blocks** — prefer ``await resolve_host(controller.host)`` then
-        ``set_resolved_ip`` from async code / the HA event loop.
+        IPv4 literals skip DNS. Hostname lookup uses "gethostbyname" and
+        **blocks** - prefer "await resolve_host(controller.host)" then
+        "set_resolved_ip" from async code / the HA event loop.
         """
         if self._ip is None:
             from ..utils import resolve_host_sync
@@ -131,14 +146,14 @@ class ZenController:
         return self._ip
 
     def set_resolved_ip(self, ip: str) -> None:
-        """Seed the ``ip`` cache from an async-safe resolve (e.g. ``resolve_host``)."""
+        """Seed the "ip" cache from an async-safe resolve (e.g. "resolve_host")."""
         self._ip = ip
 
     def refresh_ip(self) -> str:
         """Force a fresh DNS lookup and return the resolved IP address.
 
-        Blocking — see ``ip``. From async code use ``await resolve_host`` and
-        ``set_resolved_ip``.
+        Blocking - see "ip". From async code use "await resolve_host" and
+        "set_resolved_ip".
         """
         self._ip = None
         return self.ip

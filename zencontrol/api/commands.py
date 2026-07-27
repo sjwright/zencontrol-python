@@ -1,3 +1,38 @@
+"""
+TPI Advanced command plane
+==========================
+
+This module provides a client for the TPI Advanced command plane.
+
+"ZenCommandClient" has a method for every documented TPI Advanced command.
+It knows command codes, argument packing, and decodes the reply into a sensibly
+typed method response.
+
+Event emit mode and filters are programmed through this client, but listening
+is handled on the event plane.
+
+-----------------------------------------------------
+Basic example:
+
+    ctrl = ZenController(
+        id="1",
+        name="living",
+        label="Living Room",
+        host="192.168.1.100",
+        port=5108,
+    )
+    async with ZenCommandClient() as commands:
+        # Query the controller label
+        print(await commands.query_controller_label(ctrl))
+        # Query ECG addresses
+        gears = await commands.query_control_gear_dali_addresses(ctrl)
+        for addr in gears[:3]:
+            # Query the level of the ECG
+            print(addr.number, await commands.dali_query_level(addr))
+
+-----------------------------------------------------
+"""
+
 import logging
 import struct
 import time
@@ -171,7 +206,7 @@ class ZenCommandClient:
         await self.close_all_clients()
 
     def client_for(self, controller: ControllerRef) -> ZenClient | None:
-        """Return the command-plane UDP client for ``controller``, if any."""
+        """Return the command-plane UDP client for "controller", if any."""
         return self._clients.get(controller.name)
 
     def set_client(self, controller: ControllerRef, client: ZenClient | None) -> None:
@@ -522,7 +557,7 @@ class ZenCommandClient:
                     results.append(result)
                 
                 page_results = (len(response) - 1) // 4
-                if page_results < 15: # fewer than 15 results in this page — no more pages
+                if page_results < 15: # fewer than 15 results in this page - no more pages
                     break
             
             else:
@@ -634,8 +669,8 @@ class ZenCommandClient:
         for i in range(12, len(response), 3):
             profile_number = struct.unpack('>H', response[i:i+2])[0]
             profile_behaviour = response[i+2]
-            # bit 0: disabled flag — 1 = disabled, 0 = enabled
-            # bit 1-2: priority — 0 = scheduled, 1 = medium, 2 = high, 3 = emergency
+            # bit 0: disabled flag - 1 = disabled, 0 = enabled
+            # bit 1-2: priority - 0 = scheduled, 1 = medium, 2 = high, 3 = emergency
             enabled = not bool(profile_behaviour & 0x01)
             priority = (profile_behaviour >> 1) & 0x03
             priority_label = ["Scheduled", "Medium", "High", "Emergency"][priority]
@@ -725,10 +760,10 @@ class ZenCommandClient:
     async def query_scene_levels_by_address(self, address: ZenAddress) -> list[int | None]:
         """Query scene levels for a DALI address (ECG).
 
-        Zencontrol has 12 scenes (0–11). This TPI command still returns 16 bytes
-        because it dumps the full DALI gear scene table (slots 0–15); values of
-        255 mean “not in that scene.” Treat only indices 0–11 as Zencontrol
-        scenes — slots 12–15 are unused padding, not extra product scenes.
+        Zencontrol has 12 scenes (0-11). This TPI command still returns 16 bytes
+        because it dumps the full DALI gear scene table (slots 0-15); values of
+        255 mean "not in that scene." Treat only indices 0-11 as Zencontrol
+        scenes - slots 12-15 are unused padding, not extra product scenes.
         """
         response = await self._send_basic(address.controller, self.CMD["QUERY_SCENE_LEVELS_BY_ADDRESS"], address.ecg(), return_type='list')
         if response:
@@ -745,9 +780,9 @@ class ZenCommandClient:
     async def query_scene_colours_by_address(self, address: ZenAddress) -> list[ZenColour | None]:
         """Query colour scene data for a DALI address (ECG).
 
-        Returns a list of length Const.MAX_SCENE (12): scenes 0–11 only.
-        Colour TPI opcodes cover 0–7 and 8–11; there is no colour data for
-        DALI gear slots 12–15.
+        Returns a list of length Const.MAX_SCENE (12): scenes 0-11 only.
+        Colour TPI opcodes cover 0-7 and 8-11; there is no colour data for
+        DALI gear slots 12-15.
         """
         # Create a list of 12 ZenColour instances
         output: list[ZenColour | None] = [None] * Const.MAX_SCENE
@@ -802,8 +837,8 @@ class ZenCommandClient:
         """Query DALI addresses that have instances.
 
         Controllers return at most 60 addresses per request. When
-        ``start_address`` is omitted, paginate the full 0–127 space in steps of
-        60. Pass an explicit ``start_address`` for a single page.
+        "start_address" is omitted, paginate the full 0-127 space in steps of
+        60. Pass an explicit "start_address" for a single page.
         """
         if start_address is not None:
             return await self._query_dali_addresses_with_instances_page(

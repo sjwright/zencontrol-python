@@ -1,14 +1,42 @@
 """
-Controller-agnostic event receiver: subscriptions, leases, funnel, routing.
+Shared event receiver: leases, funnel, and MAC routing
+======================================================
 
-Never imports the command plane. Never awaits a device query on the consumer path
-(I8). Subscription handlers are awaited inline by the funnel consumer — they must
-not await command-plane / device I/O. Do that work on a task (see ZenControl's
-per-controller event dispatch); a slow handler stalls every other controller and
-lets the shared funnel drop packets.
+This module owns the API event plane.
 
-Discovery identity bookkeeping lives on ``IdentityLog`` (``receiver.identities``);
-the receiver only appends on the no-subscription branch.
+"ZenEventReceiver" binds shared listen sockets via "ZenEndpoint".
+
+A "Lease" keeps a transport open (multicast or unicast). First acquire binds,
+last release closes. Many controllers can share one lease per transport.
+
+A "Subscription" is how a upstream code can receive events for a specific controller.
+Subscribe by MAC when known, or by host IP until the first packet promotes the MAC.
+Unrecognised MACs with no subscription are recorded on "IdentityLog" for discovery.
+
+"ZenEvent" objects are received, queued and decoded into a "ZenDecodedEvent"
+dataclass, e.g. "ButtonPress".
+
+These dataclasses are distributed to subscribers according to their subscription
+criteria.
+
+-----------------------------------------------------
+Basic example:
+
+    receiver = ZenEventReceiver()
+
+    async def on_event(decoded):
+        print(decoded)
+
+    sub = receiver.subscribe(on_event, mac=bytes.fromhex("020000000001"))
+    lease = await receiver.acquire(Transport.MULTICAST)
+    try:
+        await asyncio.Future()
+    finally:
+        sub.close()
+        await lease.release()
+        await receiver.close()
+
+-----------------------------------------------------
 """
 
 from __future__ import annotations
@@ -22,7 +50,7 @@ from enum import Enum
 
 from ..io.event import EventConst, ZenEndpoint, ZenEvent
 from ..utils import is_ipv4_address, local_ip_for_remote
-from .event_decode import ZenDecodedEvent, decode
+from .event_decode import ZenDecodedEvent, ZenEventDecode
 from .identity import IdentityLog
 from .models import mac_bytes_to_str
 from .types import Const, Transport
@@ -54,13 +82,13 @@ class EventHealth(Enum):
 class Subscription:
     """Route handle for one controller's events.
 
-    Lifecycle: identifying → receiving → silent → detached.
+    Lifecycle: identifying -> receiving -> silent -> detached.
     Known-MAC subscriptions start silent (attached, no packet yet). Provisional
-    ones stay identifying until promotion. ``event_health`` is computed from the
-    stored state plus ``last_seen`` so RECEIVING demotes to SILENT when stale.
+    ones stay identifying until promotion. "event_health" is computed from the
+    stored state plus "last_seen" so RECEIVING demotes to SILENT when stale.
 
-    Identity fields are read-only to callers. Only the receiver mutates ``_mac``
-    (via ``_promote``) together with ``_by_mac`` — assigning ``mac`` from outside
+    Identity fields are read-only to callers. Only the receiver mutates "_mac"
+    (via "_promote") together with "_by_mac" - assigning "mac" from outside
     would desynchronise the routing table.
     """
 
@@ -110,11 +138,11 @@ class Subscription:
 class Lease:
     """Reference-counted hold on a transport endpoint.
 
-    ``toward`` is the remote used to pick a local source IP on multi-homed
-    hosts. ``advertise`` is derived live from the receiver's open unicast
-    endpoint plus that toward — never a stale snapshot.
+    "toward" is the remote used to pick a local source IP on multi-homed
+    hosts. "advertise" is derived live from the receiver's open unicast
+    endpoint plus that toward - never a stale snapshot.
 
-    ``transport`` / ``toward`` are read-only; release is the only mutator.
+    "transport" / "toward" are read-only; release is the only mutator.
     """
 
     _receiver: ZenEventReceiver
@@ -135,8 +163,8 @@ class Lease:
         """Local (ip, port) for unicast programming.
 
         Derives from the open endpoint (live port) plus a route lookup toward
-        ``toward``. The IP lookup opens a UDP socket; results are memoised on
-        the receiver per ``(toward, bound_port)`` — still assign to a local if
+        "toward". The IP lookup opens a UDP socket; results are memoised on
+        the receiver per "(toward, bound_port)" - still assign to a local if
         you need the value more than once in one function.
         """
         if self._transport is not Transport.UNICAST:
@@ -196,7 +224,7 @@ class ZenEventReceiver:
         }
         # Optional factory override for tests (in-memory endpoints)
         self._endpoint_factory: Callable[..., Awaitable[ZenEndpoint]] | None = None
-        # (toward, bound_port) → (ip, port); avoids a UDP connect per advertise read
+        # (toward, bound_port) -> (ip, port); avoids a UDP connect per advertise read
         self._advertise_cache: dict[tuple[str | None, int], tuple[str, int]] = {}
 
     @property
@@ -214,10 +242,10 @@ class ZenEventReceiver:
     def unicast_advertise(self, *, toward: str | None = None) -> tuple[str, int] | None:
         """Local (ip, port) to program on a controller for unicast event delivery.
 
-        ``toward`` selects which local address to advertise on a multi-homed host
+        "toward" selects which local address to advertise on a multi-homed host
         (route toward that remote). Port always comes from the open unicast
         endpoint so re-open never leaves a stale snapshot on the lease.
-        Route lookups are memoised per ``(toward, bound_port)``.
+        Route lookups are memoised per "(toward, bound_port)".
         """
         ep = self._endpoints.get(Transport.UNICAST)
         if ep is None or not ep.is_open():
@@ -264,11 +292,11 @@ class ZenEventReceiver:
         on_identified: IdentifiedHandler | None = None,
         on_lost: LostHandler | None = None,
     ) -> Subscription:
-        """Register a route. ``host`` must be the wire peer IPv4 (no DNS here).
+        """Register a route. "host" must be the wire peer IPv4 (no DNS here).
 
-        Provisional subscriptions key on ``event.host`` from UDP, which is
-        always an IP. Resolve hostnames with ``await resolve_host()`` before
-        calling — never ``socket.gethostbyname`` on the event loop (HA).
+        Provisional subscriptions key on "event.host" from UDP, which is
+        always an IP. Resolve hostnames with "await resolve_host()" before
+        calling - never "socket.gethostbyname" on the event loop (HA).
         """
         if mac is None and host is None:
             raise ValueError("subscribe() requires mac= or host=")
@@ -311,13 +339,13 @@ class ZenEventReceiver:
     async def acquire(self, transport: Transport, *, toward: str | None = None) -> Lease:
         """Hold a transport open. First acquire binds; last release closes.
 
-        For unicast, ``toward`` is stored on the lease so ``advertise`` can
+        For unicast, "toward" is stored on the lease so "advertise" can
         resolve a per-controller local IP on multi-homed hosts.
         """
         async with self._locks[transport]:
             count = self._refcounts[transport]
             if count == 0:
-                # Open before incrementing — failure leaves refcount at 0.
+                # Open before incrementing - failure leaves refcount at 0.
                 await self._open_endpoint(transport)
             self._refcounts[transport] = count + 1
             self._ensure_consumer()
@@ -465,10 +493,10 @@ class ZenEventReceiver:
 
         Only starts a consumer when every refcounted transport is open. A partial
         bind failure (NIC flap, interface change) must not leave a zombie
-        consumer on an unfed queue — retry with backoff instead.
+        consumer on an unfed queue - retry with backoff instead.
 
         Endpoints are closed once before the retry loop. Retries only open
-        transports that are still down (``is_transport_open``), so a working
+        transports that are still down ("is_transport_open"), so a working
         multicast socket is not flapped every backoff while unicast stays dead.
         """
         await asyncio.sleep(0)  # let the dying consumer finish
@@ -585,7 +613,7 @@ class ZenEventReceiver:
         if sub._health is not EventHealth.DETACHED:
             sub._health = EventHealth.RECEIVING
 
-        decoded = decode(event)
+        decoded = ZenEventDecode(event)
         if decoded is None:
             self.logger.warning(
                 "Unrecognised or malformed event code %s from %s",
@@ -594,7 +622,7 @@ class ZenEventReceiver:
             )
             return
 
-        # Awaited on the funnel consumer — handler must not await the wire (I8).
+        # Awaited on the funnel consumer - handler must not await the wire (I8).
         try:
             await sub._handler(decoded)
         except Exception as err:

@@ -1,8 +1,18 @@
-"""Identity log for controllers heard on the event plane but not yet subscribed.
+"""
+Discovery bookkeeping for unknown controllers
+==================================================
 
-Owns discovery bookkeeping only — no routing, leases, or transports. The event
-receiver appends here on the no-subscription branch; the interface layer
-enriches and reads through this object directly.
+This module records controllers heard on the event plane that are unknown,
+insofar as there is no corresponding Subscription for them.
+
+"DiscoveredController" is a dataclass that represents a seen controller.
+It stores their IP, MAC, label, and a last seen timestamp.
+
+"IdentityLog" stores "DiscoveredController" sightings.
+
+"ZenEventReceiver" appends here on the no-subscription branch.
+
+---------------------------------------------------
 """
 
 from __future__ import annotations
@@ -38,7 +48,7 @@ class IdentityLog:
         self._entries.clear()
 
     def heard_since(self, since: float) -> list[DiscoveredController]:
-        """Identities with a packet at or after ``since`` (discover window filter)."""
+        """Identities with a packet at or after "since" (discover window filter)."""
         return [d for d in self._entries.values() if d.last_seen >= since]
 
     def get(self, *, host: str | None = None, mac: bytes | str | None = None) -> DiscoveredController | None:
