@@ -15,9 +15,10 @@ from typing import Protocol
 
 from ..api.event_decode import ZenDecodedEvent
 from ..api.event_router import EventHealth, Lease, Subscription, ZenEventReceiver
-from ..api.models import ZenController, mac_bytes_to_str
+from ..api.models import mac_bytes_to_str
 from ..api.types import Transport, ZenEventMode
 from ..utils import resolve_host
+from .entities import ZenController
 
 ResyncHandler = Callable[[], Awaitable[None]]
 EventHandler = Callable[[ZenController, ZenDecodedEvent], Awaitable[None]]

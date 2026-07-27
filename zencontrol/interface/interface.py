@@ -8,7 +8,6 @@ from ..api import (
     ZenAddress,
     ZenInstanceType,
 )
-from ..api import ZenController as SuperZenController
 from ..api.commands import ZenCommandClient
 from ..api.event_decode import ZenDecodedEvent
 from ..api.event_router import EventHealth, ZenEventReceiver
@@ -108,7 +107,7 @@ class ZenControl:
     async def aclose(self) -> None:
         await self._session.aclose()
 
-    async def _on_controller_event(self, controller: SuperZenController, ev: ZenDecodedEvent) -> None:
+    async def _on_controller_event(self, controller: ZenController, ev: ZenDecodedEvent) -> None:
         await self._dispatcher.handle(controller, ev)
 
     def _forget_event_dispatch(self, name: str) -> None:
@@ -162,7 +161,7 @@ class ZenControl:
         except Exception as err:
             self.logger.error("controller_discovered callback error: %s", err, exc_info=err)
 
-    async def _notify_controller_identified(self, controller: SuperZenController, mac: str) -> None:
+    async def _notify_controller_identified(self, controller: ZenController, mac: str) -> None:
         callback = self.context.callbacks.controller_identified
         if not callable(callback):
             return

@@ -6,9 +6,8 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from typing import Protocol, cast
+from typing import Protocol
 
-from ..api import ZenController as SuperZenController
 from ..api.commands import ZenCommandClient
 from ..api.event_decode import ZenDecodedEvent
 from ..api.event_router import Lease, ZenEventReceiver
@@ -18,10 +17,10 @@ from .context import ControllerRuntimeStatus, EntityContext
 from .entities import ZenController
 from .wiring import ZenEventWiring
 
-EventHandler = Callable[[SuperZenController, ZenDecodedEvent], Awaitable[None]]
+EventHandler = Callable[[ZenController, ZenDecodedEvent], Awaitable[None]]
 ResyncHandler = Callable[[], Awaitable[None]]
-IdentifiedHandler = Callable[[SuperZenController, str], Awaitable[None]]
-LostHandler = Callable[[SuperZenController, str], Awaitable[None]]
+IdentifiedHandler = Callable[[ZenController, str], Awaitable[None]]
+LostHandler = Callable[[ZenController, str], Awaitable[None]]
 StatusHandler = Callable[[ZenController, ControllerRuntimeStatus], Awaitable[None]]
 
 
@@ -41,7 +40,7 @@ class SessionHost(Protocol):
     def _event_mode_for(self, controller: ZenController) -> ZenEventMode: ...
     async def assert_controller_events(self, controller: ZenController) -> bool: ...
     async def notify_disconnect(self) -> None: ...
-    async def _notify_controller_identified(self, controller: SuperZenController, mac: str) -> None: ...
+    async def _notify_controller_identified(self, controller: ZenController, mac: str) -> None: ...
     async def _notify_controller_status(self, controller: ZenController, status: ControllerRuntimeStatus) -> None: ...
     def _forget_event_dispatch(self, name: str) -> None: ...
     def _forget_event_dispatch_all(self) -> None: ...
@@ -224,10 +223,10 @@ class ZenSession:
     async def _on_resync(self) -> None:
         await self._host._on_resync_callback()
 
-    async def _on_controller_identified(self, controller: SuperZenController, mac: str) -> None:
+    async def _on_controller_identified(self, controller: ZenController, mac: str) -> None:
         await self._host._notify_controller_identified(controller, mac)
 
-    async def _on_binding_lost(self, controller: SuperZenController, reason: str) -> None:
+    async def _on_binding_lost(self, controller: ZenController, reason: str) -> None:
         h = self._host
         h.logger.error(
             "Event binding lost for %s (%s)",
@@ -235,7 +234,7 @@ class ZenSession:
             reason,
         )
         h._forget_event_dispatch(controller.name)
-        await h._notify_controller_status(cast(ZenController, controller), "unreachable")
+        await h._notify_controller_status(controller, "unreachable")
 
     async def _event_monitor_supervisor(self) -> None:
         h = self._host
