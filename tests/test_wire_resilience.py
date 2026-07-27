@@ -11,37 +11,47 @@ from helpers_endpoints import fake_endpoint_factory
 
 from zencontrol import ZenController
 from zencontrol.api.commands import ZenCommandClient
-from zencontrol.api.event_router import ZenEventReceiver
+from zencontrol.api.event_router import DEFAULT_MAX_QUEUE_SIZE, ZenEventReceiver
 from zencontrol.api.types import Transport
 from zencontrol.exceptions import ZenTimeoutError
 from zencontrol.interface import EntityContext
 from zencontrol.io.command import (
     ClientConst,
-    Request,
-    Response,
-    ResponseType,
     ZenClient,
+    ZenRequest,
+    ZenResponse,
+    ZenResponseType,
 )
-from zencontrol.io.event import EventConst, ZenEndpoint
+from zencontrol.io.event import EventConst, ZenEndpoint, ZenEvent
 from zencontrol.utils import local_ip_for_remote
 
 
 @pytest.mark.asyncio
 async def test_event_funnel_drop_oldest_under_backpressure() -> None:
     receiver = ZenEventReceiver(max_queue_size=2)
-    addr = ("127.0.0.1", 1)
-    receiver._enqueue_datagram(b"\x01", addr)
-    receiver._enqueue_datagram(b"\x02", addr)
-    assert receiver.dropped_datagrams == 0
 
-    receiver._enqueue_datagram(b"\x03", addr)
-    assert receiver.dropped_datagrams == 1
+    def evt(n: int) -> ZenEvent:
+        return ZenEvent(
+            mac=bytes([n]) * 6,
+            target=0,
+            code=0,
+            payload=b"",
+            host="127.0.0.1",
+            received_at=0.0,
+        )
+
+    receiver._enqueue_event(evt(1))
+    receiver._enqueue_event(evt(2))
+    assert receiver.dropped_events == 0
+
+    receiver._enqueue_event(evt(3))
+    assert receiver.dropped_events == 1
     assert receiver._funnel.qsize() == 2
 
     first = receiver._funnel.get_nowait()
     second = receiver._funnel.get_nowait()
-    assert first[0] == b"\x02"
-    assert second[0] == b"\x03"
+    assert first.mac == bytes([2]) * 6
+    assert second.mac == bytes([3]) * 6
 
 
 @pytest.mark.asyncio
@@ -108,7 +118,7 @@ async def test_multicast_endpoint_joins_before_bind_and_drops_on_close() -> None
         ) as create_endpoint:
             endpoint = await ZenEndpoint.open(
                 unicast=False,
-                sink=lambda _data, _addr: None,
+                sink=lambda _event: None,
             )
 
     create_endpoint.assert_awaited_once()
@@ -194,8 +204,8 @@ def test_mark_disconnected_unblocks_pending_with_timeout() -> None:
 
     loop = asyncio.new_event_loop()
     try:
-        fut: asyncio.Future[Response] = loop.create_future()
-        req = Request(command=0x10, data=[0x00, 0x00, 0x00, 0x00])
+        fut: asyncio.Future[ZenResponse] = loop.create_future()
+        req = ZenRequest(command=0x10, data=[0x00, 0x00, 0x00, 0x00])
         req.seq = 1
         client._pending[1] = (fut, req)
 
@@ -203,7 +213,7 @@ def test_mark_disconnected_unblocks_pending_with_timeout() -> None:
 
         assert client.is_connected() is False
         assert fut.done()
-        assert fut.result().response_type == ResponseType.TIMEOUT
+        assert fut.result().response_type == ZenResponseType.TIMEOUT
         transport.close.assert_called_once()
     finally:
         loop.close()
@@ -223,7 +233,7 @@ async def test_send_packet_timeout_invalidates_client_and_refreshes_ip() -> None
 
     fake_client = MagicMock()
     fake_client.is_connected.return_value = True
-    fake_client.send_request_with_retries = AsyncMock(return_value=Response(ResponseType.TIMEOUT))
+    fake_client.send_request_with_retries = AsyncMock(return_value=ZenResponse(ZenResponseType.TIMEOUT))
     fake_client.close = AsyncMock()
     protocol.set_client(controller, fake_client)
     controller.set_resolved_ip("192.0.2.10")
@@ -232,7 +242,7 @@ async def test_send_packet_timeout_invalidates_client_and_refreshes_ip() -> None
         with pytest.raises(ZenTimeoutError):
             await protocol._send_packet(
                 controller,
-                Request(command=0x10, data=[0x00, 0x00, 0x00, 0x00]),
+                ZenRequest(command=0x10, data=[0x00, 0x00, 0x00, 0x00]),
             )
 
     refresh.assert_called_once()
@@ -271,7 +281,8 @@ async def test_ensure_client_recreates_when_disconnected() -> None:
 
 def test_default_retries_constant() -> None:
     assert ClientConst.DEFAULT_RETRIES >= 1
-    assert EventConst.DEFAULT_MAX_QUEUE_SIZE >= 1
+    assert DEFAULT_MAX_QUEUE_SIZE >= 1
+    assert EventConst.MULTICAST_PORT == 6969
 
 
 @pytest.mark.asyncio
@@ -283,9 +294,9 @@ async def test_send_request_timeout_with_retries_returns_timeout() -> None:
     transport.is_closing.return_value = False
     client._transport = transport
 
-    req = Request(command=0x10, data=[0x00, 0x00, 0x00, 0x00])
+    req = ZenRequest(command=0x10, data=[0x00, 0x00, 0x00, 0x00])
     resp = await client.send_request(req, timeout=0.05, retries=1)
-    assert resp.response_type == ResponseType.TIMEOUT
+    assert resp.response_type == ZenResponseType.TIMEOUT
     assert transport.sendto.call_count == 2
 
 
@@ -298,9 +309,9 @@ async def test_send_request_allows_concurrent_awaits() -> None:
     transport.is_closing.return_value = False
     client._transport = transport
 
-    async def one_request(cmd: int) -> Response:
+    async def one_request(cmd: int) -> ZenResponse:
         return await client.send_request(
-            Request(command=cmd, data=[0x00, 0x00, 0x00, 0x00]),
+            ZenRequest(command=cmd, data=[0x00, 0x00, 0x00, 0x00]),
             timeout=0.2,
             retries=0,
         )
@@ -312,25 +323,25 @@ async def test_send_request_allows_concurrent_awaits() -> None:
     seqs = list(client._pending.keys())
     for seq in seqs:
         fut, req = client._pending[seq]
-        fut.set_result(Response(ResponseType.OK, seq=seq, request=req))
+        fut.set_result(ZenResponse(ZenResponseType.OK, seq=seq, request=req))
     r1, r2 = await asyncio.gather(t1, t2)
-    assert r1.response_type == ResponseType.OK
-    assert r2.response_type == ResponseType.OK
+    assert r1.response_type == ZenResponseType.OK
+    assert r2.response_type == ZenResponseType.OK
 
 
 @pytest.mark.asyncio
 async def test_invalid_checksum_completes_pending_as_invalid() -> None:
     client = ZenClient(("127.0.0.1", 5108))
     loop = asyncio.get_running_loop()
-    fut: asyncio.Future[Response] = loop.create_future()
-    req = Request(command=0x10, data=[0x00, 0x00, 0x00, 0x00])
+    fut: asyncio.Future[ZenResponse] = loop.create_future()
+    req = ZenRequest(command=0x10, data=[0x00, 0x00, 0x00, 0x00])
     req.seq = 7
     client._pending[7] = (fut, req)
 
     # OK type, seq 7, len 0, bad checksum
     await client._receive_response(bytes([0xA0, 7, 0, 0xFF]), ("127.0.0.1", 5108))
     assert fut.done()
-    assert fut.result().response_type == ResponseType.INVALID
+    assert fut.result().response_type == ZenResponseType.INVALID
 
 
 @pytest.mark.asyncio
@@ -349,8 +360,8 @@ async def test_send_packet_error_returns_without_raising() -> None:
     fake_client = MagicMock()
     fake_client.is_connected.return_value = True
     fake_client.send_request_with_retries = AsyncMock(
-        return_value=Response(
-            ResponseType.ERROR,
+        return_value=ZenResponse(
+            ZenResponseType.ERROR,
             data=bytes([ZenErrorCode.PAID_FEATURE.value]),
         )
     )
@@ -358,9 +369,9 @@ async def test_send_packet_error_returns_without_raising() -> None:
 
     data, code = await protocol._send_packet(
         controller,
-        Request(command=0x10, data=[0x00, 0x00, 0x00, 0x00]),
+        ZenRequest(command=0x10, data=[0x00, 0x00, 0x00, 0x00]),
     )
-    assert code == ResponseType.ERROR.value
+    assert code == ZenResponseType.ERROR.value
     assert data == bytes([ZenErrorCode.PAID_FEATURE.value])
 
 

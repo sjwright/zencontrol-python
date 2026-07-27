@@ -68,12 +68,12 @@ from .interface import (
 
 # Low-level models
 from .io import (
-    Request,
-    RequestType,
-    Response,
-    ResponseType,
     ZenClient,
     ZenEvent,
+    ZenRequest,
+    ZenRequestType,
+    ZenResponse,
+    ZenResponseType,
 )
 
 # Utilities
@@ -109,10 +109,10 @@ __all__ = [
     # Low-level models (for advanced users)
     "ZenClient",
     "ZenEvent",
-    "Request",
-    "RequestType",
-    "Response",
-    "ResponseType",
+    "ZenRequest",
+    "ZenRequestType",
+    "ZenResponse",
+    "ZenResponseType",
 
     # Exceptions
     "ZenError",

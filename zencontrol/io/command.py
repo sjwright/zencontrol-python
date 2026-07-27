@@ -1,30 +1,37 @@
 """
-ZenControl wire-level command client.
+Wire-level command client for ZenControl TPI Advanced
+=====================================================
 
-This module implements the command/request side of ZenControl TPI Advanced using asyncio.
-It contains the ZenClient class for sending requests and receiving responses.
+This module takes care of framing, checksums, sequence numbers, matching replies
+to waiters, and retries, but has no knowledge of TPI commands or DALI semantics.
 
-Terms:
-- Request = A UDP packet sent by the Client to the controller
-- Response = A response to a Request  
-- Client = A class which sends Requests and receives Responses
+The host creates one long-lived "ZenClient" per controller. It represents one connected
+UDP socket talking to one host:port.
 
-Example usage:
-async def main():
-    client = await ZenClient.create(("192.0.2.10", 9000))
+You send commands by constructing a "ZenRequest" (opcode + data + "ZenRequestType")
+and calling send_request or send_request_with_retries.
+
+You await a "ZenResponse" and interpret the result.
+
+Lost packets are retried by re-sending.
+
+Queue-full errors are retried with a backoff.
+
+Bad packets and transport death surface as "TIMEOUT" / "INVALID" responses rather than
+raising exceptions, so callers can use one recovery path.
+
+-----------------------------------------------------
+Basic example:
+
+    client = await ZenClient.create(("192.0.2.10", 5108))
     async with client:
-        req = Request(command=0x10, data=[0x01, 0xAA, 0x00, 0x00])
+        req = ZenRequest(command=0x10, data=[0x01, 0xAA, 0x00, 0x00])
         resp = await client.send_request(req)
-        if resp.resp_type == ResponseType.ANSWER:
+        if resp.response_type == ZenResponseType.ANSWER:
             print("Answer:", resp.data)
-        elif resp.resp_type == ResponseType.TIMEOUT:
-            print("Timed out after retries")
-        else:
-            print("Resp:", resp.resp_type.name, resp.data)
 
-asyncio.run(main())
+-----------------------------------------------------
 """
-
 import asyncio
 import logging
 import time
@@ -48,7 +55,7 @@ class ClientConst:
     QUEUE_FAILURE_RETRIES = 3
     QUEUE_FAILURE_BASE_DELAY = 0.05  # doubles each attempt: 50/100/200ms
 
-class RequestType(IntEnum):
+class ZenRequestType(IntEnum):
     """Types of requests that can be sent"""
     BASIC = 0x01
     DYNAMIC = 0x02
@@ -56,11 +63,11 @@ class RequestType(IntEnum):
     COMMAND = 0x04
 
 @dataclass(slots=True)
-class Request:
+class ZenRequest:
     """Represents a request to be sent to the controller"""
     command: int
     data: bytes | list[int]
-    request_type: RequestType = RequestType.BASIC
+    request_type: ZenRequestType = ZenRequestType.BASIC
     seq: int | None = None
     raw_sent: bytes | None = None
     timestamp: float = field(default_factory=time.time)
@@ -74,32 +81,32 @@ class Request:
         n = len(self.data)
         # Validate request type
         match self.request_type:
-            case RequestType.BASIC:
+            case ZenRequestType.BASIC:
                 # Pad data to 4 bytes if it's less than 4 bytes
                 self.data = self.data + bytes([0x00] * (4 - n)) if n < 4 else self.data
                 if len(self.data) != 4:
-                    raise ValueError("Request.data must be exactly 4 bytes when request type is BASIC")
-            case RequestType.DALI_COLOUR:
+                    raise ValueError("ZenRequest.data must be exactly 4 bytes when request type is BASIC")
+            case ZenRequestType.DALI_COLOUR:
                 if n > 9:
-                    raise ValueError("Request.data must be at most 9 bytes when request type is DALI_COLOUR")
-            case RequestType.DYNAMIC:
+                    raise ValueError("ZenRequest.data must be at most 9 bytes when request type is DALI_COLOUR")
+            case ZenRequestType.DYNAMIC:
                 # Prepend data length to data
                 self.data = bytes([n]) + self.data
-            case RequestType.COMMAND:
+            case ZenRequestType.COMMAND:
                 # No padding for command type
                 pass
 
     def to_bytes(self, checksum: Callable[[bytes], int]) -> bytes:
         """Convert request to wire format"""
         if self.seq is None:
-            raise ValueError("Request.seq must be set before calling to_bytes")
+            raise ValueError("ZenRequest.seq must be set before calling to_bytes")
         data = self.data if isinstance(self.data, bytes) else bytes([d & 0xFF for d in self.data])
         req = bytes([ClientConst.MAGIC, self.seq & 0xFF, self.command & 0xFF]) + data
         cs = bytes([checksum(req) & 0xFF])
         self.raw_sent = req + cs
         return req + cs
 
-class ResponseType(IntEnum):
+class ZenResponseType(IntEnum):
     """Types of responses from the controller"""
     OK = 0xA0
     ANSWER = 0xA1
@@ -109,12 +116,12 @@ class ResponseType(IntEnum):
     INVALID = 0xAF
 
 @dataclass(slots=True)
-class Response:
-    response_type: ResponseType
+class ZenResponse:
+    response_type: ZenResponseType
     seq: int | None = None
     data: bytes | None = None # empty for TIMEOUT and INVALID
     raw_rcvd: bytes | None = None
-    request: Request | None = None
+    request: ZenRequest | None = None
     addr: tuple[str, int] | None = None
     timestamp: float = field(default_factory=time.time)
 
@@ -163,11 +170,11 @@ class ZenRequestProtocol(asyncio.DatagramProtocol):
 
 class ZenClient:
     """
-    Request:  [0x04, seq, command, address, data(3|7), checksum]
-    Response: [response_type, seq, data_len, data..., checksum]
+    ZenRequest:  [0x04, seq, command, address, data(3|7), checksum]
+    ZenResponse: [response_type, seq, data_len, data..., checksum]
       - checksum = XOR of all preceding bytes
       - seq is 1 byte (0..255), auto-incremented & reused for retries
-      - On any non-catastrophic parse problem, deliver ResponseType.INVALID instead of raising.
+      - On any non-catastrophic parse problem, deliver ZenResponseType.INVALID instead of raising.
     """
 
     def __init__(self, server: tuple[str, int], logger: logging.Logger | None = None):
@@ -175,7 +182,7 @@ class ZenClient:
         self.logger = logger or logging.getLogger(__name__)
         self._transport: asyncio.transports.DatagramTransport | None = None
         self._protocol: ZenRequestProtocol | None = None
-        self._pending: dict[int, tuple[asyncio.Future[Response], Request]] = {}
+        self._pending: dict[int, tuple[asyncio.Future[ZenResponse], ZenRequest]] = {}
         self._next_seq: int = 0
         self._closed = False
         self._stop_event = asyncio.Event()
@@ -208,7 +215,7 @@ class ZenClient:
         # Unblock waiters with TIMEOUT so callers use the normal recovery path
         for fut, req in list(self._pending.values()):
             if not fut.done():
-                fut.set_result(Response(ResponseType.TIMEOUT, request=req))
+                fut.set_result(ZenResponse(ZenResponseType.TIMEOUT, request=req))
         self._pending.clear()
         if transport is not None and not transport.is_closing():
             transport.close()
@@ -220,11 +227,11 @@ class ZenClient:
 
     async def send_request(
         self,
-        req: Request,
+        req: ZenRequest,
         *,
         timeout: float | None = None,
         retries: int = ClientConst.DEFAULT_RETRIES,
-    ) -> Response:
+    ) -> ZenResponse:
         if self._closed:
             raise RuntimeError("Client is closed")
         if self._transport is None:
@@ -237,12 +244,12 @@ class ZenClient:
             retries = 0
 
         loop = asyncio.get_running_loop()
-        fut: asyncio.Future[Response]
+        fut: asyncio.Future[ZenResponse]
 
         # Hold the lock only for seq allocation + pending registration (not RTT)
         async with self._lock:
             if self._is_disconnected():
-                return Response(ResponseType.TIMEOUT, request=req)
+                return ZenResponse(ZenResponseType.TIMEOUT, request=req)
             fut = loop.create_future()
             req.seq = self._alloc_seq()
             if req.seq in self._pending:
@@ -255,7 +262,7 @@ class ZenClient:
         try:
             for i in range(retries + 1):
                 if self._is_disconnected():
-                    return Response(ResponseType.TIMEOUT, request=req)
+                    return ZenResponse(ZenResponseType.TIMEOUT, request=req)
                 try:
                     req.timestamp = time.time()
                     self._transport.sendto(wire)
@@ -267,7 +274,7 @@ class ZenClient:
                     resp = fut.result()
                     resp.request = req
                     return resp
-            return Response(ResponseType.TIMEOUT, request=req)
+            return ZenResponse(ZenResponseType.TIMEOUT, request=req)
         finally:
             self._pending.pop(req.seq, None)
             if not fut.done():
@@ -275,18 +282,18 @@ class ZenClient:
 
     async def send_request_with_retries(
         self,
-        req: Request,
+        req: ZenRequest,
         *,
         timeout: float | None = None,
         retries: int = ClientConst.DEFAULT_RETRIES,
         queue_retries: int = ClientConst.QUEUE_FAILURE_RETRIES,
-    ) -> Response:
+    ) -> ZenResponse:
         """Like send_request, but retries on TPI QUEUE_FAILURE with backoff."""
-        response: Response | None = None
+        response: ZenResponse | None = None
         for attempt in range(queue_retries + 1):
             response = await self.send_request(req, timeout=timeout, retries=retries)
             if (
-                response.response_type == ResponseType.ERROR
+                response.response_type == ZenResponseType.ERROR
                 and response.data
                 and response.data[0] == ClientConst.QUEUE_FAILURE
                 and attempt < queue_retries
@@ -332,8 +339,8 @@ class ZenClient:
             future, request = pending
             if not future.done():
                 future.set_result(
-                    Response(
-                        ResponseType.INVALID,
+                    ZenResponse(
+                        ZenResponseType.INVALID,
                         seq=sequence_byte,
                         raw_rcvd=datagram,
                         request=request,
@@ -352,12 +359,12 @@ class ZenClient:
             return
 
         # Unknown response type
-        if response_type_byte not in (ResponseType.OK, ResponseType.ANSWER, ResponseType.NO_ANSWER, ResponseType.ERROR):
+        if response_type_byte not in (ZenResponseType.OK, ZenResponseType.ANSWER, ZenResponseType.NO_ANSWER, ZenResponseType.ERROR):
             _fail_pending("type")
             return
 
         # Valid response
-        response = Response(ResponseType(response_type_byte), seq=sequence_byte, data=data_bytes, raw_rcvd=datagram, addr=addr)
+        response = ZenResponse(ZenResponseType(response_type_byte), seq=sequence_byte, data=data_bytes, raw_rcvd=datagram, addr=addr)
         
         # Find the pending request
         if response.seq is None:

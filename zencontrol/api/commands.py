@@ -7,11 +7,11 @@ from typing import Any, Literal, Self, overload
 from ..exceptions import ZenTimeoutError
 from ..io.command import (
     ClientConst,
-    Request,
-    RequestType,
-    Response,
-    ResponseType,
     ZenClient,
+    ZenRequest,
+    ZenRequestType,
+    ZenResponse,
+    ZenResponseType,
 )
 from .event_decode import ZenEventMask
 from .models import (
@@ -258,7 +258,7 @@ class ZenCommandClient:
                    data: list[int] | None = None,
                    return_type: str = 'bytes',
                    ) -> (bytes | str | list[int] | int | bool) | None:
-        request: Request = Request(command=command, data=[address] + (data or []), request_type=RequestType.BASIC)
+        request: ZenRequest = ZenRequest(command=command, data=[address] + (data or []), request_type=ZenRequestType.BASIC)
         response_data, response_code = await self._send_packet(controller, request)
         match response_code:
             case 0xA0: # OK
@@ -326,7 +326,7 @@ class ZenCommandClient:
     async def _send_colour(self, controller: ControllerRef, command: int, address: int, colour: ZenColour, level: int = 255) -> bool | None:
         """Send a DALI colour command."""
         data = [address, level & 0xFF] + list(colour.command_payload())
-        request: Request = Request(command=command, data=data, request_type=RequestType.DALI_COLOUR)
+        request: ZenRequest = ZenRequest(command=command, data=data, request_type=ZenRequestType.DALI_COLOUR)
         response_data, response_code = await self._send_packet(controller, request)
         match response_code:
             case 0xA0: # OK
@@ -337,7 +337,7 @@ class ZenCommandClient:
 
     async def _send_dynamic(self, controller: ControllerRef, command: int, data: list[int]) -> bytes | None:
         # Calculate data length and prepend it to data
-        request: Request = Request(command=command, data=data, request_type=RequestType.DYNAMIC)
+        request: ZenRequest = ZenRequest(command=command, data=data, request_type=ZenRequestType.DYNAMIC)
         response_data, response_code = await self._send_packet(controller, request)
         # Check response type
         match response_code:
@@ -362,13 +362,13 @@ class ZenCommandClient:
             return response_data
         return None
 
-    async def _send_packet(self, controller: ControllerRef, request: Request) -> tuple[bytes | None, int]:
+    async def _send_packet(self, controller: ControllerRef, request: ZenRequest) -> tuple[bytes | None, int]:
         # Ensure client is properly initialized and not closed
         await self._ensure_client(controller)
         client = self._clients.get(controller.name)
         assert client is not None
 
-        response: Response = await client.send_request_with_retries(
+        response: ZenResponse = await client.send_request_with_retries(
             request,
             retries=ClientConst.DEFAULT_RETRIES,
         )
@@ -376,7 +376,7 @@ class ZenCommandClient:
         # Timeout?
         # Work out how many msec we waited for
         wait_time_ms = (time.time() - request.timestamp) * 1000
-        if response.response_type == ResponseType.TIMEOUT:
+        if response.response_type == ZenResponseType.TIMEOUT:
             raw_sent = request.raw_sent or (response.request.raw_sent if response.request else None)
             raw_sent_str = f"[{' '.join(f'0x{b:02X}' for b in raw_sent)}]" if raw_sent else "[]"
             self.logger.error(f"UDP packet response from {controller.host}:{controller.port} not received after {wait_time_ms:.0f}ms, probably offline {raw_sent_str}")

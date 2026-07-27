@@ -9,7 +9,7 @@ import pytest
 from zencontrol.api.event_decode import ButtonPress
 from zencontrol.api.event_router import ZenEventReceiver
 from zencontrol.api.types import Transport, ZenEventMode
-from zencontrol.io.event import EventConst
+from zencontrol.io.event import EventConst, accept_datagram, parse_frame
 
 
 def _xor(buf: bytes) -> int:
@@ -41,7 +41,7 @@ def _fake_endpoint(*, unicast: bool, listen_port: int = 0):
         ep.bound_port = port
         ep.listen_port = port
         ep.close = AsyncMock()
-        # Stash sink so tests can push datagrams
+        # Stash sink so tests can push via accept_datagram (production handoff)
         ep.sink = kwargs["sink"]
         factory.last = ep  # type: ignore[attr-defined]
         return ep
@@ -186,10 +186,9 @@ async def test_both_transports_feed_one_funnel() -> None:
     ulease = await receiver.acquire(Transport.UNICAST, toward="127.0.0.1")
     assert len(sinks) == 2
 
-    # Push via each transport's sink into the shared funnel
-    frame = _frame()
-    sinks[0](frame, ("192.168.1.1", 1))
-    sinks[1](_frame(payload=b"\x02"), ("192.168.1.2", 1))
+    # Push via each transport's sink — same path as ZenEventProtocol
+    assert accept_datagram(_frame(), ("192.168.1.1", 1), sinks[0])
+    assert accept_datagram(_frame(payload=b"\x02"), ("192.168.1.2", 1), sinks[1])
 
     for _ in range(50):
         if len(seen) >= 2:
@@ -207,7 +206,7 @@ async def test_both_transports_feed_one_funnel() -> None:
 
 
 @pytest.mark.asyncio
-async def test_inject_parses_after_queue() -> None:
+async def test_inject_takes_validated_events_only() -> None:
     receiver = ZenEventReceiver()
     receiver._endpoint_factory = _fake_endpoint(unicast=False)
     seen: list[object] = []
@@ -217,9 +216,11 @@ async def test_inject_parses_after_queue() -> None:
 
     receiver.subscribe(handler, mac=b"\x02\x00\x00\x00\x00\x01")
     lease = await receiver.acquire(Transport.MULTICAST)
-    receiver.inject(_frame(), ("10.0.0.1", 6969))
-    # Malformed rides the queue then is dropped
-    receiver.inject(b"\x00\x01\x02", ("10.0.0.1", 6969))
+    event = parse_frame(_frame(), ("10.0.0.1", 6969))
+    assert event is not None
+    receiver.inject(event)
+    # Framing rejection stays in io — malformed never becomes a ZenEvent
+    assert parse_frame(b"\x00\x01\x02", ("10.0.0.1", 6969)) is None
 
     for _ in range(50):
         if seen:

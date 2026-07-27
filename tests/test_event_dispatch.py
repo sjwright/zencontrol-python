@@ -6,7 +6,7 @@ import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from helpers_endpoints import fake_endpoint_factory
+from helpers_endpoints import fake_endpoint_factory, require_event
 
 from zencontrol.api.event_decode import (
     GroupLevelChange,
@@ -75,8 +75,8 @@ async def test_subscription_handler_returns_before_callback_runs() -> None:
     await zen.start()
 
     data, addr = _level_frame(mac=b"\x02\x00\x00\x00\x00\x01", level=128)
-    # Drive the consumer the same way a socket would.
-    zen.event_receiver.inject(data, addr)
+    # Drive the consumer the same way a validated endpoint event would.
+    zen.event_receiver.inject(require_event(data, addr))
 
     # Handler/dispatch was scheduled; callback may not have started yet, but
     # the funnel consumer must not be blocked waiting on it.

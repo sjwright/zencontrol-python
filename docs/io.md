@@ -1,30 +1,36 @@
 # IO layer — get started
 
-`zencontrol.io` is the wire stack: UDP datagrams in and out, checksums, sequence numbers.
-It does **not** know TPI command names or event codes — those live in `zencontrol.api`.
+`zencontrol.io` is the wire stack: UDP in and out, framing, checksums, sequence numbers.
+It does **not** know TPI command names or event-code vocabulary — those live in `zencontrol.api`.
+
+| Plane | Shape |
+| --- | --- |
+| **Commands** | One connected `ZenClient` **per controller** (`ZenRequest` → `ZenResponse`) |
+| **Events** | Typically one shared `ZenEndpoint` for the process; parses envelopes and pushes `ZenEvent` to a sync sink |
+
+You probably don't want to be writing any code with these, other than for debugging purposes, or writing tests.
 
 ## What you get
 
 | Piece | Role |
 | --- | --- |
-| `ZenClient` | Connected UDP client; send `Request`, await `Response` |
-| `Request` / `Response` | Framed command envelopes |
-| `ZenEvent` / `parse_frame` | Validate an inbound event datagram (code stays opaque `int`) |
-| `ZenEndpoint` | Bind multicast/unicast UDP for the event plane |
-
-Prefer [API](api.md) or [Interface](interface.md) unless you are debugging the wire or building a custom transport.
+| `ZenClient` | Connected UDP client to one controller host:port |
+| `ZenRequest` | Outbound command envelope |
+| `ZenResponse` | Inbound reply (`OK` / `ANSWER` / `TIMEOUT` / …) |
+| `ZenEndpoint` | Bind multicast or unicast; validate envelopes; sink `ZenEvent`s |
+| `ZenEvent` | Validated event frame (code stays an opaque `int`) |
 
 ## Send one command
 
 ```python
 import asyncio
-from zencontrol.io import Request, RequestType, ResponseType, ZenClient
+from zencontrol.io import ZenRequest, ZenRequestType, ZenResponseType, ZenClient
 
 # QUERY_CONTROLLER_LABEL = 0x24 (see ZenCommandClient.CMD in api.commands)
 async def main() -> None:
     client = await ZenClient.create(("192.168.1.100", 5108))
     try:
-        req = Request(command=0x24, data=[0x00], request_type=RequestType.BASIC)
+        req = ZenRequest(command=0x24, data=[0x00], request_type=ZenRequestType.BASIC)
         resp = await client.send_request_with_retries(req)
         print(resp.response_type, resp.data)
         # ANSWER (0xA1) → resp.data is the label bytes
@@ -34,27 +40,24 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-`RequestType.BASIC` pads the data field to 4 bytes. Sequence numbers and XOR checksums are handled inside `ZenClient`.
+`ZenRequestType.BASIC` pads the data field to 4 bytes. Sequence numbers, XOR checksums, datagram retries, and queue-full backoff are handled inside `ZenClient` / `send_request_with_retries`. Bad packets and transport death surface as `TIMEOUT` / `INVALID` rather than raising.
 
 ## Listen for events
 
-`ZenEndpoint` binds one UDP socket and pushes raw datagrams to a sink. Parse inside the sink with `parse_frame` — the endpoint itself does no framing.
+`ZenEndpoint` is a dumb pipe that understands the wire: it binds a socket, drops malformed datagrams (debug-logged), and pushes parsed `ZenEvent`s into a **sync** sink (no `await`). Queuing, MAC routing, leases, and decoding live in `ZenEventReceiver` ([API](api.md)).
 
 ```python
 import asyncio
-from zencontrol.io import EventConst, ZenEndpoint, parse_frame
+from zencontrol.io import EventConst, ZenEndpoint, ZenEvent
 
-def on_datagram(data: bytes, addr: tuple[str, int]) -> None:
-    event = parse_frame(data, addr)
-    if event is None:
-        return  # bad magic / checksum / length
-    # code is an opaque int here — decode in zencontrol.api.event_decode
+def on_event(event: ZenEvent) -> None:
+    # code is opaque here — decode in zencontrol.api.event_decode
     print(event.mac.hex(":"), event.code, event.target, event.payload.hex())
 
 async def main() -> None:
     endpoint = await ZenEndpoint.open(
         unicast=False,  # True + listen_port=… for unicast
-        sink=on_datagram,
+        sink=on_event,
     )
     print(f"Listening on {EventConst.MULTICAST_GROUP}:{endpoint.bound_port}")
     try:
@@ -65,15 +68,17 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-Multicast joins `239.255.90.67:6969` (`EventConst`). Unicast binds `listen_ip` / `listen_port` (use `0` for an ephemeral port, then read `endpoint.bound_port`).
+- **Multicast** — joins `EventConst.MULTICAST_GROUP`:`MULTICAST_PORT` (not configurable on the controller).
+- **Unicast** — binds `listen_ip` / `listen_port` (`0` = ephemeral; then read `endpoint.bound_port`). Program that address into the controller via the command plane (`SET_TPI_EVENT_UNICAST_ADDRESS`).
 
-This path is for debugging or custom transports. Application code usually wants the queued funnel in `ZenEventReceiver` ([API](api.md)).
+Use `accept_datagram(data, addr, sink)` when simulating the endpoint handoff without a socket (same parse-then-sink path as `ZenEventProtocol`).
 
 ## Rules of thumb
 
-- Retries and queue-failure backoff: use `send_request_with_retries`.
+- Prefer `send_request_with_retries` for commands (datagram retries + queue-full backoff).
 - Event codes stay opaque in `io`; vocabulary lives in `api.event_decode`.
 - Controllers must have TPI event emit enabled (command plane) or you will hear nothing.
+- Application code should use `ZenEventReceiver` / `ZenControl`, not a bare `ZenEndpoint`, unless you are debugging.
 
 ## See also
 

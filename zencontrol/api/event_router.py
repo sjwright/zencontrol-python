@@ -20,7 +20,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import Enum
 
-from ..io.event import EventConst, ZenEndpoint, ZenEvent, parse_frame
+from ..io.event import EventConst, ZenEndpoint, ZenEvent
 from ..utils import is_ipv4_address, local_ip_for_remote
 from .event_decode import ZenDecodedEvent, decode
 from .identity import IdentityLog
@@ -37,6 +37,10 @@ LeasesIdleHandler = Callable[[], None]
 
 # Why the receiver dropped a subscription (passed to LostHandler).
 LOST_MAC_CONFLICT = "mac_conflict"
+
+# Funnel policy (API-owned; wire constants stay on EventConst).
+DEFAULT_MAX_QUEUE_SIZE = 1000
+DROP_LOG_INTERVAL = 5.0  # seconds between queue-full warnings
 
 
 class EventHealth(Enum):
@@ -153,7 +157,7 @@ class ZenEventReceiver:
         self,
         logger: logging.Logger | None = None,
         *,
-        max_queue_size: int = EventConst.DEFAULT_MAX_QUEUE_SIZE,
+        max_queue_size: int = DEFAULT_MAX_QUEUE_SIZE,
         unicast_listen_ip: str = "0.0.0.0",
         unicast_port: int = 0,
         event_silent_after: float = Const.EVENT_SILENT_AFTER,
@@ -172,9 +176,9 @@ class ZenEventReceiver:
         self._by_mac: dict[bytes, Subscription] = {}
         self._by_host: dict[str, Subscription] = {}
 
-        # Funnel: raw datagrams from every open endpoint
-        self._funnel: asyncio.Queue[tuple[bytes, tuple[str, int]]] = asyncio.Queue(maxsize=self.max_queue_size)
-        self.dropped_datagrams = 0
+        # Funnel: validated ZenEvents from every open endpoint
+        self._funnel: asyncio.Queue[ZenEvent] = asyncio.Queue(maxsize=self.max_queue_size)
+        self.dropped_events = 0
         self._last_drop_log = 0.0
         self._consumer_task: asyncio.Task[None] | None = None
         self._stopping = False
@@ -350,7 +354,7 @@ class ZenEventReceiver:
             unicast=unicast,
             listen_ip=listen_ip,
             listen_port=listen_port,
-            sink=self._enqueue_datagram,
+            sink=self._enqueue_event,
             logger=self.logger,
         )
         self._endpoints[transport] = endpoint
@@ -369,9 +373,9 @@ class ZenEventReceiver:
     # Funnel
     # ------------------------------------------------------------------
 
-    def _enqueue_datagram(self, data: bytes, addr: tuple[str, int]) -> None:
+    def _enqueue_event(self, event: ZenEvent) -> None:
         try:
-            self._funnel.put_nowait((data, addr))
+            self._funnel.put_nowait(event)
             return
         except asyncio.QueueFull:
             pass
@@ -380,22 +384,22 @@ class ZenEventReceiver:
         except asyncio.QueueEmpty:
             pass
         try:
-            self._funnel.put_nowait((data, addr))
+            self._funnel.put_nowait(event)
         except asyncio.QueueFull:
             pass
-        self.dropped_datagrams += 1
+        self.dropped_events += 1
         now = time.time()
-        if now - self._last_drop_log >= EventConst.DROP_LOG_INTERVAL:
+        if now - self._last_drop_log >= DROP_LOG_INTERVAL:
             self._last_drop_log = now
             self.logger.warning(
-                "Event funnel full (max=%d); dropped %d datagram(s) total",
+                "Event funnel full (max=%d); dropped %d event(s) total",
                 self.max_queue_size,
-                self.dropped_datagrams,
+                self.dropped_events,
             )
 
-    def inject(self, data: bytes, addr: tuple[str, int]) -> None:
-        """Test helper: push a datagram into the funnel without a socket."""
-        self._enqueue_datagram(data, addr)
+    def inject(self, event: ZenEvent) -> None:
+        """Test helper: push a validated event into the funnel without a socket."""
+        self._enqueue_event(event)
 
     def _ensure_consumer(self) -> None:
         if self._consumer_task is not None and not self._consumer_task.done():
@@ -425,16 +429,8 @@ class ZenEventReceiver:
         unexpected = True
         try:
             while True:
-                data, addr = await self._funnel.get()
+                event = await self._funnel.get()
                 try:
-                    event = parse_frame(data, addr)
-                    if event is None:
-                        self.logger.debug(
-                            "Invalid event packet from %s: %s",
-                            addr,
-                            ", ".join(f"0x{b:02x}" for b in data),
-                        )
-                        continue
                     await self.handle(event)
                 finally:
                     self._funnel.task_done()

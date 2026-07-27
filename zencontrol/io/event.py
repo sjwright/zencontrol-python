@@ -1,11 +1,32 @@
 """
-ZenControl wire-level event endpoint.
+Wire-level event endpoint for ZenControl TPI Advanced
+=====================================================
 
-Owns the envelope only — magic, length, checksum, and positional fields. Event
-codes are opaque ints here; interpretation lives in ``api.event_decode``.
+This module takes care of maintaining multicast membership, binding UDP sockets,
+and validating event envelopes (magic, length, checksum, positional fields),
+but has no knowledge of event codes, TPI semantics, or DALI state.
 
-``ZenEndpoint`` binds one socket and pushes raw ``(data, addr)`` datagrams into
-a sink. Parsing and queuing live above this layer.
+Because events can be multicast, listeners must be shared across controllers.
+The host typically creates one "ZenEndpoint" for the whole process, and will
+need to handle routing of events.
+
+In this library, routing is handled by "ZenEventReceiver" in the "api" module.
+
+Malformed datagrams are dropped here (debug-logged).
+
+-----------------------------------------------------
+Basic example:
+
+    def on_event(event: ZenEvent) -> None:
+        print(event.mac.hex(":"), event.code, event.target, event.payload.hex())
+
+    endpoint = await ZenEndpoint.open(unicast=False, sink=on_event)
+    try:
+        await asyncio.Future()  # run until cancelled
+    finally:
+        await endpoint.close()
+
+-----------------------------------------------------
 """
 
 from __future__ import annotations
@@ -19,7 +40,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 # Sync sink: endpoint never awaits; the funnel owner enqueues.
-DatagramSink = Callable[[bytes, tuple[str, int]], None]
+EventSink = Callable[["ZenEvent"], None]
 
 _MAGIC = bytes([0x5A, 0x43])
 _MIN_FRAME_LEN = 13  # magic(2)+mac(6)+target(2)+code(1)+len(1)+checksum(1)
@@ -47,7 +68,8 @@ def _checksum(buf: bytes) -> int:
 def parse_frame(data: bytes, addr: tuple[str, int]) -> ZenEvent | None:
     """Validate envelope and extract fields. Returns None if malformed.
 
-    Pure: no logging, no socket state. The caller logs with its own context.
+    Pure: no logging, no socket state. Used by the endpoint on receive and by
+    tests / offline tools that need framing without a live socket.
     """
     if len(data) < _MIN_FRAME_LEN or data[0:2] != _MAGIC:
         return None
@@ -75,17 +97,43 @@ def parse_frame(data: bytes, addr: tuple[str, int]) -> ZenEvent | None:
 
 
 class EventConst:
-    """Constants for event handling"""
+    """Wire constants for the event plane."""
     MULTICAST_GROUP = "239.255.90.67"
     MULTICAST_PORT = 6969
-    DEFAULT_MAX_QUEUE_SIZE = 1000
-    DROP_LOG_INTERVAL = 5.0  # seconds between queue-full warnings
+
+
+def accept_datagram(
+    data: bytes,
+    addr: tuple[str, int],
+    sink: EventSink,
+    logger: logging.Logger | None = None,
+) -> bool:
+    """Parse a datagram like the live protocol and invoke ``sink`` if valid.
+
+    Returns True when the sink was called. Shared by ``ZenEventProtocol`` and
+    tests that simulate the endpoint handoff without a socket.
+    """
+    log = logger or logging.getLogger(__name__)
+    event = parse_frame(data, addr)
+    if event is None:
+        log.debug(
+            "Invalid event packet from %s: %s",
+            addr,
+            ", ".join(f"0x{b:02x}" for b in data),
+        )
+        return False
+    try:
+        sink(event)
+    except Exception as exc:
+        log.error(f"Event sink failed: {exc}", exc_info=exc)
+        return False
+    return True
 
 
 class ZenEventProtocol(asyncio.DatagramProtocol):
     def __init__(
         self,
-        sink: DatagramSink,
+        sink: EventSink,
         logger: logging.Logger | None = None,
     ) -> None:
         self.sink = sink
@@ -96,10 +144,7 @@ class ZenEventProtocol(asyncio.DatagramProtocol):
         self.transport = transport
 
     def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
-        try:
-            self.sink(data, addr)
-        except Exception as exc:
-            self.logger.error(f"Event sink failed: {exc}", exc_info=exc)
+        accept_datagram(data, addr, self.sink, self.logger)
 
     def error_received(self, exc: Exception) -> None:
         self.logger.error(f"Event protocol error: {exc}")
@@ -122,7 +167,7 @@ def _reuse_port_supported() -> bool:
 
 
 class ZenEndpoint:
-    """One bound UDP socket. Pushes raw datagrams to a sink; no parsing."""
+    """One bound UDP socket. Parses envelopes and pushes ZenEvents to a sink."""
 
     def __init__(
         self,
@@ -130,7 +175,7 @@ class ZenEndpoint:
         unicast: bool,
         listen_ip: str = "0.0.0.0",
         listen_port: int = 0,
-        sink: DatagramSink,
+        sink: EventSink,
         logger: logging.Logger | None = None,
     ) -> None:
         self.unicast = unicast
@@ -149,7 +194,7 @@ class ZenEndpoint:
         unicast: bool,
         listen_ip: str = "0.0.0.0",
         listen_port: int = 0,
-        sink: DatagramSink,
+        sink: EventSink,
         logger: logging.Logger | None = None,
     ) -> ZenEndpoint:
         endpoint = cls(
@@ -243,4 +288,3 @@ class ZenEndpoint:
             sock.close()
             self._mreq = None
             raise
-

@@ -6,7 +6,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from helpers_endpoints import fake_endpoint_factory
+from helpers_endpoints import fake_endpoint_factory, require_event
 
 from zencontrol.api.types import Transport, ZenEventMode
 from zencontrol.interface.interface import ZenControl
@@ -39,7 +39,7 @@ async def test_consumer_crash_fires_on_disconnect_once() -> None:
         return acc & 0xFF
 
     body = bytes([0x5A, 0x43]) + b"\x02\x00\x00\x00\x00\x01" + b"\x00\x40\x00\x01\x01"
-    zen.event_receiver.inject(body + bytes([_xor(body)]), ("127.0.0.1", 1))
+    zen.event_receiver.inject(require_event(body + bytes([_xor(body)]), ("127.0.0.1", 1)))
     await asyncio.wait_for(task, timeout=1.0)
 
     # Recoverable gap: no disconnect — session restores and re-arms (I10).

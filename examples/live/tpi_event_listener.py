@@ -2,7 +2,7 @@
 """
 Standalone TPI event listener — one funnel via ZenEventReceiver.
 
-Demonstrates multicast / unicast leases and raw-frame logging without the
+Demonstrates multicast / unicast leases and event delivery without the
 high-level entity layer. Prefer ``examples/live/events.py`` + ``ZenControl``
 for application code.
 """

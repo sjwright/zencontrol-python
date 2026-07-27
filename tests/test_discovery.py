@@ -6,7 +6,7 @@ import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from helpers_endpoints import fake_endpoint_factory
+from helpers_endpoints import fake_endpoint_factory, require_event
 
 from zencontrol import ZenControl, ZenController
 from zencontrol.api.commands import ZenCommandClient
@@ -145,7 +145,7 @@ async def test_discover_started_here_returns_results_after_teardown() -> None:
             if zen.event_receiver.consumer_task is not None:
                 break
             await asyncio.sleep(0.01)
-        zen.event_receiver.inject(_frame(), ("192.168.1.50", 6969))
+        zen.event_receiver.inject(require_event(_frame(), ("192.168.1.50", 6969)))
         for _ in range(20):
             if zen.event_receiver.identities.discovered:
                 return

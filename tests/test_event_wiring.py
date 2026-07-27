@@ -6,7 +6,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from helpers_endpoints import fake_endpoint_factory
+from helpers_endpoints import fake_endpoint_factory, require_event
 
 from zencontrol.api.event_router import EventHealth, ZenEventReceiver
 from zencontrol.api.types import Transport, ZenEventMode
@@ -185,7 +185,7 @@ async def test_host_only_binding_learns_mac_and_persists() -> None:
     assert binding.event_health is EventHealth.IDENTIFYING
 
     data, addr = _frame(mac=b"\x02\x00\x00\x00\x00\xaa", host="127.0.0.1")
-    zen.event_receiver.inject(data, addr)
+    zen.event_receiver.inject(require_event(data, addr))
     await asyncio.sleep(0.05)
 
     assert ctrl.mac == "02:00:00:00:00:AA"
@@ -267,7 +267,7 @@ async def test_known_mac_skips_identified_callback() -> None:
     assert zen.event_health_for("known") is EventHealth.SILENT
 
     data, addr = _frame(mac=b"\x02\x00\x00\x00\x00\x01", host="127.0.0.1")
-    zen.event_receiver.inject(data, addr)
+    zen.event_receiver.inject(require_event(data, addr))
     await asyncio.sleep(0.05)
 
     on_identified.assert_not_awaited()
