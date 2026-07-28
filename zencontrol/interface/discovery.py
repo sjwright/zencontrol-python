@@ -10,7 +10,7 @@ from typing import Protocol
 from ..api import ZenController as SuperZenController
 from ..api.commands import ZenCommandClient
 from ..api.event_router import Lease, ZenEventReceiver
-from ..api.identity import IdentityLog
+from ..api.discovery import DiscoveryLog
 from ..api.models import DiscoveredController, mac_key
 from ..api.types import Transport
 from ..exceptions import ZenTimeoutError
@@ -21,7 +21,7 @@ class DiscoveryHost(Protocol):
 
     logger: logging.Logger
     commands: ZenCommandClient
-    identities: IdentityLog
+    identities: DiscoveryLog
     event_receiver: ZenEventReceiver
     _enrich_locks: dict[str, asyncio.Lock]
 

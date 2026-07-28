@@ -11,7 +11,7 @@ last release closes. Many controllers can share one lease per transport.
 
 A "Subscription" is how a upstream code can receive events for a specific controller.
 Subscribe by MAC when known, or by host IP until the first packet promotes the MAC.
-Unrecognised MACs with no subscription are recorded on "IdentityLog" for discovery.
+Unrecognised MACs with no subscription are recorded on "DiscoveryLog" for discovery.
 
 "ZenEvent" objects are received, queued and decoded into a "ZenDecodedEvent"
 dataclass, e.g. "ButtonPress".
@@ -51,7 +51,7 @@ from enum import Enum
 from ..io.event import EventConst, ZenEndpoint, ZenEvent
 from ..utils import is_ipv4_address, local_ip_for_remote
 from .event_decode import ZenDecodedEvent, ZenEventDecode
-from .identity import IdentityLog
+from .discovery import DiscoveryLog
 from .models import mac_bytes_to_str
 from .types import Const, Transport
 
@@ -189,10 +189,10 @@ class ZenEventReceiver:
         unicast_listen_ip: str = "0.0.0.0",
         unicast_port: int = 0,
         event_silent_after: float = Const.EVENT_SILENT_AFTER,
-        identities: IdentityLog | None = None,
+        identities: DiscoveryLog | None = None,
     ) -> None:
         self.logger = logger or logging.getLogger(__name__)
-        self.identities = identities or IdentityLog(logger=self.logger)
+        self.identities = identities or DiscoveryLog(logger=self.logger)
         self.on_unexpected_exit: UnexpectedExitHandler | None = None
         self.on_session_restored: UnexpectedExitHandler | None = None
         self.on_leases_idle: LeasesIdleHandler | None = None

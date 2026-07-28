@@ -5,7 +5,7 @@ API layer: TPI command client, event receiver, and wire-facing models.
 from .commands import ZenCommandClient
 from .event_decode import ZenEventCode, ZenEventMask
 from .event_router import EventHealth, Lease, Subscription, ZenEventReceiver
-from .identity import IdentityLog
+from .discovery import DiscoveryLog
 from .models import (
     ControllerRef,
     DiscoveredController,
@@ -29,7 +29,7 @@ __all__ = [
     "Lease",
     "Subscription",
     "EventHealth",
-    "IdentityLog",
+    "DiscoveryLog",
 
     # Models
     "ControllerRef",

@@ -8,7 +8,7 @@ insofar as there is no corresponding Subscription for them.
 "DiscoveredController" is a dataclass that represents a seen controller.
 It stores their IP, MAC, label, and a last seen timestamp.
 
-"IdentityLog" stores "DiscoveredController" sightings.
+"DiscoveryLog" stores "DiscoveredController" sightings.
 
 "ZenEventReceiver" appends here on the no-subscription branch.
 
@@ -32,7 +32,7 @@ from .models import (
 DiscoveredHandler = Callable[[DiscoveredController], Awaitable[None]]
 
 
-class IdentityLog:
+class DiscoveryLog:
     """Sightings of unsubscribed controllers (host/mac/label/last_seen)."""
 
     def __init__(self, logger: logging.Logger | None = None) -> None:
