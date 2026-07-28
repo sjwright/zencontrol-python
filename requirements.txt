@@ -1,4 +1,3 @@
 # Core runtime has no third-party deps (mirrors pyproject.toml).
 # Prefer: pip install .
-# Colored print_traffic: pip install ".[colorama]"
 # MQTT bridge: pip install ".[mqtt]"

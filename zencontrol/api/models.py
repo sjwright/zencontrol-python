@@ -133,28 +133,23 @@ class ZenController:
 
     @property
     def ip(self) -> str:
-        """Resolved IPv4 for "host", cached.
-
-        IPv4 literals skip DNS. Hostname lookup uses "gethostbyname" and
-        **blocks** - prefer "await resolve_host(controller.host)" then
-        "set_resolved_ip" from async code / the HA event loop.
+        """Get the IPv4 address for the controller hostname, cache it as self._ip."
+        
+        This is a blocking (synchronous) call because the main thread needs it immediately.
+        Ideally the value is pre-seeded from an async-safe resolve (e.g. resolve_host)
+        and saved using set_resolved_ip().
         """
         if self._ip is None:
             from ..utils import resolve_host_sync
-
             self._ip = resolve_host_sync(self.host)
         return self._ip
 
     def set_resolved_ip(self, ip: str) -> None:
-        """Seed the "ip" cache from an async-safe resolve (e.g. "resolve_host")."""
+        """Seed the ip cache from an async-safe resolve (e.g. resolve_host)."""
         self._ip = ip
 
     def refresh_ip(self) -> str:
-        """Force a fresh DNS lookup and return the resolved IP address.
-
-        Blocking - see "ip". From async code use "await resolve_host" and
-        "set_resolved_ip".
-        """
+        """Demand a fresh DNS lookup."""
         self._ip = None
         return self.ip
 
@@ -174,37 +169,52 @@ class ZenAddress:
     
     def ecg(self) -> int:
         if self.type == ZenAddressType.ECG: return self.number
-        raise ValueError("Address is not a Control Gear")
+        if self.type == ZenAddressType.ECD: raise ValueError("Address is ECD, expected ECG")
+        if self.type == ZenAddressType.GROUP: raise ValueError("Address is GROUP, expected ECG")
+        if self.type == ZenAddressType.BROADCAST: raise ValueError("Address is BROADCAST, expected ECG")
+        raise ValueError("Address type is unknown, expected ECG")
     
     def ecg_or_group(self) -> int:
         if self.type == ZenAddressType.ECG: return self.number
         if self.type == ZenAddressType.GROUP: return self.number+64
-        raise ValueError("Address is not a Control Gear or Group")
+        if self.type == ZenAddressType.ECD: raise ValueError("Address is ECD, expected ECG or GROUP")
+        if self.type == ZenAddressType.BROADCAST: raise ValueError("Address is BROADCAST, expected ECG or GROUP")
+        raise ValueError("Address type is unknown, expected ECG or GROUP")
     
     def ecg_or_group_or_broadcast(self) -> int:
         if self.type == ZenAddressType.ECG: return self.number
         if self.type == ZenAddressType.GROUP: return self.number+64
         if self.type == ZenAddressType.BROADCAST: return 255
-        raise ValueError("Address is not a Control Gear, Group or Broadcast")
+        if self.type == ZenAddressType.ECD: raise ValueError("Address is ECD, expected ECG or GROUP")
+        raise ValueError("Address type is unknown, expected ECG, GROUP or BROADCAST")
     
     def ecg_or_ecd(self) -> int:
         if self.type == ZenAddressType.ECG: return self.number
         if self.type == ZenAddressType.ECD: return self.number+64
-        raise ValueError("Address is not a Control Gear or Control Device")
+        if self.type == ZenAddressType.GROUP: raise ValueError("Address is GROUP, expected ECG or ECD")
+        if self.type == ZenAddressType.BROADCAST: raise ValueError("Address is BROADCAST, expected ECG or ECD")
+        raise ValueError("Address type is unknown, expected ECG or ECD")
     
     def ecg_or_ecd_or_broadcast(self) -> int:
         if self.type == ZenAddressType.ECG: return self.number
         if self.type == ZenAddressType.ECD: return self.number+64
         if self.type == ZenAddressType.BROADCAST: return 255
-        raise ValueError("Address is not a Control Gear, Control Device or Broadcast")
+        if self.type == ZenAddressType.GROUP: raise ValueError("Address is GROUP, expected ECG or ECD or BROADCAST")
+        raise ValueError("Address type is unknown, expected ECG, ECD or BROADCAST")
     
     def ecd(self) -> int:
         if self.type == ZenAddressType.ECD: return self.number+64
-        raise ValueError("Address is not a Control Device")
+        if self.type == ZenAddressType.ECG: raise ValueError("Address is ECG, expected ECD")
+        if self.type == ZenAddressType.GROUP: raise ValueError("Address is GROUP, expected ECD")
+        if self.type == ZenAddressType.BROADCAST: raise ValueError("Address is BROADCAST, expected ECD")
+        raise ValueError("Address type is unknown, expected ECD")
     
     def group(self) -> int:
         if self.type == ZenAddressType.GROUP: return self.number
-        raise ValueError("Address is not a Group")
+        if self.type == ZenAddressType.ECG: raise ValueError("Address is ECG, expected GROUP")
+        if self.type == ZenAddressType.ECD: raise ValueError("Address is ECD, expected GROUP")
+        if self.type == ZenAddressType.BROADCAST: raise ValueError("Address is BROADCAST, expected GROUP")
+        raise ValueError("Address type is unknown, expected GROUP")
 
     def entity_id_string(self) -> str:
         """Return a stable HA-friendly identifier for this address."""

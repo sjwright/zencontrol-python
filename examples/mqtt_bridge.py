@@ -13,13 +13,6 @@ import logging
 from logging.handlers import RotatingFileHandler
 import math
 import traceback
-try:
-    from colorama import Fore, Style
-except ImportError:
-    class _NoColor:
-        def __getattr__(self, _name: str) -> str:
-            return ""
-    Fore = Style = _NoColor()  # type: ignore[assignment]
 
 class RateLimiter:
     """Rate limiter to control concurrent coroutine execution"""
@@ -524,7 +517,6 @@ class ZenMQTTBridge:
             payload_str = msg.payload.decode('UTF-8') if msg.payload else ""
             topic_str = str(msg.topic)
             # self.logger.debug(f"MQTT received - {topic_str}: {payload_str}")
-            # print(Fore.YELLOW + f"MQTT received - {topic_str}: " + Style.DIM + f"{payload_str}" + Style.RESET_ALL)
             
             # Get the last part of the topic
             command = topic_str.split('/')[-1]
@@ -655,7 +647,6 @@ class ZenMQTTBridge:
         await self.mqttc.publish(config_topic, config_json, retain=retain)
         if config_topic in self.config_topics_to_delete: self.config_topics_to_delete.remove(config_topic)
         # self.logger.debug(f"MQTT sent - {topic}/config: {config_json}")
-        # print(Fore.LIGHTRED_EX + f"MQTT sent - {topic}/config: " + Style.DIM + f"{config_json}" + Style.RESET_ALL)
     
     async def _publish_state(self, topic: str, state: str|dict|None, retain: bool = False) -> None:
         if isinstance(state, dict): state = json.dumps(state)
@@ -664,18 +655,15 @@ class ZenMQTTBridge:
         if "/light/" in topic or "/group/" in topic:
             self.logger.debug(f"MQTT sent - {topic}/state: {state}")
         # self.logger.debug(f"MQTT sent - {topic}/state: {state}")
-        # print(Fore.LIGHTRED_EX + f"MQTT sent - {topic}/state: " + Style.DIM + f"{state}" + Style.RESET_ALL)
     
     async def _publish_event(self, topic: str, event: str, retain: bool = False) -> None:
         await self.mqttc.publish(f"{topic}/event", event, retain=retain)
         # self.logger.debug(f"MQTT sent - {topic}/event: {event}")
-        # print(Fore.LIGHTRED_EX + f"MQTT sent - {topic}/event: " + Style.DIM + f"{event}" + Style.RESET_ALL)
 
     async def delete_retained_topics(self) -> None:
         for topic in self.config_topics_to_delete:
             await self.mqttc.publish(topic, None, retain=True)
             # self.logger.debug(f"MQTT deleted - {topic}")
-            # print(Fore.RED + f"•• MQTT DELETED •• " + Style.DIM + f"{topic}" + Style.RESET_ALL)
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 

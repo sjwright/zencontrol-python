@@ -367,12 +367,12 @@ async def test_send_packet_error_returns_without_raising() -> None:
     )
     protocol.set_client(controller, fake_client)
 
-    data, code = await protocol._send_packet(
+    response = await protocol._send_packet(
         controller,
         ZenRequest(command=0x10, data=[0x00, 0x00, 0x00, 0x00]),
     )
-    assert code == ZenResponseType.ERROR.value
-    assert data == bytes([ZenErrorCode.PAID_FEATURE.value])
+    assert response.response_type == ZenResponseType.ERROR
+    assert response.data == bytes([ZenErrorCode.PAID_FEATURE.value])
 
 
 def test_mac_requires_six_bytes() -> None:
@@ -398,9 +398,3 @@ def test_mac_requires_six_bytes() -> None:
         ctx=EntityContext(commands=protocol),
     )
     assert ctrl.mac_bytes == bytes.fromhex("aabbccddeeff")
-
-
-def test_response_timeout_constant_matches_client() -> None:
-    from zencontrol.api.types import Const
-
-    assert Const.RESPONSE_TIMEOUT == ClientConst.DEFAULT_TIMEOUT

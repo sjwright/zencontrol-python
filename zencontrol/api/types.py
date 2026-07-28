@@ -128,8 +128,6 @@ class ZenEventMode:
 # API-level constants
 class Const:
     """API-level constants"""
-    # UDP / connection - keep in sync with ClientConst.DEFAULT_TIMEOUT
-    RESPONSE_TIMEOUT = 1.5
     # ZenControl.start() waits this long for the first successful event-listener connect
     START_TIMEOUT = 30.0
 
@@ -138,7 +136,7 @@ class Const:
     MAX_ECD = 64  # 0-63
     MAX_INSTANCE = 32  # 0-31
     MAX_GROUP = 16  # 0-15
-    MAX_SCENE = 12  # Zencontrol scenes 0-11 (not DALI's 16 gear slots; see query_scene_levels_by_address)
+    MAX_SCENE = 12  # DALI protocol is 16 (0-15) but zencontrol cloud is soft-limited to 12 (0-11)
     MAX_SYSVAR = 148  # 0-147
     MAX_LEVEL = 254  # 255 is mask value (i.e. no change)
     MIN_KELVIN = 1000

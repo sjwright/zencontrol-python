@@ -27,22 +27,16 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-colorama = [
-    "colorama>=0.4.6",
-]
 dev = [
     "pytest>=6.0",
     "pytest-asyncio>=0.18.0",
     "ruff",
     "mypy>=0.950",
-    "types-colorama",
     "build>=1.0",
-    "colorama>=0.4.6",
 ]
 mqtt = [
     "aiomqtt>=2.1.0",
     "PyYAML>=6.0",
-    "colorama>=0.4.6",
 ]
 # Simulator integration tests (tests/test_sim_*.py) need zencontrol-simulator
 # (pip install -e ../zencontrol-simulator, or a sibling ../zencontrol-simulator
@@ -101,6 +95,7 @@ exclude = ["examples"]
 select = ["ASYNC", "B", "E", "F", "UP"]
 ignore = [
     "ASYNC109", # Timeout parameters are part of the public async API.
+    "COM812",   # Don't require trailing commas.
     "E501",     # Preserve existing protocol logging and payload formatting.
     "E701",     # Allow readable single-line conditionals.
 ]

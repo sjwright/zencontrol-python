@@ -40,7 +40,7 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-`ZenRequestType.BASIC` pads the data field to 4 bytes. Sequence numbers, XOR checksums, datagram retries, and queue-full backoff are handled inside `ZenClient` / `send_request_with_retries`. Bad packets and transport death surface as `TIMEOUT` / `INVALID` rather than raising.
+`ZenRequestType.BASIC` pads the data field to 4 bytes. Sequence numbers, XOR checksums, datagram retries, and queue-full backoff are handled inside `ZenClient` / `send_request_with_retries`. Bad packets and transport death surface as `TIMEOUT` / `INVALID` rather than raising. Set `print_traffic=True` on the client to dump request/response bytes and RTT; timeouts are also logged there.
 
 ## Listen for events
 

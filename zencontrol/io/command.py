@@ -177,9 +177,16 @@ class ZenClient:
       - On any non-catastrophic parse problem, deliver ZenResponseType.INVALID instead of raising.
     """
 
-    def __init__(self, server: tuple[str, int], logger: logging.Logger | None = None):
+    def __init__(
+        self,
+        server: tuple[str, int],
+        logger: logging.Logger | None = None,
+        *,
+        print_traffic: bool = False,
+    ):
         self.server = server
         self.logger = logger or logging.getLogger(__name__)
+        self.print_traffic = print_traffic
         self._transport: asyncio.transports.DatagramTransport | None = None
         self._protocol: ZenRequestProtocol | None = None
         self._pending: dict[int, tuple[asyncio.Future[ZenResponse], ZenRequest]] = {}
@@ -187,10 +194,16 @@ class ZenClient:
         self._closed = False
         self._stop_event = asyncio.Event()
         self._lock = asyncio.Lock()
-    
+
     @classmethod
-    async def create(cls, server: tuple[str, int], logger: logging.Logger | None = None) -> Self:
-        self = cls(server, logger)
+    async def create(
+        cls,
+        server: tuple[str, int],
+        logger: logging.Logger | None = None,
+        *,
+        print_traffic: bool = False,
+    ) -> Self:
+        self = cls(server, logger, print_traffic=print_traffic)
         loop = asyncio.get_running_loop()
         transport, protocol = await loop.create_datagram_endpoint(
             lambda: ZenRequestProtocol(
@@ -311,7 +324,28 @@ class ZenClient:
                 continue
             break
         assert response is not None
+        self._maybe_print_traffic(response)
         return response
+
+    def _maybe_print_traffic(self, response: ZenResponse) -> None:
+        req = response.request
+        if not self.print_traffic:
+            return
+        elif req is None or not req.raw_sent or not response.raw_rcvd:
+            return
+        elif response.response_type is ZenResponseType.TIMEOUT:
+            wait_time_ms = (time.time() - req.timestamp) * 1000 if req else 0.0
+            self.logger.info(
+                f"REQUEST: [{' '.join(f'0x{b:02X}' for b in req.raw_sent)}]  "
+                f"RESPONSE TIMEOUT after {wait_time_ms:.0f}ms"
+            )
+        else:
+            rtt_ms = (response.timestamp - req.timestamp) * 1000
+            self.logger.info(
+                f"REQUEST: [{' '.join(f'0x{b:02X}' for b in req.raw_sent)}]  "
+                f"RESPONSE: [{' '.join(f'0x{b:02X}' for b in response.raw_rcvd)}]  "
+                f"RTT: {rtt_ms:.0f}ms",
+            )
 
     async def _receive_response(self, datagram: bytes, addr: tuple[str, int]) -> None:
         
