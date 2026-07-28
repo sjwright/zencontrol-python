@@ -195,6 +195,10 @@ class ZenCommandClient:
         """Close UDP command clients."""
         await self.close_all_clients()
 
+    # ============================
+    # CLIENT MANAGEMENT
+    # ============================
+
     def client_for(self, controller: ControllerRef) -> ZenClient | None:
         """Return the command-plane UDP client for "controller", if any."""
         return self._clients.get(controller.name)
@@ -216,6 +220,29 @@ class ZenCommandClient:
                 await client.close()
             except Exception:
                 pass
+
+    async def _ensure_client(self, controller: ControllerRef) -> None:
+        """Create or replace the UDP client when missing or disconnected."""
+        client = self._clients.get(controller.name)
+        if client is not None and client.is_connected():
+            return
+        if client is not None:
+            await self._invalidate_client(controller)
+        self._clients[controller.name] = await ZenClient.create(
+            (controller.ip, controller.port),
+            logger=self.logger,
+            print_traffic=self.print_traffic,
+        )
+
+    async def _invalidate_client(self, controller: ControllerRef) -> None:
+        """Close and drop a stale client so the next send recreates it."""
+        client = self._clients.pop(controller.name, None)
+        if client is None:
+            return
+        try:
+            await client.close()
+        except Exception:
+            pass
 
     # ============================
     # PACKET SENDING
@@ -253,29 +280,6 @@ class ZenCommandClient:
             raise ZenTimeoutError(f"No response from {controller.host}:{controller.port} after {wait_time_ms:.0f}ms")
         return response
 
-    async def _ensure_client(self, controller: ControllerRef) -> None:
-        """Create or replace the UDP client when missing or disconnected."""
-        client = self._clients.get(controller.name)
-        if client is not None and client.is_connected():
-            return
-        if client is not None:
-            await self._invalidate_client(controller)
-        self._clients[controller.name] = await ZenClient.create(
-            (controller.ip, controller.port),
-            logger=self.logger,
-            print_traffic=self.print_traffic,
-        )
-
-    async def _invalidate_client(self, controller: ControllerRef) -> None:
-        """Close and drop a stale client so the next send recreates it."""
-        client = self._clients.pop(controller.name, None)
-        if client is None:
-            return
-        try:
-            await client.close()
-        except Exception:
-            pass
-
     def _log_soft_failure(self, response: ZenResponse) -> None:
         match response.response_type:
             case ZenResponseType.OK | ZenResponseType.ANSWER | ZenResponseType.NO_ANSWER:
@@ -297,8 +301,6 @@ class ZenCommandClient:
                     else (f"Unknown error code: {hex(code)}" if code is not None else "no error code")
                 )
                 self.logger.error(f"Command error code: {label}")
-            case _:
-                self.logger.error(f"Unknown response type: {response.response_type}")
 
     # ============================
     # RESPONSE PARSERS
