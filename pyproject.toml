@@ -98,7 +98,7 @@ line-length = 130
 exclude = ["examples"]
 
 [tool.ruff.lint]
-select = ["ASYNC", "B", "E", "F", "I", "UP"]
+select = ["ASYNC", "B", "E", "F", "UP"]
 ignore = [
     "ASYNC109", # Timeout parameters are part of the public async API.
     "E501",     # Preserve existing protocol logging and payload formatting.
