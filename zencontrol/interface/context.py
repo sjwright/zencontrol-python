@@ -47,26 +47,11 @@ class ProfileChangeHandler(Protocol):
 
 
 class GroupChangeHandler(Protocol):
-    def __call__(
-        self,
-        *,
-        group: ZenGroup,
-        level: int | None = None,
-        colour: ZenColour | None = None,
-        scene: int | None = None,
-        discoordinated: bool = False,
-    ) -> Awaitable[None]: ...
+    def __call__(self, *, group: ZenGroup, level: int | None = None, colour: ZenColour | None = None, scene: int | None = None, discoordinated: bool = False) -> Awaitable[None]: ...
 
 
 class LightChangeHandler(Protocol):
-    def __call__(
-        self,
-        *,
-        light: ZenLight,
-        level: int | None = None,
-        colour: ZenColour | None = None,
-        scene: int | None = None,
-    ) -> Awaitable[None]: ...
+    def __call__(self, *, light: ZenLight, level: int | None = None, colour: ZenColour | None = None, scene: int | None = None) -> Awaitable[None]: ...
 
 
 class ButtonPressHandler(Protocol):
@@ -82,14 +67,7 @@ class MotionEventHandler(Protocol):
 
 
 class SystemVariableChangeHandler(Protocol):
-    def __call__(
-        self,
-        *,
-        system_variable: ZenSystemVariable,
-        value: int | None,
-        changed: bool,
-        by_me: bool,
-    ) -> Awaitable[None]: ...
+    def __call__(self, *, system_variable: ZenSystemVariable, value: int | None, changed: bool, by_me: bool) -> Awaitable[None]: ...
 
 
 class ControllerDiscoveredHandler(Protocol):
@@ -184,11 +162,7 @@ class EntityContext:
     ``ZenCommandClient`` yourself without the event session.
     """
 
-    def __init__(
-        self,
-        commands: ZenCommandClient,
-        logger: logging.Logger | None = None,
-    ) -> None:
+    def __init__(self, commands: ZenCommandClient, logger: logging.Logger | None = None) -> None:
         self.commands = commands
         self.logger = logger or commands.logger
         self.callbacks = ZenCallbacks()

@@ -47,6 +47,27 @@ async def test_mac_subscription_delivers_decoded_event() -> None:
 
 
 @pytest.mark.asyncio
+async def test_subscription_handler_exception_does_not_break_later_delivery() -> None:
+    receiver = ZenEventReceiver()
+    seen: list[object] = []
+    attempts = 0
+
+    async def handler(ev: object) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("application callback failed")
+        seen.append(ev)
+
+    receiver.subscribe(handler, mac=MAC_A)
+    await receiver.handle(_event(payload=b"\x01"))
+    await receiver.handle(_event(payload=b"\x02"))
+
+    assert attempts == 2
+    assert seen == [ButtonPress(target=64, instance=2)]
+
+
+@pytest.mark.asyncio
 async def test_provisional_promotes_on_first_packet() -> None:
     receiver = ZenEventReceiver()
     identified: list[bytes] = []

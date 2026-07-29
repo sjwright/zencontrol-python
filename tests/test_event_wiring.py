@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from helpers_endpoints import fake_endpoint_factory, require_event
@@ -95,6 +95,78 @@ async def test_wiring_attach_rollback_on_emit_failure() -> None:
 
     assert wiring.bindings == {}
     assert receiver.lease_count(Transport.MULTICAST) == 0
+
+
+@pytest.mark.asyncio
+async def test_wiring_rejects_duplicate_attach() -> None:
+    receiver = ZenEventReceiver()
+    receiver._endpoint_factory = fake_endpoint_factory()
+    commands = MagicMock()
+    commands.set_tpi_event_unicast_address = AsyncMock()
+    commands.tpi_event_emit = AsyncMock(return_value=True)
+    wiring = ZenEventWiring(receiver, commands, event_handler=AsyncMock())
+    ctrl = _controller()
+    mode = ZenEventMode(enabled=True)
+
+    await wiring.attach(ctrl, mode)
+    with pytest.raises(ValueError, match="already attached"):
+        await wiring.attach(ctrl, mode)
+
+    await wiring.detach_all()
+
+
+@pytest.mark.asyncio
+async def test_rearm_all_continues_after_one_controller_fails() -> None:
+    receiver = ZenEventReceiver()
+    receiver._endpoint_factory = fake_endpoint_factory()
+    commands = MagicMock()
+    commands.set_tpi_event_unicast_address = AsyncMock()
+    commands.tpi_event_emit = AsyncMock(return_value=True)
+    wiring = ZenEventWiring(receiver, commands, event_handler=AsyncMock())
+    ctrl_a = _controller("ctrl-a", "127.0.0.1")
+    ctrl_b = _controller("ctrl-b", "127.0.0.2")
+    mode = ZenEventMode(enabled=True)
+    await wiring.attach(ctrl_a, mode)
+    await wiring.attach(ctrl_b, mode)
+    on_resync = AsyncMock()
+    wiring.on_resync = on_resync
+    rearmed: list[str] = []
+
+    async def program(controller, lease, event_mode) -> None:
+        rearmed.append(controller.name)
+        if controller is ctrl_a:
+            raise RuntimeError("ctrl-a unavailable")
+
+    with patch.object(wiring, "_program", side_effect=program):
+        await wiring.rearm_all()
+
+    assert rearmed == ["ctrl-a", "ctrl-b"]
+    on_resync.assert_awaited_once()
+    await wiring.detach_all()
+
+
+@pytest.mark.asyncio
+async def test_configure_controller_events_attaches_hot_plugged_controller() -> None:
+    zen = ZenControl()
+    zen.event_receiver._endpoint_factory = fake_endpoint_factory()
+    zen.commands.set_tpi_event_unicast_address = AsyncMock()
+    zen.commands.tpi_event_emit = AsyncMock(return_value=True)
+
+    await zen.start()
+    ctrl = zen.add_controller(
+        id=1,
+        name="hot-plugged",
+        label="Hot Plugged",
+        host="127.0.0.1",
+        mac="02:00:00:00:00:01",
+    )
+
+    assert await zen.configure_controller_events(ctrl) is True
+    assert zen.session.wiring is not None
+    assert zen.session.wiring.get(ctrl) is not None
+    zen.commands.tpi_event_emit.assert_awaited_once()
+
+    await zen.aclose()
 
 
 @pytest.mark.asyncio

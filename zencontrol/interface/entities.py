@@ -292,10 +292,8 @@ class ZenProfile:
         return cast(ZenProfile, registry[compound_id])
 
     def __init__(self, ctx: EntityContext, controller: ZenController, number: int) -> None:
-        self.ctx = ctx
-        self.commands = ctx.commands
-        self.controller = controller
-        self.number = number
+        # __new__ initializes new entities; cached lookups must preserve identity fields.
+        pass
     
     @classmethod
     async def create(cls, ctx: EntityContext, controller: ZenController, number: int) -> ZenProfile:
@@ -370,9 +368,8 @@ class ZenLight:
         return cast(Self, registry[compound_id])
 
     def __init__(self, ctx: EntityContext, address: ZenAddress) -> None:
-        self.ctx = ctx
-        self.commands = ctx.commands
-        self.address = address
+        # __new__ initializes new entities; cached lookups must preserve identity fields.
+        pass
     
     @classmethod
     async def create(cls, ctx: EntityContext, address: ZenAddress) -> ZenLight:
@@ -755,7 +752,8 @@ class ZenGroup(ZenLight):
         return cast(ZenGroup, registry[compound_id])
 
     def __init__(self, ctx: EntityContext, address: ZenAddress) -> None:
-        super().__init__(ctx, address)
+        # __new__ initializes new entities; cached lookups must preserve identity fields.
+        pass
 
     @classmethod
     async def create(cls, ctx: EntityContext, address: ZenAddress) -> ZenGroup:
@@ -857,9 +855,8 @@ class ZenButton:
         return cast(ZenButton, registry[compound_id])
 
     def __init__(self, ctx: EntityContext, instance: ZenInstance) -> None:
-        self.ctx = ctx
-        self.commands = ctx.commands
-        self.instance = instance
+        # __new__ initializes new entities; cached lookups must preserve identity fields.
+        pass
     
     @classmethod
     async def create(cls, ctx: EntityContext, instance: ZenInstance) -> ZenButton:
@@ -956,9 +953,8 @@ class ZenAbsoluteInput:
         return cast(ZenAbsoluteInput, registry[compound_id])
 
     def __init__(self, ctx: EntityContext, instance: ZenInstance) -> None:
-        self.ctx = ctx
-        self.commands = ctx.commands
-        self.instance = instance
+        # __new__ initializes new entities; cached lookups must preserve identity fields.
+        pass
 
     @classmethod
     async def create(cls, ctx: EntityContext, instance: ZenInstance) -> ZenAbsoluteInput:
@@ -1059,9 +1055,8 @@ class ZenMotionSensor:
         return cast(ZenMotionSensor, registry[compound_id])
 
     def __init__(self, ctx: EntityContext, instance: ZenInstance) -> None:
-        self.ctx = ctx
-        self.commands = ctx.commands
-        self.instance = instance
+        # __new__ initializes new entities; cached lookups must preserve identity fields.
+        pass
     
     @classmethod
     async def create(cls, ctx: EntityContext, instance: ZenInstance) -> ZenMotionSensor:
@@ -1227,17 +1222,16 @@ class ZenSystemVariable:
             inst._value = value
             inst.label = label
             # Don't call interview() here - it will be called async later
-        return cast(ZenSystemVariable, registry[compound_id])
+        inst = cast(ZenSystemVariable, registry[compound_id])
+        if value is not None:
+            inst._value = value
+        if label is not None:
+            inst.label = label
+        return inst
 
     def __init__(self, ctx: EntityContext, controller: ZenController, id: int, value: int | None = None, label: str | None = None) -> None:
-        self.ctx = ctx
-        self.commands = ctx.commands
-        self.controller = controller
-        self.id = id
-        if value is not None:
-            self._value = value
-        if label is not None:
-            self.label = label
+        # __new__ initializes new entities; cached lookups must preserve identity fields.
+        pass
     
     @classmethod
     async def create(cls, ctx: EntityContext, controller: ZenController, id: int, value: int | None = None, label: str | None = None) -> ZenSystemVariable:

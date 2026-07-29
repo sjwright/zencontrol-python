@@ -3,13 +3,38 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from helpers_endpoints import fake_endpoint_factory, require_event
 
 from zencontrol.api.types import Transport, ZenEventMode
+from zencontrol.exceptions import ZenConnectionError
 from zencontrol.interface.interface import ZenControl
+
+
+@pytest.mark.asyncio
+async def test_start_timeout_rolls_back_session_resources() -> None:
+    """A failed start must leave no wiring, leases, or owned tasks behind."""
+    zen = ZenControl()
+    zen.event_receiver._endpoint_factory = fake_endpoint_factory()
+    zen.commands.set_tpi_event_unicast_address = AsyncMock()
+    zen.commands.tpi_event_emit = AsyncMock(return_value=True)
+
+    async def timeout(awaitable, *, timeout):
+        awaitable.close()
+        raise TimeoutError
+
+    with patch("zencontrol.interface.session.asyncio.wait_for", side_effect=timeout):
+        with pytest.raises(ZenConnectionError, match="failed to connect"):
+            await zen.start()
+
+    assert zen.session.wiring is None
+    assert zen.session.supervisor_task is None
+    assert zen.session.keepalive_task is None
+    assert zen.event_receiver.lease_count(Transport.MULTICAST) == 0
+    assert zen.event_receiver.lease_count(Transport.UNICAST) == 0
+    assert not zen.is_event_monitoring_active()
 
 
 @pytest.mark.asyncio
@@ -52,6 +77,7 @@ async def test_consumer_crash_fires_on_disconnect_once() -> None:
     else:
         pytest.fail("session was not restored after consumer crash")
     assert zen.is_event_monitoring_active()
+    await zen.stop()
 
 
 @pytest.mark.asyncio
