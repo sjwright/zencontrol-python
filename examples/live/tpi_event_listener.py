@@ -9,13 +9,20 @@ for application code.
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+_EXAMPLES = Path(__file__).resolve().parent.parent
+if str(_EXAMPLES) not in sys.path:
+    sys.path.insert(0, str(_EXAMPLES))
+from run_main import run_with_keyboard_interrupt
+
 import asyncio
 import logging
 import socket
-import sys
 import time
 
-from zencontrol import Transport, ZenEvent, run_with_keyboard_interrupt
+from zencontrol import Transport, ZenEvent
 from zencontrol.api.event_router import ZenEventReceiver
 from zencontrol.io.event import EventConst, parse_frame
 

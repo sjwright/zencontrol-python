@@ -32,7 +32,14 @@ from ..api.event_decode import (
     ZenDecodedEvent,
 )
 from ..api.event_router import ZenEventReceiver
-from ..api.models import ControllerRef, ZenAddress, ZenInstance, colour_from_bytes
+from ..api.models import (
+    ControllerRef,
+    ZenAddress,
+    ZenInstance,
+    colour_from_bytes,
+    ecd_address_from_target,
+    ecg_or_group_address_from_target,
+)
 from ..api.types import Transport, ZenAddressType, ZenEventMode, ZenInstanceType
 from ..interface.context import EntityContext
 from ..interface.entities import ZenController
@@ -159,23 +166,16 @@ class ZenTestClient:
         await self.event_receiver.close()
 
     def _ecd_address(self, controller: ZenController, target: int) -> ZenAddress | None:
-        number = target - 64
-        if not 0 <= number <= 63:
+        address = ecd_address_from_target(controller, target)
+        if address is None:
             self.commands.logger.error(f"Invalid ECD event target: {target}")
-            return None
-        return ZenAddress(controller=controller, type=ZenAddressType.ECD, number=number)
+        return address
 
     def _ecg_or_group(self, controller: ZenController, target: int) -> ZenAddress | None:
-        if target <= 63:
-            return ZenAddress(controller=controller, type=ZenAddressType.ECG, number=target)
-        if 64 <= target <= 79:
-            return ZenAddress(
-                controller=controller,
-                type=ZenAddressType.GROUP,
-                number=target - 64,
-            )
-        self.commands.logger.error(f"Invalid gear/group event target: {target}")
-        return None
+        address = ecg_or_group_address_from_target(controller, target)
+        if address is None:
+            self.commands.logger.error(f"Invalid gear/group event target: {target}")
+        return address
 
     async def _call(self, callback: LegacyCallback | None, **kwargs: Any) -> None:
         if not callable(callback):

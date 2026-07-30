@@ -181,13 +181,7 @@ class ZenControl:
         if self._disconnect_notified:
             return
         self._disconnect_notified = True
-        cb = self.context.callbacks.on_disconnect
-        if not callable(cb):
-            return
-        try:
-            await cb()
-        except Exception as err:
-            self.logger.error(f"on_disconnect error: {err}")
+        await self._await_callback(self.context.callbacks.on_disconnect, what="on_disconnect")
 
     async def _on_listener_unexpected_exit(self) -> None:
         """Handle funnel consumer death. Recoverable gaps do not disconnect (I10)."""
@@ -255,13 +249,28 @@ class ZenControl:
             self.clear_entity_caches()
 
     async def _cancel_owned_tasks(self) -> None:
-        await self._cancel_task("_supervisor_task")
-        await self._cancel_task("_keepalive_task")
+        supervisor, self._supervisor_task = self._supervisor_task, None
+        keepalive, self._keepalive_task = self._keepalive_task, None
+        await EntityContext.cancel_and_await(supervisor)
+        await EntityContext.cancel_and_await(keepalive)
 
-    async def _cancel_task(self, attr: str) -> None:
-        task: asyncio.Task[None] | None = getattr(self, attr)
-        setattr(self, attr, None)
-        await EntityContext.cancel_and_await(task)
+    async def _await_callback(
+        self,
+        callback: Any,
+        *args: Any,
+        what: str,
+        debug: bool = False,
+        exc_info: bool = False,
+    ) -> None:
+        if not callable(callback):
+            return
+        try:
+            await callback(*args)
+        except Exception as err:
+            if debug:
+                self.logger.debug("%s error: %s", what, err)
+            else:
+                self.logger.error("%s error: %s", what, err, exc_info=exc_info)
 
     async def _attach_bindings(self) -> None:
         assert self._wiring is not None
@@ -310,11 +319,8 @@ class ZenControl:
                 delay = min(delay * 2, self.reconnect_max_delay)
                 continue
 
-            if not connect_notified and callable(self.context.callbacks.on_connect):
-                try:
-                    await self.context.callbacks.on_connect()
-                except Exception as err:
-                    self.logger.error(f"on_connect error: {err}")
+            if not connect_notified:
+                await self._await_callback(self.context.callbacks.on_connect, what="on_connect")
                 connect_notified = True
             self._first_connected.set()
             delay = self.reconnect_min_delay
@@ -422,13 +428,9 @@ class ZenControl:
         self._dispatcher.clear()
 
     async def _on_resync_callback(self) -> None:
-        callback = self.callbacks.on_resync
-        if not callable(callback):
-            return
-        try:
-            await callback()
-        except Exception as err:
-            self.logger.error(f"on_resync error: {err}", exc_info=True)
+        await self._await_callback(
+            self.callbacks.on_resync, what="on_resync", exc_info=True,
+        )
 
     async def enrich_discovered(self, discovered: DiscoveredController) -> DiscoveredController:
         return await self._discovery.enrich_discovered(discovered)
@@ -459,22 +461,21 @@ class ZenControl:
         return None if binding is None else binding.event_health
 
     async def _forward_discovered(self, discovered: DiscoveredController) -> None:
-        callback = self.context.callbacks.controller_discovered
-        if not callable(callback):
-            return
-        try:
-            await callback(discovered)
-        except Exception as err:
-            self.logger.error("controller_discovered callback error: %s", err, exc_info=err)
+        await self._await_callback(
+            self.context.callbacks.controller_discovered,
+            discovered,
+            what="controller_discovered",
+            exc_info=True,
+        )
 
     async def _notify_controller_identified(self, controller: ZenController, mac: str) -> None:
-        callback = self.context.callbacks.controller_identified
-        if not callable(callback):
-            return
-        try:
-            await callback(controller, mac)
-        except Exception as err:
-            self.logger.error("controller_identified callback error: %s", err, exc_info=err)
+        await self._await_callback(
+            self.context.callbacks.controller_identified,
+            controller,
+            mac,
+            what="controller_identified",
+            exc_info=True,
+        )
 
     def add_controller(
         self, id: int, name: str, label: str, host: str, port: int = 5108, mac: str | None = None, filtering: bool = False
@@ -623,17 +624,13 @@ class ZenControl:
 
     async def _notify_controller_status(self, controller: ZenController, status: ControllerRuntimeStatus) -> None:
         """Notify listeners of online / starting / unreachable."""
-        callback = self.callbacks.controller_status_change
-        if not callable(callback):
-            return
-        try:
-            await callback(controller, status)
-        except Exception as err:
-            self.logger.debug(
-                "controller_status_change error for %s: %s",
-                controller.name,
-                err,
-            )
+        await self._await_callback(
+            self.callbacks.controller_status_change,
+            controller,
+            status,
+            what=f"controller_status_change for {controller.name}",
+            debug=True,
+        )
 
     async def get_profiles(self, controller: ZenController | None = None) -> set[ZenProfile]:
         """Return a set of all profiles."""

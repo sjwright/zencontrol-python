@@ -87,9 +87,6 @@ from .io import (
     ZenResponseType,
 )
 
-# Utilities
-from .utils import run_with_keyboard_interrupt
-
 __version__ = "1.0.0"
 __author__ = "Simon Wright"
 
@@ -147,7 +144,4 @@ __all__ = [
     "ZenEventMask",
     "ZenEventMode",
     "EventHealth",
-
-    # Utilities
-    "run_with_keyboard_interrupt",
 ]

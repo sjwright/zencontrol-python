@@ -1,5 +1,13 @@
+import sys
+from pathlib import Path
+
+_EXAMPLES = Path(__file__).resolve().parent.parent
+if str(_EXAMPLES) not in sys.path:
+    sys.path.insert(0, str(_EXAMPLES))
+from run_main import run_with_keyboard_interrupt
+
 import asyncio
-from zencontrol import ZenControl, run_with_keyboard_interrupt
+from zencontrol import ZenControl
 import yaml
 from pathlib import Path
 import time

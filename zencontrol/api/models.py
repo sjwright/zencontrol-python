@@ -237,6 +237,23 @@ class ZenAddress:
                     raise ValueError(f"Group address must be 0-15, got {self.number}")
 
 
+def ecd_address_from_target(controller: ControllerRef, target: int) -> ZenAddress | None:
+    """Decode an ECD event target (64–127) to a ZenAddress, or None if out of range."""
+    number = target - 64
+    if not 0 <= number <= 63:
+        return None
+    return ZenAddress(controller=controller, type=ZenAddressType.ECD, number=number)
+
+
+def ecg_or_group_address_from_target(controller: ControllerRef, target: int) -> ZenAddress | None:
+    """Decode an ECG (0–63) or group (64–79) event target to a ZenAddress."""
+    if target <= 63:
+        return ZenAddress(controller=controller, type=ZenAddressType.ECG, number=target)
+    if 64 <= target <= 79:
+        return ZenAddress(controller=controller, type=ZenAddressType.GROUP, number=target - 64)
+    return None
+
+
 @dataclass(slots=True)
 class ZenInstance:
     """Represents a DALI ECD instance"""

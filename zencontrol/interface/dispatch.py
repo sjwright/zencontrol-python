@@ -7,6 +7,7 @@ import logging
 from typing import cast
 
 from ..api import ZenAddress, ZenAddressType, ZenInstance, ZenInstanceType, colour_from_bytes
+from ..api.models import ecd_address_from_target, ecg_or_group_address_from_target
 from ..api import ZenController as SuperZenController
 from ..api.event_decode import (
     AbsoluteInput,
@@ -54,20 +55,17 @@ class EventDispatcher:
         instance_type: ZenInstanceType,
         number: int,
     ) -> ZenInstance | None:
-        ecd = target - 64
-        if not 0 <= ecd <= 63:
+        address = ecd_address_from_target(controller, target)
+        if address is None:
             self.logger.error(f"Invalid ECD event target: {target}")
             return None
-        address = ZenAddress(controller=controller, type=ZenAddressType.ECD, number=ecd)
         return ZenInstance(address=address, type=instance_type, number=number)
 
     def _ecg_or_group(self, controller: ZenController, target: int) -> ZenAddress | None:
-        if target <= 63:
-            return ZenAddress(controller=controller, type=ZenAddressType.ECG, number=target)
-        if 64 <= target <= 79:
-            return ZenAddress(controller=controller, type=ZenAddressType.GROUP, number=target - 64)
-        self.logger.error(f"Invalid gear/group event target: {target}")
-        return None
+        address = ecg_or_group_address_from_target(controller, target)
+        if address is None:
+            self.logger.error(f"Invalid gear/group event target: {target}")
+        return address
 
     async def handle(self, controller: SuperZenController, ev: ZenDecodedEvent) -> None:
         """Subscription handler entry — returns immediately (I8)."""

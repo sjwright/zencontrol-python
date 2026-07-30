@@ -11,8 +11,9 @@ if str(ROOT) not in sys.path:
 
 sys.stdout.reconfigure(line_buffering=True)
 
-from zencontrol import ZenControl, run_with_keyboard_interrupt
+from zencontrol import ZenControl
 from zencontrol.interface.interface import ZenButton, ZenGroup, ZenLight
+from run_main import run_with_keyboard_interrupt
 
 CONFIG_PATH = Path(__file__).resolve().parents[2] / "tests" / "config.yaml"
 
@@ -112,4 +113,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    run_with_keyboard_interrupt(main())
+    run_with_keyboard_interrupt(main)

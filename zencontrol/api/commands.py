@@ -717,7 +717,7 @@ class ZenCommandClient:
         response += response2
         # Combined result should always be exactly 7*12 = 84 bytes
         if len(response) != 84:
-            print(f"Warning: QUERY_COLOUR_SCENE_***_DATA_FOR_ADDR returned {len(response)} bytes, expected 84")
+            self.logger.warning("QUERY_COLOUR_SCENE_***_DATA_FOR_ADDR returned %s bytes, expected 84", len(response))
             return output
         # Data is in 7 byte segments
         for i in range(0, Const.MAX_SCENE):

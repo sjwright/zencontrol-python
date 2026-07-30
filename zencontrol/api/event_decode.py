@@ -5,7 +5,7 @@ TPI event vocabulary and payload decoding
 This module turns a well-formed "ZenEvent" envelope into a typed dataclass.
 It is a pure module with no I/O, no logging, no controller lookup, no sockets.
 
-"ZenEventDecode(event)" is the single entry point. It returns a typed
+"decode_zen_event(event)" is the single entry point. It returns a typed
 dataclass (e.g. "ButtonPress") or None if the event is unknown or the payload
 is the wrong length. No exceptions are ever raised.
 
@@ -18,12 +18,12 @@ events on the controller.
 Basic example:
 
     from zencontrol.io.event import parse_frame
-    from zencontrol.api.event_decode import ZenEventDecode
+    from zencontrol.api.event_decode import decode_zen_event
 
     event = parse_frame(datagram, addr)
     if event is None:
         return
-    decoded = ZenEventDecode(event)
+    decoded = decode_zen_event(event)
     if decoded is None:
         return
     print(decoded)
@@ -186,7 +186,7 @@ ZenDecodedEvent = (
 )
 
 
-def ZenEventDecode(event: ZenEvent) -> ZenDecodedEvent | None:
+def decode_zen_event(event: ZenEvent) -> ZenDecodedEvent | None:
     """Interpret event code and payload. Returns None if unknown or wrong length.
 
     Fixed-size codes require len(payload) == N - trailing junk on a

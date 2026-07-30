@@ -50,7 +50,7 @@ from enum import Enum
 
 from ..io.event import EventConst, ZenEndpoint, ZenEvent
 from ..utils import is_ipv4_address, local_ip_for_remote
-from .event_decode import ZenDecodedEvent, ZenEventDecode
+from .event_decode import ZenDecodedEvent, decode_zen_event
 from .discovery import DiscoveryLog
 from .models import mac_bytes_to_str
 from .types import Const, Transport
@@ -613,7 +613,7 @@ class ZenEventReceiver:
         if sub._health is not EventHealth.DETACHED:
             sub._health = EventHealth.RECEIVING
 
-        decoded = ZenEventDecode(event)
+        decoded = decode_zen_event(event)
         if decoded is None:
             self.logger.warning(
                 "Unrecognised or malformed event code %s from %s",

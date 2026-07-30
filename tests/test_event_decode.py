@@ -1,4 +1,4 @@
-"""Byte-literal tests for parse_frame and ZenEventDecode (phase 1).
+"""Byte-literal tests for parse_frame and decode_zen_event (phase 1).
 
 No sockets, no controllers, no event loop. Frames are built as literals with
 an XOR checksum — never via a shared encoder that could agree with itself.
@@ -22,7 +22,7 @@ from zencontrol.api.event_decode import (
     SceneChange,
     SystemVariableChange,
     ZenEventCode,
-    ZenEventDecode,
+    decode_zen_event,
     ZenEventMask,
 )
 from zencontrol.io.event import ZenEvent, parse_frame
@@ -108,7 +108,7 @@ def test_parse_frame_extracts_two_byte_target() -> None:
 
 
 # ---------------------------------------------------------------------------
-# ZenEventDecode — one typed dataclass per code
+# decode_zen_event — one typed dataclass per code
 # ---------------------------------------------------------------------------
 
 
@@ -148,16 +148,16 @@ def _event(code: int, payload: bytes, target: int = 0) -> ZenEvent:
     ],
 )
 def test_decode_each_code(code: int, payload: bytes, target: int, expected: object) -> None:
-    assert ZenEventDecode(_event(code, payload, target)) == expected
+    assert decode_zen_event(_event(code, payload, target)) == expected
 
 
 def test_decode_sysvar_with_magnitude() -> None:
     # raw=5, magnitude=2 → 500
-    assert ZenEventDecode(_event(0x07, b"\x00\x00\x00\x05\x02", target=1)) == SystemVariableChange(target=1, value=500)
+    assert decode_zen_event(_event(0x07, b"\x00\x00\x00\x05\x02", target=1)) == SystemVariableChange(target=1, value=500)
 
 
 def test_decode_rejects_unknown_code() -> None:
-    assert ZenEventDecode(_event(0xFF, b"\x00")) is None
+    assert decode_zen_event(_event(0xFF, b"\x00")) is None
 
 
 @pytest.mark.parametrize(
@@ -182,7 +182,7 @@ def test_decode_rejects_unknown_code() -> None:
     ],
 )
 def test_decode_rejects_wrong_length_payload(code: int, payload: bytes) -> None:
-    assert ZenEventDecode(_event(code, payload)) is None
+    assert decode_zen_event(_event(code, payload)) is None
 
 
 @pytest.mark.parametrize(
@@ -202,25 +202,25 @@ def test_decode_rejects_wrong_length_payload(code: int, payload: bytes) -> None:
     ],
 )
 def test_decode_rejects_trailing_junk(code: int, payload: bytes) -> None:
-    assert ZenEventDecode(_event(code, payload)) is None
+    assert decode_zen_event(_event(code, payload)) is None
 
 
 def test_decode_rejects_sysvar_out_of_range_target() -> None:
-    assert ZenEventDecode(_event(0x07, b"\x00\x00\x00\x01\x00", target=148)) is None
-    assert ZenEventDecode(_event(0x07, b"\x00\x00\x00\x01\x00", target=200)) is None
+    assert decode_zen_event(_event(0x07, b"\x00\x00\x00\x01\x00", target=148)) is None
+    assert decode_zen_event(_event(0x07, b"\x00\x00\x00\x01\x00", target=200)) is None
 
 
 def test_level_change_and_v2_remain_distinct_types() -> None:
-    a = ZenEventDecode(_event(0x03, b"\x10", target=1))
-    b = ZenEventDecode(_event(0x0B, b"\x10\x20", target=1))
+    a = decode_zen_event(_event(0x03, b"\x10", target=1))
+    b = decode_zen_event(_event(0x0B, b"\x10\x20", target=1))
     assert type(a) is LevelChange
     assert type(b) is LevelChangeV2
     assert type(a) is not type(b)
 
 
 def test_occupied_types_remain_distinct() -> None:
-    a = ZenEventDecode(_event(0x06, b"\x01\x01", target=64))
-    b = ZenEventDecode(_event(0x0A, b"\xff\x01", target=64))
+    a = decode_zen_event(_event(0x06, b"\x01\x01", target=64))
+    b = decode_zen_event(_event(0x0A, b"\xff\x01", target=64))
     assert type(a) is IsOccupied
     assert type(b) is GroupOccupied
 
@@ -243,7 +243,7 @@ def test_end_to_end_parse_then_decode() -> None:
     data = _frame(target=59, code=0x0B, payload=b"\xfe\x00")
     event = parse_frame(data, ADDR)
     assert event is not None
-    assert ZenEventDecode(event) == LevelChangeV2(target=59, current=0xFE, level=0)
+    assert decode_zen_event(event) == LevelChangeV2(target=59, current=0xFE, level=0)
 
 
 def test_io_has_no_event_code_vocabulary() -> None:
