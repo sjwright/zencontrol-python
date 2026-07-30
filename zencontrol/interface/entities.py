@@ -275,7 +275,6 @@ class ZenControlGear:
     colour: ZenColour | None = None
     scene: int | None = None
     client_data: dict[str, Any]
-    #_refresh_timer: asyncio.Task[None] | None = None
 
     def _reset_gear_state(self) -> None:
         self.label = None
@@ -286,9 +285,6 @@ class ZenControlGear:
         self.colour = None
         self.scene = None
         self.client_data = {}
-        # if self._refresh_timer is not None:
-        #     self._refresh_timer.cancel()
-        #     self._refresh_timer = None
 
     def supports_colour(self, colour: ZenColourType | ZenColour) -> bool:
         return False
@@ -296,7 +292,7 @@ class ZenControlGear:
     def _should_query_colour(self) -> bool:
         return False
 
-    async def refresh_state_from_controller(self, verifying: bool = False) -> None:
+    async def refresh_state_from_controller(self) -> None:
         refreshed_level = await self.commands.dali_query_level(self.address)
         refreshed_colour = None
         refreshed_scene = None
@@ -304,45 +300,14 @@ class ZenControlGear:
             refreshed_scene = await self.commands.dali_query_last_scene(self.address)
         if self._should_query_colour():
             refreshed_colour = await self.commands.query_dali_colour(self.address)
-    
-        # if verifying:
-        #     # Level is driven by LEVEL_CHANGE_V2 dimming-to events; query returns current arc mid-fade
-        #     if refreshed_level is not None and self.level != refreshed_level:
-        #         self.commands.logger.debug(
-        #             f"{type(self).__name__} {self.address.number} queried level {refreshed_level} "
-        #             f"differs from tracked destination {self.level} (expected during fade)"
-        #         )
-        #     refreshed_level = None
-        #     if self.colour != refreshed_colour:
-        #         self.commands.logger.error(
-        #             f"{type(self).__name__} {self.address.number} colour mismatch! "
-        #             f"We had {self.colour}, actual colour is {refreshed_colour}"
-        #         )
-        #     if self.scene != refreshed_scene:
-        #         self.commands.logger.error(
-        #             f"{type(self).__name__} {self.address.number} scene mismatch! "
-        #             f"We had {self.scene}, actual scene is {refreshed_scene}"
-        #         )
-    
+
         # Mimic incoming events when the controller reports last scene / level / colour.
-        if refreshed_scene is not None and not verifying:
-            await self._event_received_scene(refreshed_scene, active=True)
         if refreshed_level is not None:
             await self._event_received_level(refreshed_level)
         if refreshed_colour is not None:
             await self._event_received_colour(refreshed_colour)
-
-    # def _start_refresh_timer(self) -> None:
-    #     """Start a 2-second timer to refresh from controller after API user changes state."""
-    #     if self._refresh_timer and not self._refresh_timer.done():
-    #         self._refresh_timer.cancel()
-    #     async def delayed_refresh() -> None:
-    #         try:
-    #             await asyncio.sleep(2.0)
-    #             await self.refresh_state_from_controller(verifying=True)
-    #         except asyncio.CancelledError:
-    #             pass
-    #     self._refresh_timer = self.ctx.track_task(delayed_refresh())
+        if refreshed_scene is not None:
+            await self._event_received_scene(refreshed_scene, active=True)
 
     async def _event_received_level(self, level: int, cascaded_from: ZenGroup | None = None) -> None:
         if level == 255 or level == self.level:
@@ -379,10 +344,10 @@ class ZenControlGear:
             await self._notify_change()
 
     async def _after_scene_activated(self, cascaded_from: ZenGroup | None = None) -> None:
-        """Hook: light membership may discoordinated groups after a scene event."""
+        """Hook: light membership may discoordinate groups after a scene event."""
 
     async def _after_direct_change(self, *, level_changed: bool, colour_changed: bool, cascaded_from: ZenGroup | None = None) -> None:
-        """Hook: light membership may discoordinated groups after level/colour events."""
+        """Hook: light membership may discoordinate groups after level/colour events."""
 
     async def _notify_change(self) -> None:
         """Hook: subclass fires light_change / group_change."""
@@ -393,15 +358,12 @@ class ZenControlGear:
     #   The events update the internal state.
     # -----------------------------------------------------------------------------------------
     async def on(self, fade: bool = True) -> bool | None:
-        # self._start_refresh_timer()
         if not fade: await self.commands.dali_enable_dapc_sequence(self.address)
         return await self.commands.dali_go_to_last_active_level(self.address)
     async def off(self, fade: bool = True) -> bool | None:
-        # self._start_refresh_timer()
         if fade: return await self.commands.dali_arc_level(self.address, 0)
         else: return await self.commands.dali_off(self.address)
     async def set_scene(self, scene: int|str|dict[str, Any], fade: bool = True) -> bool | None:
-        # self._start_refresh_timer()
         if type(scene) is str:
             scene = next((i for i, s in enumerate(self._scene_labels) if s == scene), False)
         if type(scene) is int:
@@ -409,7 +371,6 @@ class ZenControlGear:
             return await self.commands.dali_scene(self.address, scene)
         return False
     async def set(self, level: int = 255, colour: ZenColour | None = None, fade: bool = True) -> bool | None:
-        # self._start_refresh_timer()
         if colour is not None and self.supports_colour(colour):
             if not fade: await self.commands.dali_enable_dapc_sequence(self.address)
             return await self.commands.dali_colour(self.address, colour, level)
@@ -420,34 +381,24 @@ class ZenControlGear:
                 return await self.commands.dali_custom_fade(self.address, level, 0)
         return False
     async def dali_on_step_up(self) -> bool | None:
-        # self._start_refresh_timer()
         return await self.commands.dali_on_step_up(self.address)
     async def dali_step_down_off(self) -> bool | None:
-        # self._start_refresh_timer()
         return await self.commands.dali_step_down_off(self.address)
     async def dali_up(self) -> bool | None:
-        # self._start_refresh_timer()
         return await self.commands.dali_up(self.address)
     async def dali_down(self) -> bool | None:
-        # self._start_refresh_timer()
         return await self.commands.dali_down(self.address)
     async def dali_recall_max(self) -> bool | None:
-        # self._start_refresh_timer()
         return await self.commands.dali_recall_max(self.address)
     async def dali_recall_min(self) -> bool | None:
-        # self._start_refresh_timer()
         return await self.commands.dali_recall_min(self.address)
     async def dali_go_to_last_active_level(self) -> bool | None:
-        # self._start_refresh_timer()
         return await self.commands.dali_go_to_last_active_level(self.address)
     async def dali_off(self) -> bool | None:
-        # self._start_refresh_timer()
         return await self.commands.dali_off(self.address)
     async def dali_custom_fade(self, level: int, duration: int) -> bool | None:
-        # self._start_refresh_timer()
         return await self.commands.dali_custom_fade(self.address, level, duration)
     async def dali_stop_fade(self) -> bool | None:
-        # self._start_refresh_timer()
         return await self.commands.dali_stop_fade(self.address)
     async def dali_enable_dapc_sequence(self) -> bool | None:
         return await self.commands.dali_enable_dapc_sequence(self.address)

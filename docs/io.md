@@ -26,7 +26,7 @@ You probably don't want to be writing any code with these, other than for debugg
 import asyncio
 from zencontrol.io import ZenRequest, ZenRequestType, ZenResponseType, ZenClient
 
-# QUERY_CONTROLLER_LABEL = 0x24 (see ZenCommandClient.CMD in api.commands)
+# QUERY_CONTROLLER_LABEL = 0x24 (see the CMD enum in api.commands)
 async def main() -> None:
     client = await ZenClient.create(("192.168.1.100", 5108))
     try:
