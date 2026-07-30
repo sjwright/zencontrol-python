@@ -337,43 +337,41 @@ class ZenControlGear:
     def _should_query_colour(self) -> bool:
         return False
 
-    # async def refresh_state_from_controller(self, verifying: bool = False) -> None:
-    #     refreshed_level = await self.commands.dali_query_level(self.address)
-    #     refreshed_colour = None
-    #     refreshed_scene = None
-    #     if await self.commands.dali_query_last_scene_is_current(self.address):
-    #         refreshed_scene = await self.commands.dali_query_last_scene(self.address)
-    #     if self._should_query_colour():
-    #         refreshed_colour = await self.commands.query_dali_colour(self.address)
-    #
-    #     if verifying:
-    #         # Level is driven by LEVEL_CHANGE_V2 dimming-to events; query returns current arc mid-fade
-    #         if refreshed_level is not None and self.level != refreshed_level:
-    #             self.commands.logger.debug(
-    #                 f"{type(self).__name__} {self.address.number} queried level {refreshed_level} "
-    #                 f"differs from tracked destination {self.level} (expected during fade)"
-    #             )
-    #         refreshed_level = None
-    #         if self.colour != refreshed_colour:
-    #             self.commands.logger.error(
-    #                 f"{type(self).__name__} {self.address.number} colour mismatch! "
-    #                 f"We had {self.colour}, actual colour is {refreshed_colour}"
-    #             )
-    #         if self.scene != refreshed_scene:
-    #             self.commands.logger.error(
-    #                 f"{type(self).__name__} {self.address.number} scene mismatch! "
-    #                 f"We had {self.scene}, actual scene is {refreshed_scene}"
-    #             )
-    #
-    #     # Mimic an incoming scene event when the controller reports the last
-    #     # scene is current. This ensures we also update `self.scene`.
-    #     await self._event_received(
-    #         level=refreshed_level,
-    #         colour=refreshed_colour,
-    #         scene=refreshed_scene,
-    #         active=(refreshed_scene is not None and not verifying),
-    #         verifying=verifying,
-    #     )
+    async def refresh_state_from_controller(self, verifying: bool = False) -> None:
+        refreshed_level = await self.commands.dali_query_level(self.address)
+        refreshed_colour = None
+        refreshed_scene = None
+        if await self.commands.dali_query_last_scene_is_current(self.address):
+            refreshed_scene = await self.commands.dali_query_last_scene(self.address)
+        if self._should_query_colour():
+            refreshed_colour = await self.commands.query_dali_colour(self.address)
+    
+        # if verifying:
+        #     # Level is driven by LEVEL_CHANGE_V2 dimming-to events; query returns current arc mid-fade
+        #     if refreshed_level is not None and self.level != refreshed_level:
+        #         self.commands.logger.debug(
+        #             f"{type(self).__name__} {self.address.number} queried level {refreshed_level} "
+        #             f"differs from tracked destination {self.level} (expected during fade)"
+        #         )
+        #     refreshed_level = None
+        #     if self.colour != refreshed_colour:
+        #         self.commands.logger.error(
+        #             f"{type(self).__name__} {self.address.number} colour mismatch! "
+        #             f"We had {self.colour}, actual colour is {refreshed_colour}"
+        #         )
+        #     if self.scene != refreshed_scene:
+        #         self.commands.logger.error(
+        #             f"{type(self).__name__} {self.address.number} scene mismatch! "
+        #             f"We had {self.scene}, actual scene is {refreshed_scene}"
+        #         )
+    
+        # Mimic incoming events when the controller reports last scene / level / colour.
+        if refreshed_scene is not None and not verifying:
+            await self._event_received_scene(refreshed_scene, active=True)
+        if refreshed_level is not None:
+            await self._event_received_level(refreshed_level)
+        if refreshed_colour is not None:
+            await self._event_received_colour(refreshed_colour)
 
     # def _start_refresh_timer(self) -> None:
     #     """Start a 2-second timer to refresh from controller after API user changes state."""
@@ -387,94 +385,44 @@ class ZenControlGear:
     #             pass
     #     self._refresh_timer = self.ctx.track_task(delayed_refresh())
 
-    def _apply_scene_activation(
-        self,
-        scene: int,
-        level: int | None,
-        colour: ZenColour | None,
-    ) -> None:
-        """Update state for an active scene event."""
-        self.scene = scene
+    async def _event_received_level(self, level: int, cascaded_from: ZenGroup | None = None) -> None:
+        if level == 255 or level == self.level:
+            return
+        self.level = level
+        if self.scene is not None:
+            self.scene = None
+        await self._after_direct_change(level_changed=True, colour_changed=False, cascaded_from=cascaded_from)
+        await self._notify_change()
 
-        scene_level = self._scene_levels[scene]
-        if scene_level is None:
-            # Groups (and similar) may lack scene level tables — fall back to queried level.
-            if level is not None and level != 255 and level != self.level:
-                self.level = level
-        elif self.level != scene_level:
-            self.level = scene_level
+    async def _event_received_colour(self, colour: ZenColour, cascaded_from: ZenGroup | None = None) -> None:
+        if colour == self.colour:
+            return
+        self.colour = colour
+        if self.scene is not None:
+            self.scene = None
+        await self._after_direct_change(level_changed=False, colour_changed=True, cascaded_from=cascaded_from)
+        await self._notify_change()
 
-        scene_colour = self._scene_colours[scene]
-        if scene_colour is None:
-            if colour is not None and colour != self.colour:
-                self.colour = colour
-        elif self.colour != scene_colour:
-            self.colour = scene_colour
-
-    def _apply_direct_change(
-        self,
-        level: int | None,
-        colour: ZenColour | None,
-    ) -> tuple[bool, bool, bool]:
-        """Update state for a non-scene level/colour event.
-
-        Returns ``(level_changed, colour_changed, scene_cleared)``.
-        """
-        level_changed = False
-        colour_changed = False
-        scene_cleared = False
-
-        if level is not None and level != 255 and level != self.level:
-            self.level = level
-            level_changed = True
-            if self.scene is not None:
-                self.scene = None
-                scene_cleared = True
-        if colour is not None and colour != self.colour:
-            self.colour = colour
-            colour_changed = True
-            if self.scene is not None:
-                self.scene = None
-                scene_cleared = True
-
-        return level_changed, colour_changed, scene_cleared
-
-    async def _event_received(
-        self,
-        level: int | None = 255,
-        colour: ZenColour | None = None,
-        scene: int | None = None,
-        active: bool | None = None,
-        cascaded_from: ZenGroup | None = None,
-        verifying: bool = False,
-    ) -> None:
-        # `active` may be bool or int (protocol passes payload[1] as 0/1).
-        # Use truthiness — `1 is True` is False in Python.
-        if scene is not None and active:
-            self._apply_scene_activation(scene, level, colour)
+    async def _event_received_scene(self, scene: int, active: bool, cascaded_from: ZenGroup | None = None) -> None:
+        if active:
+            self.scene = scene
+            scene_level = self._scene_levels[scene]
+            scene_colour = self._scene_colours[scene]
+            if scene_level is not None and scene_level != self.level:
+                self.level = scene_level
+            if scene_colour is not None and scene_colour != self.colour:
+                self.colour = scene_colour
             await self._after_scene_activated(cascaded_from=cascaded_from)
             await self._notify_change()
             return
-
-        level_changed, colour_changed, scene_cleared = self._apply_direct_change(level, colour)
-        await self._after_direct_change(
-            level_changed=level_changed,
-            colour_changed=colour_changed,
-            cascaded_from=cascaded_from,
-        )
-        if level_changed or colour_changed or scene_cleared:
+        if self.scene is not None:
+            self.scene = None
             await self._notify_change()
 
     async def _after_scene_activated(self, cascaded_from: ZenGroup | None = None) -> None:
         """Hook: light membership may discoordinated groups after a scene event."""
 
-    async def _after_direct_change(
-        self,
-        *,
-        level_changed: bool,
-        colour_changed: bool,
-        cascaded_from: ZenGroup | None = None,
-    ) -> None:
+    async def _after_direct_change(self, *, level_changed: bool, colour_changed: bool, cascaded_from: ZenGroup | None = None) -> None:
         """Hook: light membership may discoordinated groups after level/colour events."""
 
     async def _notify_change(self) -> None:
@@ -724,13 +672,7 @@ class ZenLight(ZenControlGear):
             if group.scene != self.scene:
                 await group.declare_discoordination()
 
-    async def _after_direct_change(
-        self,
-        *,
-        level_changed: bool,
-        colour_changed: bool,
-        cascaded_from: ZenGroup | None = None,
-    ) -> None:
+    async def _after_direct_change(self, *, level_changed: bool, colour_changed: bool, cascaded_from: ZenGroup | None = None) -> None:
         for group in self.groups:
             if (level_changed and group.level != self.level) or (
                 colour_changed and self.colour is not None and group.colour != self.colour

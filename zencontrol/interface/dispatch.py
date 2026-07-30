@@ -123,7 +123,13 @@ class EventDispatcher:
                 await ZenMotionSensor(ctx=self.ctx, instance=instance)._event_received()
 
             case LevelChangeV2(target, _current, level):
-                await self._dispatch_level(ctrl, target, level)
+                address = self._ecg_or_group(ctrl, target)
+                if address is None:
+                    return
+                if address.type == ZenAddressType.ECG:
+                    await ZenLight(ctx=self.ctx, address=address)._event_received_level(level)
+                elif address.type == ZenAddressType.GROUP:
+                    await ZenGroup(ctx=self.ctx, address=address)._event_received_level(level)
 
             # LEVEL_CHANGE / GROUP_LEVEL_CHANGE / GROUP_OCCUPIED: not subscribed
             # (see ZenEventMask.all_events) and ignored here if they arrive.
@@ -136,24 +142,25 @@ class EventDispatcher:
                 if colour is None:
                     return
                 if address.type == ZenAddressType.ECG:
-                    await ZenLight(ctx=self.ctx, address=address)._event_received(colour=colour)
+                    await ZenLight(ctx=self.ctx, address=address)._event_received_colour(colour)
                 elif address.type == ZenAddressType.GROUP:
                     group = ZenGroup(ctx=self.ctx, address=address)
-                    await group._event_received(colour=colour)
+                    await group._event_received_colour(colour)
                     for light in group.lights:
-                        await light._event_received(colour=colour, cascaded_from=group)
+                        await light._event_received_colour(colour, cascaded_from=group)
 
             case SceneChange(target, scene, active):
                 address = self._ecg_or_group(ctrl, target)
                 if address is None:
                     return
+                active = bool(active)
                 if address.type == ZenAddressType.ECG:
-                    await ZenLight(ctx=self.ctx, address=address)._event_received(scene=scene, active=active)
+                    await ZenLight(ctx=self.ctx, address=address)._event_received_scene(scene, active)
                 elif address.type == ZenAddressType.GROUP:
                     group = ZenGroup(ctx=self.ctx, address=address)
-                    await group._event_received(scene=scene, active=active)
+                    await group._event_received_scene(scene, active)
                     for light in group.lights:
-                        await light._event_received(scene=scene, active=active, cascaded_from=group)
+                        await light._event_received_scene(scene, active, cascaded_from=group)
 
             case SystemVariableChange(target, value):
                 await ZenSystemVariable(ctx=self.ctx, controller=ctrl, id=target)._event_received(value)
@@ -163,14 +170,3 @@ class EventDispatcher:
 
             case _:
                 return
-
-    async def _dispatch_level(self, ctrl: ZenController, target: int, level: int) -> None:
-        address = self._ecg_or_group(ctrl, target)
-        if address is None:
-            return
-        if address.type == ZenAddressType.ECG:
-            light = ZenLight(ctx=self.ctx, address=address)
-            await light._event_received(level=level)
-        elif address.type == ZenAddressType.GROUP:
-            group = ZenGroup(ctx=self.ctx, address=address)
-            await group._event_received(level=level)
