@@ -34,7 +34,7 @@ Basic example:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import IntEnum
+from enum import IntEnum, IntFlag
 from typing import Self
 
 from ..io.event import ZenEvent
@@ -56,80 +56,42 @@ class ZenEventCode(IntEnum):
     LEVEL_CHANGE_V2 = 0x0B
 
 
-@dataclass(slots=True)
-class ZenEventMask:
-    button_press: bool = False
-    button_hold: bool = False
-    absolute_input: bool = False
-    level_change: bool = False
-    group_level_change: bool = False
-    scene_change: bool = False
-    is_occupied: bool = False
-    system_variable_change: bool = False
-    colour_change: bool = False
-    profile_change: bool = False
-    group_occupied: bool = False
-    level_change_v2: bool = False
+class ZenEventMask(IntFlag):
+    """Bitmask over ZenEventCode, one flag per event code."""
+
+    BUTTON_PRESS = 1 << ZenEventCode.BUTTON_PRESS
+    BUTTON_HOLD = 1 << ZenEventCode.BUTTON_HOLD
+    ABSOLUTE_INPUT = 1 << ZenEventCode.ABSOLUTE_INPUT
+    LEVEL_CHANGE = 1 << ZenEventCode.LEVEL_CHANGE
+    GROUP_LEVEL_CHANGE = 1 << ZenEventCode.GROUP_LEVEL_CHANGE
+    SCENE_CHANGE = 1 << ZenEventCode.SCENE_CHANGE
+    IS_OCCUPIED = 1 << ZenEventCode.IS_OCCUPIED
+    SYSTEM_VARIABLE_CHANGE = 1 << ZenEventCode.SYSTEM_VARIABLE_CHANGE
+    COLOUR_CHANGE = 1 << ZenEventCode.COLOUR_CHANGE
+    PROFILE_CHANGE = 1 << ZenEventCode.PROFILE_CHANGE
+    GROUP_OCCUPIED = 1 << ZenEventCode.GROUP_OCCUPIED
+    LEVEL_CHANGE_V2 = 1 << ZenEventCode.LEVEL_CHANGE_V2
 
     @classmethod
     def all_events(cls) -> Self:
         # Subscribe mask for normal use. Excludes:
         # - deprecated LEVEL_CHANGE / GROUP_LEVEL_CHANGE (use LEVEL_CHANGE_V2)
         # - GROUP_OCCUPIED (not used by the interface layer)
-        return cls(
-            button_press=True,
-            button_hold=True,
-            absolute_input=True,
-            scene_change=True,
-            is_occupied=True,
-            system_variable_change=True,
-            colour_change=True,
-            profile_change=True,
-            level_change_v2=True,
+        return (
+            cls.BUTTON_PRESS | cls.BUTTON_HOLD | cls.ABSOLUTE_INPUT
+            | cls.SCENE_CHANGE | cls.IS_OCCUPIED | cls.SYSTEM_VARIABLE_CHANGE
+            | cls.COLOUR_CHANGE | cls.PROFILE_CHANGE | cls.LEVEL_CHANGE_V2
         )
 
     @classmethod
     def from_upper_lower(cls, upper: int, lower: int) -> Self:
-        return cls.from_double_byte((upper << 8) | lower)
-
-    @classmethod
-    def from_double_byte(cls, event_mask: int) -> Self:
-        return cls(
-            button_press=(event_mask & (1 << ZenEventCode.BUTTON_PRESS.value)) != 0,
-            button_hold=(event_mask & (1 << ZenEventCode.BUTTON_HOLD.value)) != 0,
-            absolute_input=(event_mask & (1 << ZenEventCode.ABSOLUTE_INPUT.value)) != 0,
-            level_change=(event_mask & (1 << ZenEventCode.LEVEL_CHANGE.value)) != 0,
-            group_level_change=(event_mask & (1 << ZenEventCode.GROUP_LEVEL_CHANGE.value)) != 0,
-            scene_change=(event_mask & (1 << ZenEventCode.SCENE_CHANGE.value)) != 0,
-            is_occupied=(event_mask & (1 << ZenEventCode.IS_OCCUPIED.value)) != 0,
-            system_variable_change=(event_mask & (1 << ZenEventCode.SYSTEM_VARIABLE_CHANGE.value)) != 0,
-            colour_change=(event_mask & (1 << ZenEventCode.COLOUR_CHANGE.value)) != 0,
-            profile_change=(event_mask & (1 << ZenEventCode.PROFILE_CHANGE.value)) != 0,
-            group_occupied=(event_mask & (1 << ZenEventCode.GROUP_OCCUPIED.value)) != 0,
-            level_change_v2=(event_mask & (1 << ZenEventCode.LEVEL_CHANGE_V2.value)) != 0,
-        )
-
-    def bitmask(self) -> int:
-        event_mask = 0x00
-        if self.button_press: event_mask |= (1 << ZenEventCode.BUTTON_PRESS.value)
-        if self.button_hold: event_mask |= (1 << ZenEventCode.BUTTON_HOLD.value)
-        if self.absolute_input: event_mask |= (1 << ZenEventCode.ABSOLUTE_INPUT.value)
-        if self.level_change: event_mask |= (1 << ZenEventCode.LEVEL_CHANGE.value)
-        if self.group_level_change: event_mask |= (1 << ZenEventCode.GROUP_LEVEL_CHANGE.value)
-        if self.scene_change: event_mask |= (1 << ZenEventCode.SCENE_CHANGE.value)
-        if self.is_occupied: event_mask |= (1 << ZenEventCode.IS_OCCUPIED.value)
-        if self.system_variable_change: event_mask |= (1 << ZenEventCode.SYSTEM_VARIABLE_CHANGE.value)
-        if self.colour_change: event_mask |= (1 << ZenEventCode.COLOUR_CHANGE.value)
-        if self.profile_change: event_mask |= (1 << ZenEventCode.PROFILE_CHANGE.value)
-        if self.group_occupied: event_mask |= (1 << ZenEventCode.GROUP_OCCUPIED.value)
-        if self.level_change_v2: event_mask |= (1 << ZenEventCode.LEVEL_CHANGE_V2.value)
-        return event_mask
+        return cls((upper << 8) | lower)
 
     def upper(self) -> int:
-        return (self.bitmask() >> 8) & 0xFF
+        return (int(self) >> 8) & 0xFF
 
     def lower(self) -> int:
-        return self.bitmask() & 0xFF
+        return int(self) & 0xFF
 
 
 @dataclass(frozen=True, slots=True)

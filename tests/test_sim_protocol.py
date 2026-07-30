@@ -178,7 +178,7 @@ async def test_tpi_event_mode_and_filters(live_sim):
     assert info["port"] == 6970
 
     addr = live_sim.ecg(0)
-    mask = ZenEventMask(level_change_v2=True)
+    mask = ZenEventMask.LEVEL_CHANGE_V2
     assert await p.dali_add_tpi_event_filter(addr, mask) is True
     assert await p.query_dali_tpi_event_filters(addr)
     assert await p.dali_clear_tpi_event_filter(addr, mask) is True

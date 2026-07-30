@@ -227,12 +227,12 @@ def test_occupied_types_remain_distinct() -> None:
 
 def test_all_events_excludes_deprecated_and_unused_codes() -> None:
     mask = ZenEventMask.all_events()
-    assert mask.level_change is False
-    assert mask.group_level_change is False
-    assert mask.group_occupied is False
-    assert mask.level_change_v2 is True
-    assert mask.is_occupied is True
-    bits = mask.bitmask()
+    assert ZenEventMask.LEVEL_CHANGE not in mask
+    assert ZenEventMask.GROUP_LEVEL_CHANGE not in mask
+    assert ZenEventMask.GROUP_OCCUPIED not in mask
+    assert ZenEventMask.LEVEL_CHANGE_V2 in mask
+    assert ZenEventMask.IS_OCCUPIED in mask
+    bits = int(mask)
     assert bits & (1 << ZenEventCode.LEVEL_CHANGE) == 0
     assert bits & (1 << ZenEventCode.GROUP_LEVEL_CHANGE) == 0
     assert bits & (1 << ZenEventCode.GROUP_OCCUPIED) == 0
