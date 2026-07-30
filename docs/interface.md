@@ -91,8 +91,9 @@ Each `create` / first fetch runs `interview()` (labels, features, membership, ti
 
 | Type | Control / read highlights |
 | --- | --- |
-| `ZenLight` | `set`, `on`/`off`, `set_scene`, step/fade helpers, `features`, `groups`, `level`/`colour`/`scene` |
-| `ZenGroup` | Subclass of `ZenLight`; same control API plus scene label helpers and `declare_discoordination` |
+| `ZenControlGear` | Shared base for all control gear (ECG) and groups: `level`/`colour`/`scene` |
+| `ZenLight` | Lighting ECG gear: group membership, membership-driven discoordination |
+| `ZenGroup` | Group gear: mostly the same as lights, plus scene label helpers and group state assertions |
 | `ZenButton` | Press / long-press via callbacks |
 | `ZenMotionSensor` | `occupied`; occupancy events |
 | `ZenAbsoluteInput` | 16-bit `value` |

@@ -10,6 +10,7 @@ from .context import ControllerRuntimeStatus, EntityContext, ZenCallbacks
 from .entities import (
     ZenAbsoluteInput,
     ZenButton,
+    ZenControlGear,
     ZenController,
     ZenGroup,
     ZenLight,
@@ -30,6 +31,7 @@ __all__ = [
     # High-level models
     "ZenController",
     "ZenProfile",
+    "ZenControlGear",
     "ZenLight",
     "ZenGroup",
     "ZenButton",

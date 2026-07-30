@@ -58,6 +58,7 @@ from .interface import (
     ZenButton,
     ZenCallbacks,
     ZenControl,
+    ZenControlGear,
     ZenController,
     ZenGroup,
     ZenLight,
@@ -93,6 +94,7 @@ __all__ = [
     # High-level models (for most users)
     "ZenController",
     "ZenProfile",
+    "ZenControlGear",
     "ZenLight",
     "ZenGroup",
     "ZenButton",
