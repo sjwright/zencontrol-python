@@ -162,8 +162,8 @@ async def test_configure_controller_events_attaches_hot_plugged_controller() -> 
     )
 
     assert await zen.configure_controller_events(ctrl) is True
-    assert zen.session.wiring is not None
-    assert zen.session.wiring.get(ctrl) is not None
+    assert zen.wiring is not None
+    assert zen.wiring.get(ctrl) is not None
     zen.commands.tpi_event_emit.assert_awaited_once()
 
     await zen.aclose()
@@ -181,10 +181,10 @@ async def test_attach_once_survives_forced_endpoint_death() -> None:
     zen.add_controller(id=1, name="ctrl-a", label="A", host="127.0.0.1", mac="02:00:00:00:00:01")
     on_resync = AsyncMock()
     await zen.start()
-    assert zen.session.wiring is not None
-    zen.session.wiring.on_resync = on_resync
+    assert zen.wiring is not None
+    zen.wiring.on_resync = on_resync
 
-    binding = zen.session.wiring.get("ctrl-a")
+    binding = zen.wiring.get("ctrl-a")
     assert binding is not None
     first_binding = binding
     emit_before = zen.commands.tpi_event_emit.await_count
@@ -206,7 +206,7 @@ async def test_attach_once_survives_forced_endpoint_death() -> None:
     else:
         pytest.fail("receiver did not restore consumer after endpoint death")
 
-    assert zen.session.wiring.get("ctrl-a") is first_binding
+    assert zen.wiring.get("ctrl-a") is first_binding
     assert zen.commands.tpi_event_emit.await_count > emit_before
     on_resync.assert_awaited()
     assert zen.is_event_monitoring_active()
@@ -251,7 +251,7 @@ async def test_host_only_binding_learns_mac_and_persists() -> None:
     zen.callbacks.controller_identified = on_identified
     await zen.start()
 
-    binding = zen.session.wiring.get("pending") if zen.session.wiring else None
+    binding = zen.wiring.get("pending") if zen.wiring else None
     assert binding is not None
     assert binding.mac is None
     assert binding.event_health is EventHealth.IDENTIFYING
@@ -299,7 +299,7 @@ async def test_promotion_conflict_detaches_zombie_binding() -> None:
     )
     await zen.start()
 
-    binding = zen.session.wiring.get("pending") if zen.session.wiring else None
+    binding = zen.wiring.get("pending") if zen.wiring else None
     assert binding is not None
     assert binding.event_health is EventHealth.IDENTIFYING
     assert zen.event_receiver.lease_count(Transport.MULTICAST) >= 1
@@ -308,7 +308,7 @@ async def test_promotion_conflict_detaches_zombie_binding() -> None:
     assert ok is False
     await asyncio.sleep(0.05)
 
-    assert zen.session.wiring.get("pending") is None
+    assert zen.wiring.get("pending") is None
     assert zen.event_health_for("pending") is None
     assert ("pending", "unreachable") in status_changes
     # Keepalive must not keep confirming emit for a controller with no route.

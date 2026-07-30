@@ -25,13 +25,13 @@ async def test_start_timeout_rolls_back_session_resources() -> None:
         awaitable.close()
         raise TimeoutError
 
-    with patch("zencontrol.interface.session.asyncio.wait_for", side_effect=timeout):
+    with patch("zencontrol.interface.interface.asyncio.wait_for", side_effect=timeout):
         with pytest.raises(ZenConnectionError, match="failed to connect"):
             await zen.start()
 
-    assert zen.session.wiring is None
-    assert zen.session.supervisor_task is None
-    assert zen.session.keepalive_task is None
+    assert zen.wiring is None
+    assert zen._supervisor_task is None
+    assert zen._keepalive_task is None
     assert zen.event_receiver.lease_count(Transport.MULTICAST) == 0
     assert zen.event_receiver.lease_count(Transport.UNICAST) == 0
     assert not zen.is_event_monitoring_active()
