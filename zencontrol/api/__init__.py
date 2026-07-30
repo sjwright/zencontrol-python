@@ -9,10 +9,15 @@ from .discovery import DiscoveryLog
 from .models import (
     ControllerRef,
     DiscoveredController,
+    ZenRgbColour,
+    ZenTcColour,
+    ZenXyColour,
     ZenAddress,
     ZenColour,
     ZenController,
     ZenInstance,
+    colour_from_bytes,
+    colour_from_dict,
 )
 from .types import (
     Transport,
@@ -37,6 +42,11 @@ __all__ = [
     "ZenAddress",
     "ZenInstance",
     "ZenColour",
+    "ZenTcColour",
+    "ZenXyColour",
+    "ZenRgbColour",
+    "colour_from_bytes",
+    "colour_from_dict",
     "DiscoveredController",
 
     # Types

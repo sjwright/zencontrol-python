@@ -55,6 +55,7 @@ from .models import (
     ZenAddress,
     ZenColour,
     ZenInstance,
+    colour_from_bytes,
 )
 from .types import (
     Const,
@@ -558,7 +559,7 @@ class ZenCommandClient:
         response = self._response_to_bytes_or_none(await self._send_basic(address.controller, CMD.QUERY_DALI_COLOUR, address.ecg()))
         if response is None:
             return None
-        return ZenColour.from_bytes(response)
+        return colour_from_bytes(response)
     
     async def query_profile_information(self, controller: ControllerRef) -> (tuple[dict[str, Any], dict[int, dict[str, bool | int | str]]]) | None:
         """Query a controller for profile information. Returns a tuple of two dicts, or None if query fails."""
@@ -721,7 +722,7 @@ class ZenCommandClient:
         # Data is in 7 byte segments
         for i in range(0, Const.MAX_SCENE):
             offset = i*7
-            output[i] = ZenColour.from_bytes(response[offset:offset+7])
+            output[i] = colour_from_bytes(response[offset:offset+7])
         return output
             
     async def query_group_membership_by_address(self, address: ZenAddress) -> list[ZenAddress]:

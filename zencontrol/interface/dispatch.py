@@ -6,7 +6,7 @@ import asyncio
 import logging
 from typing import cast
 
-from ..api import ZenAddress, ZenAddressType, ZenColour, ZenInstance, ZenInstanceType
+from ..api import ZenAddress, ZenAddressType, ZenInstance, ZenInstanceType, colour_from_bytes
 from ..api import ZenController as SuperZenController
 from ..api.event_decode import (
     AbsoluteInput,
@@ -138,7 +138,7 @@ class EventDispatcher:
                 address = self._ecg_or_group(ctrl, target)
                 if address is None:
                     return
-                colour = ZenColour.from_bytes(colour_bytes)
+                colour = colour_from_bytes(colour_bytes)
                 if colour is None:
                     return
                 if address.type == ZenAddressType.ECG:

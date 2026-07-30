@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 from typing import Any
 import zencontrol
-from zencontrol import ZenController, ZenClient, ZenColour, ZenColourType, ZenProfile, ZenLight, ZenGroup, ZenButton, ZenMotionSensor, ZenSystemVariable, ZenTimeoutError, ZenAddressType
+from zencontrol import ZenController, ZenClient, ZenTcColour, ZenProfile, ZenLight, ZenGroup, ZenButton, ZenMotionSensor, ZenSystemVariable, ZenTimeoutError, ZenAddressType
 import aiomqtt
 import logging
 from logging.handlers import RotatingFileHandler
@@ -766,7 +766,7 @@ class ZenMQTTBridge:
         if brightness is not None or mireds is not None:
             args = {}
             if brightness is not None: args["level"] = self.brightness_to_arc(brightness)
-            if mireds is not None: args["colour"] = ZenColour(type=ZenColourType.TC, kelvin=self.mireds_to_kelvin(mireds))
+            if mireds is not None: args["colour"] = ZenTcColour(kelvin=self.mireds_to_kelvin(mireds))
             self.logger.info(f"♥️💡 Command from HA: {ctrl.name} setting gear {addr.number} to {args}")
             await light.set(**args)
             return
@@ -804,10 +804,9 @@ class ZenMQTTBridge:
         if light.level is not None and light.level > 0:
             new_state["brightness"] = self.arc_to_brightness(light.level)
 
-        if light.colour and light.colour.type == ZenColourType.TC:
+        if light.colour and isinstance(light.colour, ZenTcColour):
             new_state["color_mode"] = "color_temp"
-            if light.colour.kelvin is not None:
-                new_state["color_temp"] = self.kelvin_to_mireds(light.colour.kelvin)
+            new_state["color_temp"] = self.kelvin_to_mireds(light.colour.kelvin)
 
         await self._publish_state(mqtt_topic, new_state)
 

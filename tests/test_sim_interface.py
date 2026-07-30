@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from helpers import LEGACY_ACK, wait_until
 
-from zencontrol import ZenColour, ZenColourType
+from zencontrol import ZenRgbColour, ZenTcColour, ZenXyColour
 
 pytestmark = pytest.mark.simulator
 
@@ -75,7 +75,7 @@ async def test_tunable_colour_via_interface(live_zen):
     await ctrl.interview()
 
     lights = {lt.address.number: lt for lt in await zen.get_lights()}
-    tc = ZenColour(type=ZenColourType.TC, kelvin=4000)
+    tc = ZenTcColour(kelvin=4000)
     assert await lights[0].set(colour=tc) is True
     assert live_sim.world.lights[0].colour is not None
     assert live_sim.world.lights[0].colour.kelvin == 4000
@@ -177,7 +177,7 @@ async def test_start_receives_injected_and_control_events(live_zen):
         message="expected light_change for ECG 1 → 66",
     )
 
-    tc = ZenColour(type=ZenColourType.TC, kelvin=3500)
+    tc = ZenTcColour(kelvin=3500)
     assert await lights[0].set(colour=tc) is True
     await wait_until(
         lambda: any(n == 0 for n, _ in colour_events),
@@ -234,13 +234,13 @@ async def test_rgb_and_xy_via_interface(live_zen):
     lights = {lt.address.number: lt for lt in await zen.get_lights()}
 
     assert lights[2].features.get("RGB") is True
-    rgb = ZenColour(type=ZenColourType.RGBWAF, r=1, g=2, b=3, w=0, a=0, f=0)
+    rgb = ZenRgbColour(r=1, g=2, b=3, w=0, a=0, f=0)
     assert await lights[2].set(colour=rgb, level=100) is True
     assert live_sim.world.lights[2].colour.r == 1
     assert live_sim.world.lights[2].level == 100
 
     assert lights[3].features.get("XY") is True
-    xy = ZenColour(type=ZenColourType.XY, x=15000, y=16000)
+    xy = ZenXyColour(x=15000, y=16000)
     assert lights[3].supports_colour(xy) is True
     assert await lights[3].set(colour=xy, level=90) is True
     assert live_sim.world.lights[3].colour.x == 15000

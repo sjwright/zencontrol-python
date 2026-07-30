@@ -37,7 +37,17 @@ Example::
 # Shared types and exceptions
 from .api.event_decode import ZenEventCode, ZenEventMask
 from .api.event_router import EventHealth
-from .api.models import DiscoveredController, ZenAddress, ZenColour, ZenInstance
+from .api.models import (
+    DiscoveredController,
+    ZenRgbColour,
+    ZenTcColour,
+    ZenXyColour,
+    ZenAddress,
+    ZenColour,
+    ZenInstance,
+    colour_from_bytes,
+    colour_from_dict,
+)
 from .api.types import (
     Transport,
     ZenAddressType,
@@ -106,6 +116,11 @@ __all__ = [
     "ZenAddress",
     "ZenInstance",
     "ZenColour",
+    "ZenTcColour",
+    "ZenXyColour",
+    "ZenRgbColour",
+    "colour_from_bytes",
+    "colour_from_dict",
     "DiscoveredController",
 
     # Low-level models (for advanced users)

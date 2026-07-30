@@ -9,11 +9,15 @@ from collections.abc import Coroutine
 from typing import Any, Self, cast
 
 from ..api import (
+    ZenRgbColour,
+    ZenTcColour,
+    ZenXyColour,
     ZenAddress,
     ZenAddressType,
     ZenColour,
     ZenColourType,
     ZenInstance,
+    colour_from_dict,
 )
 from ..api import ZenController as SuperZenController
 from ..api.commands import ZenCommandClient
@@ -492,7 +496,7 @@ class ZenLight(ZenControlGear):
             self.features.update(data.get("features", {}))
             self.properties.update(data.get("properties", {}))
             self._scene_levels = list(data.get("scene_levels", []))
-            self._scene_colours = [ZenColour.from_dict(colour) for colour in data.get("scene_colours", [])]
+            self._scene_colours = [colour_from_dict(colour) for colour in data.get("scene_colours", [])]
             membership = [
                 ZenAddress(controller=self.address.controller, type=ZenAddressType.GROUP, number=group["number"])
                 for group in data.get("group_membership", [])
@@ -563,19 +567,19 @@ class ZenLight(ZenControlGear):
         )
 
     def supports_colour(self, colour: ZenColourType | ZenColour) -> bool:
-        if type(colour) is ZenColour:
-            colour_type = colour.type
-        elif type(colour) is ZenColourType:
-            colour_type = colour
-        else:
-            return False
-        return bool(
-            (colour_type == ZenColourType.TC and self.features.get("temperature"))
-            or (colour_type == ZenColourType.RGBWAF and self.features.get("RGB"))
-            or (colour_type == ZenColourType.RGBWAF and self.features.get("RGBW"))
-            or (colour_type == ZenColourType.RGBWAF and self.features.get("RGBWW"))
-            or (colour_type == ZenColourType.XY and self.features.get("XY"))
-        )
+        match colour:
+            case ZenTcColour() | ZenColourType.TC:
+                return bool(self.features.get("temperature"))
+            case ZenRgbColour() | ZenColourType.RGBWAF:
+                return bool(
+                    self.features.get("RGB")
+                    or self.features.get("RGBW")
+                    or self.features.get("RGBWW")
+                )
+            case ZenXyColour() | ZenColourType.XY:
+                return bool(self.features.get("XY"))
+            case _:
+                return False
 
     async def _after_scene_activated(self, cascaded_from: ZenGroup | None = None) -> None:
         for group in self.groups:

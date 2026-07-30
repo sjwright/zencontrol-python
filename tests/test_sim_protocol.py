@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from helpers import LEGACY_ACK, wait_until
 
-from zencontrol import ZenColour, ZenColourType, ZenEventMask, ZenEventMode
+from zencontrol import ZenRgbColour, ZenTcColour, ZenXyColour, ZenEventMask, ZenEventMode
 
 pytestmark = pytest.mark.simulator
 
@@ -132,14 +132,14 @@ async def test_group_scene_recall(live_sim):
 async def test_colour_tc_and_rgb(live_sim):
     p = live_sim.commands
 
-    tc = ZenColour(type=ZenColourType.TC, kelvin=4000)
+    tc = ZenTcColour(kelvin=4000)
     assert await p.dali_colour(live_sim.ecg(0), tc) is True
     queried = await p.query_dali_colour(live_sim.ecg(0))
     assert queried is not None
-    assert queried.type == ZenColourType.TC
+    assert isinstance(queried, ZenTcColour)
     assert queried.kelvin == 4000
 
-    rgb = ZenColour(type=ZenColourType.RGBWAF, r=10, g=20, b=30, w=0, a=0, f=0)
+    rgb = ZenRgbColour(r=10, g=20, b=30, w=0, a=0, f=0)
     assert await p.dali_colour(live_sim.ecg(2), rgb, level=128) is True
     queried_rgb = await p.query_dali_colour(live_sim.ecg(2))
     assert queried_rgb is not None
@@ -383,11 +383,11 @@ async def test_colour_xy_set_and_query(live_sim):
     assert features is not None
     assert features.get("supports_xy") is True
 
-    colour = ZenColour(type=ZenColourType.XY, x=12345, y=23456)
+    colour = ZenXyColour(x=12345, y=23456)
     assert await p.dali_colour(addr, colour, level=90) is True
     queried = await p.query_dali_colour(addr)
     assert queried is not None
-    assert queried.type == ZenColourType.XY
+    assert isinstance(queried, ZenXyColour)
     assert queried.x == 12345 and queried.y == 23456
     assert await p.dali_query_level(addr) == 90
     assert live_sim.world.lights[3].colour.x == 12345
@@ -443,7 +443,7 @@ async def test_broadcast_arc_off_scene_and_colour(live_sim):
     assert live_sim.world.lights[0].level == 180
     assert live_sim.world.groups[0].last_scene == 0
 
-    tc = ZenColour(type=ZenColourType.TC, kelvin=4200)
+    tc = ZenTcColour(kelvin=4200)
     assert await p.dali_colour(bcast, tc) is True
     assert live_sim.world.lights[0].colour.kelvin == 4200
     assert live_sim.world.lights[3].colour.type == "tc"
@@ -597,7 +597,7 @@ async def test_colour_only_preserves_level(live_sim):
     p = live_sim.commands
     addr = live_sim.ecg(0)
     assert await p.dali_arc_level(addr, 77) is LEGACY_ACK
-    colour = ZenColour(type=ZenColourType.TC, kelvin=4200)
+    colour = ZenTcColour(kelvin=4200)
     assert await p.dali_colour(addr, colour, level=255) is True
     assert await p.dali_query_level(addr) == 77
     assert live_sim.world.lights[0].level == 77

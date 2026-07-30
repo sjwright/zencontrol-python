@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from helpers import LEGACY_ACK, wait_until
 
-from zencontrol import ZenColour, ZenColourType
+from zencontrol import ZenTcColour
 
 pytestmark = pytest.mark.simulator
 
@@ -31,7 +31,7 @@ async def test_scene_and_colour_events_via_protocol(live_sim):
         message="expected scene-change event for ECG 0 → scene 1",
     )
 
-    tc = ZenColour(type=ZenColourType.TC, kelvin=3500)
+    tc = ZenTcColour(kelvin=3500)
     assert await p.dali_colour(live_sim.ecg(0), tc) is True
     await wait_until(
         lambda: any(n == 0 and c is not None and getattr(c, "kelvin", None) == 3500 for n, c in colours),

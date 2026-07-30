@@ -187,7 +187,7 @@ class SystemVariableChange:
 @dataclass(frozen=True, slots=True)
 class ColourChange:
     target: int
-    colour: bytes  # DALI encoding; model layer decodes via ZenColour.from_bytes
+    colour: bytes  # DALI encoding; model layer decodes via colour_from_bytes
 
 
 @dataclass(frozen=True, slots=True)

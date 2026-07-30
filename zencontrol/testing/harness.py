@@ -32,7 +32,7 @@ from ..api.event_decode import (
     ZenDecodedEvent,
 )
 from ..api.event_router import ZenEventReceiver
-from ..api.models import ControllerRef, ZenAddress, ZenColour, ZenInstance
+from ..api.models import ControllerRef, ZenAddress, ZenInstance, colour_from_bytes
 from ..api.types import Transport, ZenAddressType, ZenEventMode, ZenInstanceType
 from ..interface.context import EntityContext
 from ..interface.entities import ZenController
@@ -286,7 +286,7 @@ class ZenTestClient:
                 address = self._ecg_or_group(controller, target)
                 if address is None:
                     return
-                colour = ZenColour.from_bytes(colour_bytes)
+                colour = colour_from_bytes(colour_bytes)
                 if colour is None:
                     return
                 await self._call(

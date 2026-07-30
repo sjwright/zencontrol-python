@@ -15,8 +15,9 @@ It could be an ECG, ECD, or Group address.
 
 A "ZenInstance" represents a single instance of an specific ZenAddress.
 
-A "ZenColour" represents an luminere state. It's uesd as both targets and
-payloads for the various commands and events throughout the API.
+A colour is exactly one of "ZenTcColour", "ZenXyColour", or "ZenRgbColour"
+("ZenColour" is the union). Wire / dict decoding live in
+"colour_from_bytes" / "colour_from_dict".
 
 """
 
@@ -253,165 +254,154 @@ class ZenInstance:
         return f"{self.address.entity_id_string()}_{self.number}"
 
 
-@dataclass(slots=True)
-class ZenColour:
-    """Represents a DALI color"""
-    type: ZenColourType | None = None
-    kelvin: int | None = None
-    r: int | None = None
-    g: int | None = None
-    b: int | None = None
-    w: int | None = None
-    a: int | None = None
-    f: int | None = None
-    x: int | None = None
-    y: int | None = None
-    
-    @classmethod
-    def from_bytes(cls, data: bytes) -> Self | None:
-        match list(data):
-            case [ZenColourType.RGBWAF.value, r, g, b, *rest] if len(rest) <= 3:
-                # COLOUR_CHANGED_EVENT from a fixture with fewer than six channels
-                # carries only channels + 1 bytes, so an RGB fixture sends
-                # [0x80, R, G, B]. Channels the fixture does not have stay None.
-                w, a, f = (list(rest) + [None, None, None])[:3]
-                return cls(type=ZenColourType.RGBWAF, r=r, g=g, b=b, w=w, a=a, f=f)
-            case [ZenColourType.TC.value, hi, lo] | [ZenColourType.TC.value, hi, lo, *_]:
-                if len(data) not in (3, 7):
-                    return None
-                return cls(type=ZenColourType.TC, kelvin=(hi << 8) | lo)
-            case [ZenColourType.XY.value, xh, xl, yh, yl] | [ZenColourType.XY.value, xh, xl, yh, yl, *_]:
-                if len(data) not in (5, 7):
-                    return None
-                return cls(type=ZenColourType.XY, x=(xh << 8) | xl, y=(yh << 8) | yl)
-            case _:
-                return None
-    
-    @classmethod
-    def from_dict(cls, data: dict[str, Any] | None) -> Self | None:
-        """Restore from ``to_dict`` output; None if data is None."""
-        if data is None:
-            return None
-        colour_type = ZenColourType[str(data["type"]).upper()]
-        match colour_type:
-            case ZenColourType.TC:
-                return cls(type=colour_type, kelvin=data.get("kelvin"))
-            case ZenColourType.RGBWAF:
-                return cls(
-                    type=colour_type,
-                    r=data.get("r"),
-                    g=data.get("g"),
-                    b=data.get("b"),
-                    w=data.get("w"),
-                    a=data.get("a"),
-                    f=data.get("f"),
-                )
-            case ZenColourType.XY:
-                return cls(type=colour_type, x=data.get("x"), y=data.get("y"))
+@dataclass(frozen=True, slots=True)
+class ZenTcColour:
+    """Tunable-white colour temperature in kelvin."""
+
+    kelvin: int
 
     def __post_init__(self) -> None:
-        match self.type:
-            case ZenColourType.TC:
-                kelvin = self.kelvin
-                if kelvin is None:
-                    raise ValueError("Kelvin is required for TC colour type")
-                if not Const.MIN_KELVIN <= kelvin <= Const.MAX_KELVIN:
-                    logging.getLogger(__name__).warning(
-                        "Kelvin %s out of range [%s, %s]; clamping",
-                        kelvin, Const.MIN_KELVIN, Const.MAX_KELVIN,
-                    )
-                    self.kelvin = max(Const.MIN_KELVIN, min(Const.MAX_KELVIN, kelvin))
-            case ZenColourType.RGBWAF:
-                r, g, b = self.r, self.g, self.b
-                if r is None or not 0 <= r <= 255:
-                    raise ValueError(f"R must be between 0 and 255, received {self.r}")
-                if g is None or not 0 <= g <= 255:
-                    raise ValueError(f"G must be between 0 and 255, received {self.g}")
-                if b is None or not 0 <= b <= 255:
-                    raise ValueError(f"B must be between 0 and 255, received {self.b}")
-                if self.w is not None and not 0 <= self.w <= 255:
-                    raise ValueError(f"W must be between 0 and 255, received {self.w}")
-                if self.a is not None and not 0 <= self.a <= 255:
-                    raise ValueError(f"A must be between 0 and 255, received {self.a}")
-                if self.f is not None and not 0 <= self.f <= 255:
-                    raise ValueError(f"F must be between 0 and 255, received {self.f}")
-            case ZenColourType.XY:
-                x, y = self.x, self.y
-                if x is None or not 0 <= x <= 65535:
-                    raise ValueError(f"X must be between 0 and 65535, received {self.x}")
-                if y is None or not 0 <= y <= 65535:
-                    raise ValueError(f"Y must be between 0 and 65535, received {self.y}")
-            case _:
-                pass
-    
-    def __repr__(self) -> str:
-        match self.type:
-            case ZenColourType.TC:
-                return f"ZenColour(kelvin={self.kelvin})"
-            case ZenColourType.RGBWAF:
-                return f"ZenColour(r={self.r}, g={self.g}, b={self.b}, w={self.w}, a={self.a}, f={self.f})"
-            case ZenColourType.XY:
-                return f"ZenColour(x={self.x}, y={self.y})"
-            case _:
-                return f"ZenColour(type={self.type})"
+        if not Const.MIN_KELVIN <= self.kelvin <= Const.MAX_KELVIN:
+            logging.getLogger(__name__).warning(
+                "Kelvin %s out of range [%s, %s]; clamping",
+                self.kelvin, Const.MIN_KELVIN, Const.MAX_KELVIN,
+            )
+            object.__setattr__(
+                self, "kelvin",
+                max(Const.MIN_KELVIN, min(Const.MAX_KELVIN, self.kelvin)),
+            )
 
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, ZenColour):
-            return NotImplemented
-        return (
-            self.type == other.type
-            and self.kelvin == other.kelvin
-            and self.r == other.r
-            and self.g == other.g
-            and self.b == other.b
-            and self.w == other.w
-            and self.a == other.a
-            and self.f == other.f
-            and self.x == other.x
-            and self.y == other.y
-        )
-    
-    def to_bytes(self, level: int = 255) -> bytes:
-        """Encode colour data as returned by QUERY_DALI_COLOUR (no address or arc level)."""
-        match self.type:
-            case ZenColourType.TC:
-                return struct.pack(">BH", 0x20, self.kelvin)
-            case ZenColourType.RGBWAF:
-                return struct.pack(
-                    "BBBBBBB",
-                    0x80,
-                    self.r,
-                    self.g,
-                    self.b,
-                    self.w if self.w is not None else 0,
-                    self.a if self.a is not None else 0,
-                    self.f if self.f is not None else 0,
-                )
-            case ZenColourType.XY:
-                return struct.pack(">BHH", 0x10, self.x, self.y)
-            case _:
-                return b""
-    
-    def to_dict(self) -> dict[str, int | str | None] | None:
-        """Serialize for interview cache / JSON; None if type is unset."""
-        if self.type is None:
-            return None
-        data: dict[str, int | str | None] = {"type": self.type.name.lower()}
-        match self.type:
-            case ZenColourType.TC:
-                data["kelvin"] = self.kelvin
-            case ZenColourType.RGBWAF:
-                data["r"] = self.r
-                data["g"] = self.g
-                data["b"] = self.b
-                data["w"] = self.w
-                data["a"] = self.a
-                data["f"] = self.f
-            case ZenColourType.XY:
-                data["x"] = self.x
-                data["y"] = self.y
-        return data
+    def to_bytes(self) -> bytes:
+        """Encode as returned by QUERY_DALI_COLOUR (no address or arc level)."""
+        return struct.pack(">BH", ZenColourType.TC.value, self.kelvin)
+
+    def to_dict(self) -> dict[str, int | str | None]:
+        return {"type": "tc", "kelvin": self.kelvin}
 
     def command_payload(self) -> bytes:
         """Colour type and channel bytes for DALI_COLOUR (follows address and arc level)."""
         return self.to_bytes()
+
+
+@dataclass(frozen=True, slots=True)
+class ZenXyColour:
+    """CIE XY chromaticity (0–65535 wire units)."""
+
+    x: int
+    y: int
+
+    def __post_init__(self) -> None:
+        if not 0 <= self.x <= 65535:
+            raise ValueError(f"X must be between 0 and 65535, received {self.x}")
+        if not 0 <= self.y <= 65535:
+            raise ValueError(f"Y must be between 0 and 65535, received {self.y}")
+
+    def to_bytes(self) -> bytes:
+        """Encode as returned by QUERY_DALI_COLOUR (no address or arc level)."""
+        return struct.pack(">BHH", ZenColourType.XY.value, self.x, self.y)
+
+    def to_dict(self) -> dict[str, int | str | None]:
+        return {"type": "xy", "x": self.x, "y": self.y}
+
+    def command_payload(self) -> bytes:
+        """Colour type and channel bytes for DALI_COLOUR (follows address and arc level)."""
+        return self.to_bytes()
+
+
+@dataclass(frozen=True, slots=True)
+class ZenRgbColour:
+    """RGBWAF channel levels. Optional W/A/F stay None when the fixture lacks those channels."""
+
+    r: int
+    g: int
+    b: int
+    w: int | None = None
+    a: int | None = None
+    f: int | None = None
+
+    def __post_init__(self) -> None:
+        if not 0 <= self.r <= 255:
+            raise ValueError(f"R must be between 0 and 255, received {self.r}")
+        if not 0 <= self.g <= 255:
+            raise ValueError(f"G must be between 0 and 255, received {self.g}")
+        if not 0 <= self.b <= 255:
+            raise ValueError(f"B must be between 0 and 255, received {self.b}")
+        if self.w is not None and not 0 <= self.w <= 255:
+            raise ValueError(f"W must be between 0 and 255, received {self.w}")
+        if self.a is not None and not 0 <= self.a <= 255:
+            raise ValueError(f"A must be between 0 and 255, received {self.a}")
+        if self.f is not None and not 0 <= self.f <= 255:
+            raise ValueError(f"F must be between 0 and 255, received {self.f}")
+
+    def to_bytes(self) -> bytes:
+        """Encode as returned by QUERY_DALI_COLOUR (no address or arc level)."""
+        return struct.pack(
+            "BBBBBBB",
+            ZenColourType.RGBWAF.value,
+            self.r,
+            self.g,
+            self.b,
+            self.w if self.w is not None else 0,
+            self.a if self.a is not None else 0,
+            self.f if self.f is not None else 0,
+        )
+
+    def to_dict(self) -> dict[str, int | str | None]:
+        return {
+            "type": "rgbwaf",
+            "r": self.r,
+            "g": self.g,
+            "b": self.b,
+            "w": self.w,
+            "a": self.a,
+            "f": self.f,
+        }
+
+    def command_payload(self) -> bytes:
+        """Colour type and channel bytes for DALI_COLOUR (follows address and arc level)."""
+        return self.to_bytes()
+
+
+ZenColour = ZenTcColour | ZenXyColour | ZenRgbColour
+
+
+def colour_from_bytes(data: bytes) -> ZenColour | None:
+    """Decode a DALI colour payload; None if the bytes are not a known colour."""
+    match list(data):
+        case [ZenColourType.RGBWAF.value, r, g, b, *rest] if len(rest) <= 3:
+            # COLOUR_CHANGED_EVENT from a fixture with fewer than six channels
+            # carries only channels + 1 bytes, so an RGB fixture sends
+            # [0x80, R, G, B]. Channels the fixture does not have stay None.
+            w, a, f = (list(rest) + [None, None, None])[:3]
+            return ZenRgbColour(r=r, g=g, b=b, w=w, a=a, f=f)
+        case [ZenColourType.TC.value, hi, lo] | [ZenColourType.TC.value, hi, lo, *_]:
+            if len(data) not in (3, 7):
+                return None
+            return ZenTcColour(kelvin=(hi << 8) | lo)
+        case [ZenColourType.XY.value, xh, xl, yh, yl] | [ZenColourType.XY.value, xh, xl, yh, yl, *_]:
+            if len(data) not in (5, 7):
+                return None
+            return ZenXyColour(x=(xh << 8) | xl, y=(yh << 8) | yl)
+        case _:
+            return None
+
+
+def colour_from_dict(data: dict[str, Any] | None) -> ZenColour | None:
+    """Restore from ``to_dict`` output; None if data is None."""
+    if data is None:
+        return None
+    colour_type = ZenColourType[str(data["type"]).upper()]
+    match colour_type:
+        case ZenColourType.TC:
+            return ZenTcColour(kelvin=data["kelvin"])
+        case ZenColourType.RGBWAF:
+            return ZenRgbColour(
+                r=data["r"],
+                g=data["g"],
+                b=data["b"],
+                w=data.get("w"),
+                a=data.get("a"),
+                f=data.get("f"),
+            )
+        case ZenColourType.XY:
+            return ZenXyColour(x=data["x"], y=data["y"])
