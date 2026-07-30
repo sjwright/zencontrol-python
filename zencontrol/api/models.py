@@ -308,8 +308,6 @@ class ZenColour:
                 )
             case ZenColourType.XY:
                 return cls(type=colour_type, x=data.get("x"), y=data.get("y"))
-            case _:
-                return None
 
     def __post_init__(self) -> None:
         match self.type:

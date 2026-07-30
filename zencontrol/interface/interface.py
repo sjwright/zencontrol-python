@@ -18,8 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
-from typing import Any, Self, TypeVar
+from typing import Any, Self
 
 from ..api import (
     ZenAddress,
@@ -84,7 +83,8 @@ def _assign_light_sub_labels(lights: list[ZenLight] | set[ZenLight]) -> None:
             part = parts[i] if i < len(parts) else ""
             light.sub_label = part if part else f"Unused {light.address.number}"
 
-_TInstanceEntity = TypeVar("_TInstanceEntity")
+
+ZenEcdEntity = ZenButton | ZenMotionSensor | ZenAbsoluteInput
 
 
 class ZenControl:
@@ -122,8 +122,8 @@ class ZenControl:
         self._dispatcher = EventDispatcher(self.context, self.logger)
         self._discovery = ControllerDiscovery(self)
         self._session = ZenSession(self, event_handler=self._on_controller_event)
-        # Shared ECD instance list per controller; reused by get_buttons /
-        # get_motion_sensors / get_absolute_inputs until clear_entity_caches().
+        # Shared ECD instance list per controller; reused by get_instances
+        # until clear_entity_caches().
         self._ecd_instances_by_controller: dict[str, list[ZenInstance]] = {}
 
     async def __aenter__(self) -> Self:
@@ -428,9 +428,8 @@ class ZenControl:
     async def _scan_ecd_instances(self, controller: ZenController) -> list[ZenInstance]:
         """Return every ECD instance on ``controller`` (one query per address).
 
-        Results are cached until ``clear_entity_caches()`` so consecutive
-        ``get_buttons`` / ``get_motion_sensors`` / ``get_absolute_inputs``
-        calls share a single address-space scan.
+        Results are cached until ``clear_entity_caches()`` so repeated
+        ``get_instances`` calls share a single address-space scan.
         """
         cached = self._ecd_instances_by_controller.get(controller.name)
         if cached is not None:
@@ -441,45 +440,34 @@ class ZenControl:
         self._ecd_instances_by_controller[controller.name] = instances
         return instances
 
-    async def _get_instance_entities(
-        self,
-        *,
-        instance_type: ZenInstanceType,
-        create: Callable[[ZenInstance], Awaitable[_TInstanceEntity]],
-        controller: ZenController | None = None,
-    ) -> set[_TInstanceEntity]:
-        """Interview ECD instances of ``instance_type`` via ``create``."""
-        entities: set[_TInstanceEntity] = set()
+    async def get_instances(self, controller: ZenController | None = None) -> set[ZenEcdEntity]:
+        """Interview all ECD instances (buttons, motion sensors, absolute inputs)."""
+        entities: set[ZenEcdEntity] = set()
         controllers = [controller] if controller else self.controllers
         for ctrl in controllers:
             for instance in await self._scan_ecd_instances(ctrl):
-                if instance.type == instance_type:
-                    entities.add(await create(instance))
+                match instance.type:
+                    case ZenInstanceType.PUSH_BUTTON:
+                        entities.add(await ZenButton.create(ctx=self.context, instance=instance))
+                    case ZenInstanceType.OCCUPANCY_SENSOR:
+                        entities.add(await ZenMotionSensor.create(ctx=self.context, instance=instance))
+                    case ZenInstanceType.ABSOLUTE_INPUT:
+                        entities.add(await ZenAbsoluteInput.create(ctx=self.context, instance=instance))
+                    case _:
+                        continue
         return entities
 
     async def get_buttons(self, controller: ZenController | None = None) -> set[ZenButton]:
-        """Return a set of all buttons available (optionally for one controller)."""
-        return await self._get_instance_entities(
-            instance_type=ZenInstanceType.PUSH_BUTTON,
-            create=lambda instance: ZenButton.create(ctx=self.context, instance=instance),
-            controller=controller,
-        )
+        """Return push-button instances (prefer ``get_instances``)."""
+        return {e for e in await self.get_instances(controller) if isinstance(e, ZenButton)}
 
     async def get_motion_sensors(self, controller: ZenController | None = None) -> set[ZenMotionSensor]:
-        """Return a set of all motion sensors available (optionally for one controller)."""
-        return await self._get_instance_entities(
-            instance_type=ZenInstanceType.OCCUPANCY_SENSOR,
-            create=lambda instance: ZenMotionSensor.create(ctx=self.context, instance=instance),
-            controller=controller,
-        )
+        """Return occupancy-sensor instances (prefer ``get_instances``)."""
+        return {e for e in await self.get_instances(controller) if isinstance(e, ZenMotionSensor)}
 
     async def get_absolute_inputs(self, controller: ZenController | None = None) -> set[ZenAbsoluteInput]:
-        """Return absolute (numerical) ECD instances (optionally for one controller)."""
-        return await self._get_instance_entities(
-            instance_type=ZenInstanceType.ABSOLUTE_INPUT,
-            create=lambda instance: ZenAbsoluteInput.create(ctx=self.context, instance=instance),
-            controller=controller,
-        )
+        """Return absolute-input instances (prefer ``get_instances``)."""
+        return {e for e in await self.get_instances(controller) if isinstance(e, ZenAbsoluteInput)}
 
     async def get_system_variables(
         self,

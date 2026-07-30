@@ -85,7 +85,7 @@ health = zen.event_health_for(ctrl)  # RECEIVING / SILENT / …
 
 ## Entities
 
-`get_lights()`, `get_groups()`, `get_buttons()`, `get_motion_sensors()`, `get_absolute_inputs()`, `get_profiles()`, and `get_system_variables()` scan the controller(s) and return **singletons** for this `ZenControl` (same address → same object). Passing `controller=ctrl` limits the scan. The three ECD getters share one address-space instance scan (cached until `clear_entity_caches()`).
+`get_lights()`, `get_groups()`, `get_instances()`, `get_profiles()`, and `get_system_variables()` scan the controller(s) and return **singletons** for this `ZenControl` (same address → same object). Passing `controller=ctrl` limits the scan. `get_buttons()` / `get_motion_sensors()` / `get_absolute_inputs()` remain as filters over `get_instances()`.
 
 Each `create` / first fetch runs `interview()` (labels, features, membership, timers, …). Cached state (`light.level`, `sensor.occupied`, …) then updates from events and occasional refresh.
 
