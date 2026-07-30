@@ -37,23 +37,16 @@ async def on_button_press(button: ZenButton) -> None:
     print(f"Button Press Event       - ECD {inst.address.number} instance {inst.number}")
 
 
-async def on_light_change(light: ZenLight, level, colour, scene) -> None:
+async def on_light_change(*, light: ZenLight) -> None:
     ms()
     addr = light.address
-    print(f"Level Change Event       - {addr.type} {addr.number} level {level}")
+    print(f"Level Change Event       - {addr.type} {addr.number} level {light.level}")
 
 
-async def on_group_change(group: ZenGroup, level, colour, scene, discoordinated=False) -> None:
+async def on_group_change(*, group: ZenGroup, discoordinated: bool = False) -> None:
     ms()
     addr = group.address
-    print(f"Level Change Event Group - {addr.type} {addr.number} level {level}")
-
-
-async def on_scene_change_light(light: ZenLight, level, colour, scene) -> None:
-    if scene is not None:
-        ms()
-        addr = light.address
-        print(f"Scene Change Event       - {addr.type} {addr.number} scene {scene}")
+    print(f"Level Change Event Group - {addr.type} {addr.number} level {group.level}")
 
 
 def check_event_listener(zen: ZenControl) -> None:

@@ -1,11 +1,29 @@
+"""
+===================================================================================
+High-level interface: ZenControl composition root.
+===================================================================================
+
+ZenControl is the main entry point for the ZenControl library.
+It provides the high-level API for interacting with the ZenControl system.
+It is responsible for:
+- Discovering controllers
+- Adding and removing controllers
+- Configuring event monitoring
+- Discovering entities (lights, groups, scenes, etc.)
+- Maintaining lists of entities by controller
+"""
+
+
 from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Self
+from collections.abc import Awaitable, Callable
+from typing import Any, Self, TypeVar
 
 from ..api import (
     ZenAddress,
+    ZenInstance,
     ZenInstanceType,
 )
 from ..api.commands import ZenCommandClient
@@ -25,7 +43,6 @@ from .entities import (
     ZenMotionSensor,
     ZenProfile,
     ZenSystemVariable,
-    _assign_light_sub_labels,
 )
 from .session import ZenSession
 
@@ -34,6 +51,40 @@ from .session import ZenSession
 High-level interface: ZenControl composition root.
 ===================================================================================
 """
+
+
+def _assign_light_sub_labels(lights: list[ZenLight] | set[ZenLight]) -> None:
+    """Derive sub_label for lights that share a comma-separated label.
+
+    Controllers sometimes store one label string across several ECGs that share
+    a fitting, e.g. "Hallway,Bathroom,,Annex" on addresses 31-34 meaning
+    31=Hallway, 32=Bathroom, 33 unused, 34=Annex.
+
+    Only applied when multiple lights share an identical label that contains a
+    comma. Clusters are sorted by address number; empty segments become
+    Unused {number}. Lights outside such clusters keep sub_label=None.
+    """
+    for light in lights:
+        light.sub_label = None
+
+    clusters: dict[tuple[str, str], list[ZenLight]] = {}
+    for light in lights:
+        label = light.label
+        if not label or "," not in label:
+            continue
+        key = (light.address.controller.name, label)
+        clusters.setdefault(key, []).append(light)
+
+    for cluster in clusters.values():
+        if len(cluster) < 2:
+            continue
+        cluster.sort(key=lambda lt: lt.address.number)
+        parts = [part.strip() for part in (cluster[0].label or "").split(",")]
+        for i, light in enumerate(cluster):
+            part = parts[i] if i < len(parts) else ""
+            light.sub_label = part if part else f"Unused {light.address.number}"
+
+_TInstanceEntity = TypeVar("_TInstanceEntity")
 
 
 class ZenControl:
@@ -71,6 +122,9 @@ class ZenControl:
         self._dispatcher = EventDispatcher(self.context, self.logger)
         self._discovery = ControllerDiscovery(self)
         self._session = ZenSession(self, event_handler=self._on_controller_event)
+        # Shared ECD instance list per controller; reused by get_buttons /
+        # get_motion_sensors / get_absolute_inputs until clear_entity_caches().
+        self._ecd_instances_by_controller: dict[str, list[ZenInstance]] = {}
 
     async def __aenter__(self) -> Self:
         return self
@@ -134,6 +188,7 @@ class ZenControl:
     def clear_entity_caches(self) -> None:
         """Clear entity singleton registries for this ZenControl instance."""
         self.context.clear_entity_caches()
+        self._ecd_instances_by_controller.clear()
 
     @property
     def callbacks(self) -> ZenCallbacks:
@@ -370,47 +425,61 @@ class ZenControl:
         """Return all DALI addresses that have instances (full address-space scan)."""
         return await self.commands.query_dali_addresses_with_instances(controller)
 
+    async def _scan_ecd_instances(self, controller: ZenController) -> list[ZenInstance]:
+        """Return every ECD instance on ``controller`` (one query per address).
+
+        Results are cached until ``clear_entity_caches()`` so consecutive
+        ``get_buttons`` / ``get_motion_sensors`` / ``get_absolute_inputs``
+        calls share a single address-space scan.
+        """
+        cached = self._ecd_instances_by_controller.get(controller.name)
+        if cached is not None:
+            return cached
+        instances: list[ZenInstance] = []
+        for address in await self._get_addresses_with_instances(controller):
+            instances.extend(await self.commands.query_instances_by_address(address=address))
+        self._ecd_instances_by_controller[controller.name] = instances
+        return instances
+
+    async def _get_instance_entities(
+        self,
+        *,
+        instance_type: ZenInstanceType,
+        create: Callable[[ZenInstance], Awaitable[_TInstanceEntity]],
+        controller: ZenController | None = None,
+    ) -> set[_TInstanceEntity]:
+        """Interview ECD instances of ``instance_type`` via ``create``."""
+        entities: set[_TInstanceEntity] = set()
+        controllers = [controller] if controller else self.controllers
+        for ctrl in controllers:
+            for instance in await self._scan_ecd_instances(ctrl):
+                if instance.type == instance_type:
+                    entities.add(await create(instance))
+        return entities
+
     async def get_buttons(self, controller: ZenController | None = None) -> set[ZenButton]:
         """Return a set of all buttons available (optionally for one controller)."""
-        buttons: set[ZenButton] = set()
-        controllers = [controller] if controller else self.controllers
-        for ctrl in controllers:
-            addresses = await self._get_addresses_with_instances(ctrl)
-            for address in addresses:
-                instances = await self.commands.query_instances_by_address(address=address)
-                for instance in instances:
-                    if instance.type == ZenInstanceType.PUSH_BUTTON:
-                        button = await ZenButton.create(ctx=self.context, instance=instance)
-                        buttons.add(button)
-        return buttons
-    
+        return await self._get_instance_entities(
+            instance_type=ZenInstanceType.PUSH_BUTTON,
+            create=lambda instance: ZenButton.create(ctx=self.context, instance=instance),
+            controller=controller,
+        )
+
     async def get_motion_sensors(self, controller: ZenController | None = None) -> set[ZenMotionSensor]:
         """Return a set of all motion sensors available (optionally for one controller)."""
-        motion_sensors: set[ZenMotionSensor] = set()
-        controllers = [controller] if controller else self.controllers
-        for ctrl in controllers:
-            addresses = await self._get_addresses_with_instances(ctrl)
-            for address in addresses:
-                instances = await self.commands.query_instances_by_address(address=address)
-                for instance in instances:
-                    if instance.type == ZenInstanceType.OCCUPANCY_SENSOR:
-                        motion_sensor = await ZenMotionSensor.create(ctx=self.context, instance=instance)
-                        motion_sensors.add(motion_sensor)
-        return motion_sensors
+        return await self._get_instance_entities(
+            instance_type=ZenInstanceType.OCCUPANCY_SENSOR,
+            create=lambda instance: ZenMotionSensor.create(ctx=self.context, instance=instance),
+            controller=controller,
+        )
 
     async def get_absolute_inputs(self, controller: ZenController | None = None) -> set[ZenAbsoluteInput]:
         """Return absolute (numerical) ECD instances (optionally for one controller)."""
-        absolute_inputs: set[ZenAbsoluteInput] = set()
-        controllers = [controller] if controller else self.controllers
-        for ctrl in controllers:
-            addresses = await self._get_addresses_with_instances(ctrl)
-            for address in addresses:
-                instances = await self.commands.query_instances_by_address(address=address)
-                for instance in instances:
-                    if instance.type == ZenInstanceType.ABSOLUTE_INPUT:
-                        absolute_input = await ZenAbsoluteInput.create(ctx=self.context, instance=instance)
-                        absolute_inputs.add(absolute_input)
-        return absolute_inputs
+        return await self._get_instance_entities(
+            instance_type=ZenInstanceType.ABSOLUTE_INPUT,
+            create=lambda instance: ZenAbsoluteInput.create(ctx=self.context, instance=instance),
+            controller=controller,
+        )
 
     async def get_system_variables(
         self,

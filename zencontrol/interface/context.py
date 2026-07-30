@@ -15,7 +15,6 @@ from ..api.commands import ZenCommandClient
 from ..api.models import DiscoveredController
 
 if TYPE_CHECKING:
-    from ..api.models import ZenColour
     from .entities import (
         ZenAbsoluteInput,
         ZenButton,
@@ -47,11 +46,11 @@ class ProfileChangeHandler(Protocol):
 
 
 class GroupChangeHandler(Protocol):
-    def __call__(self, *, group: ZenGroup, level: int | None = None, colour: ZenColour | None = None, scene: int | None = None, discoordinated: bool = False) -> Awaitable[None]: ...
+    def __call__(self, *, group: ZenGroup, discoordinated: bool = False) -> Awaitable[None]: ...
 
 
 class LightChangeHandler(Protocol):
-    def __call__(self, *, light: ZenLight, level: int | None = None, colour: ZenColour | None = None, scene: int | None = None) -> Awaitable[None]: ...
+    def __call__(self, *, light: ZenLight) -> Awaitable[None]: ...
 
 
 class ButtonPressHandler(Protocol):
@@ -59,15 +58,15 @@ class ButtonPressHandler(Protocol):
 
 
 class AbsoluteInputChangeHandler(Protocol):
-    def __call__(self, *, absolute_input: ZenAbsoluteInput, value: int) -> Awaitable[None]: ...
+    def __call__(self, *, absolute_input: ZenAbsoluteInput) -> Awaitable[None]: ...
 
 
 class MotionEventHandler(Protocol):
-    def __call__(self, *, sensor: ZenMotionSensor, occupied: bool) -> Awaitable[None]: ...
+    def __call__(self, *, sensor: ZenMotionSensor) -> Awaitable[None]: ...
 
 
 class SystemVariableChangeHandler(Protocol):
-    def __call__(self, *, system_variable: ZenSystemVariable, value: int | None, changed: bool, by_me: bool) -> Awaitable[None]: ...
+    def __call__(self, *, system_variable: ZenSystemVariable, by_me: bool = False) -> Awaitable[None]: ...
 
 
 class ControllerDiscoveredHandler(Protocol):

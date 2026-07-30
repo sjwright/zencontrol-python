@@ -138,25 +138,25 @@ async def test_start_receives_injected_and_control_events(live_zen):
     async def on_hold(button):
         hold_events.append(button)
 
-    async def on_motion(sensor, occupied):
-        motion_events.append((sensor, occupied))
+    async def on_motion(*, sensor):
+        motion_events.append((sensor, sensor.occupied))
 
-    async def on_absolute(absolute_input, value):
-        absolute_events.append((absolute_input, value))
+    async def on_absolute(*, absolute_input):
+        absolute_events.append((absolute_input, absolute_input.value))
 
     async def on_profile(profile):
         profile_events.append(profile)
 
-    async def on_sysvar(system_variable, value, changed, by_me):
-        sysvar_events.append((system_variable.id, value))
+    async def on_sysvar(*, system_variable, by_me=False):
+        sysvar_events.append((system_variable.id, system_variable.value))
 
-    async def on_light(*, light, level=None, colour=None, scene=None, **kwargs):
-        light_events.append((light.address.number, level, colour, scene))
-        if colour is not None:
-            colour_events.append((light.address.number, colour))
+    async def on_light(*, light, **kwargs):
+        light_events.append((light.address.number, light.level, light.colour, light.scene))
+        if light.colour is not None:
+            colour_events.append((light.address.number, light.colour))
 
-    async def on_group(*, group, level=None, colour=None, scene=None, **kwargs):
-        group_events.append((group.address.number, level, colour, scene))
+    async def on_group(*, group, **kwargs):
+        group_events.append((group.address.number, group.level, group.colour, group.scene))
 
     zen.callbacks.button_press = on_button
     zen.callbacks.button_long_press = on_hold

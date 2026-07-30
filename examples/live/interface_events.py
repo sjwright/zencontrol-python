@@ -1,5 +1,5 @@
 import asyncio
-from zencontrol import ZenControl, ZenProfile, ZenGroup, ZenLight, ZenButton, ZenMotionSensor, ZenSystemVariable, ZenColour, run_with_keyboard_interrupt
+from zencontrol import ZenControl, ZenProfile, ZenGroup, ZenLight, ZenButton, ZenMotionSensor, ZenSystemVariable, run_with_keyboard_interrupt
 import yaml
 from pathlib import Path
 import time
@@ -20,13 +20,13 @@ async def main():
         ms()
         print(f"Profile Change Event     - {profile}")
 
-    async def _zen_group_change(group: ZenGroup, level: int | None = None, colour: ZenColour | None = None, scene: int | None = None, discoordinated: bool = False) -> None:
+    async def _zen_group_change(*, group: ZenGroup, discoordinated: bool = False) -> None:
         ms()
-        print(f"Group Change Event       - {group} level {level} colour {colour} scene {scene} {'discoordinated' if discoordinated else ''}")
+        print(f"Group Change Event       - {group} level {group.level} colour {group.colour} scene {group.scene} {'discoordinated' if discoordinated else ''}")
 
-    async def _zen_light_change(light: ZenLight, level: int | None = None, colour: ZenColour | None = None, scene: int | None = None) -> None:
+    async def _zen_light_change(*, light: ZenLight) -> None:
         ms()
-        print(f"Light Change Event       - {light} level {level} colour {colour} scene {scene}")
+        print(f"Light Change Event       - {light} level {light.level} colour {light.colour} scene {light.scene}")
 
     async def _zen_button_press(button: ZenButton) -> None:
         ms()
@@ -36,13 +36,13 @@ async def main():
         ms()
         print(f"Button Long Press Event  - {button}")
 
-    async def _zen_motion_event(sensor: ZenMotionSensor, occupied: bool) -> None:
+    async def _zen_motion_event(*, sensor: ZenMotionSensor) -> None:
         ms()
-        print(f"Motion Event             - {sensor} {'occupied' if occupied else 'not occupied'}")
+        print(f"Motion Event             - {sensor} {'occupied' if sensor.occupied else 'not occupied'}")
 
-    async def _zen_system_variable_change(system_variable: ZenSystemVariable, value: int, changed: bool, by_me: bool) -> None:
+    async def _zen_system_variable_change(*, system_variable: ZenSystemVariable, by_me: bool = False) -> None:
         ms()
-        print(f"System Variable Change   - {system_variable} value {value} {'changed' if changed else 'not changed'} {'by me' if by_me else 'by someone else'}")
+        print(f"System Variable Change   - {system_variable} value {system_variable.value} {'by me' if by_me else 'by someone else'}")
 
     timevar = None
     def ms():

@@ -15,8 +15,8 @@ Most integrations only need this layer. Drop to [API](api.md) when you want type
 import asyncio
 import zencontrol
 
-async def on_light_change(*, light, level=None, colour=None, scene=None) -> None:
-    print(light, level, colour, scene)
+async def on_light_change(*, light) -> None:
+    print(light, light.level, light.colour, light.scene)
 
 async def on_resync() -> None:
     # Recoverable event-session gap — re-poll anything you cache locally
@@ -85,7 +85,7 @@ health = zen.event_health_for(ctrl)  # RECEIVING / SILENT / …
 
 ## Entities
 
-`get_lights()`, `get_groups()`, `get_buttons()`, `get_motion_sensors()`, `get_absolute_inputs()`, `get_profiles()`, and `get_system_variables()` scan the controller(s) and return **singletons** for this `ZenControl` (same address → same object). Passing `controller=ctrl` limits the scan.
+`get_lights()`, `get_groups()`, `get_buttons()`, `get_motion_sensors()`, `get_absolute_inputs()`, `get_profiles()`, and `get_system_variables()` scan the controller(s) and return **singletons** for this `ZenControl` (same address → same object). Passing `controller=ctrl` limits the scan. The three ECD getters share one address-space instance scan (cached until `clear_entity_caches()`).
 
 Each `create` / first fetch runs `interview()` (labels, features, membership, timers, …). Cached state (`light.level`, `sensor.occupied`, …) then updates from events and occasional refresh.
 
@@ -118,12 +118,12 @@ All hooks are on `zen.callbacks` (`ZenCallbacks`). Wire events are dispatched **
 
 | Callback | Arguments (keyword) | When |
 | --- | --- | --- |
-| `light_change` | `light`, `level`, `colour`, `scene` | Gear level / colour / scene changed |
-| `group_change` | `group`, `level`, `colour`, `scene`, `discoordinated` | Group target changed |
+| `light_change` | `light` | Gear level / colour / scene changed — read state from the entity |
+| `group_change` | `group`, `discoordinated` | Group target changed — read state from the entity; `discoordinated=True` when members diverge |
 | `button_press` / `button_long_press` | `button` | ECD push button |
-| `motion_event` | `sensor`, `occupied` | Occupancy |
-| `absolute_input_change` | `absolute_input`, `value` | Dial / slider |
-| `system_variable_change` | `system_variable`, `value`, `changed`, `by_me` | SV update |
+| `motion_event` | `sensor` | Occupancy — read `sensor.occupied` |
+| `absolute_input_change` | `absolute_input` | Dial / slider — read `absolute_input.value` |
+| `system_variable_change` | `system_variable`, `by_me` | SV update — read `system_variable.value`; `by_me=True` when this process set it |
 | `profile_change` | `profile` | Active profile |
 | `on_resync` | *(none)* | Recoverable session gap after re-arm — **not** a hard disconnect |
 | `on_disconnect` | *(none)* | Session actually torn down |

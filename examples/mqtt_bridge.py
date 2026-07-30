@@ -779,10 +779,15 @@ class ZenMQTTBridge:
             self.logger.info(f"♥️💡 Command from HA: {ctrl.name} turning gear {addr.number} ON")
             await light.on()
 
-    async def _zen_light_change(self, light: ZenLight, level: int | None = None, colour: ZenColour | None = None, scene: int | None = None) -> None:
+    async def _zen_light_change(self, *, light: ZenLight) -> None:
         typestr = "group" if light.address.type == ZenAddressType.GROUP else "light"
         emoji = "👥" if light.address.type == ZenAddressType.GROUP else "💡"
-        self.logger.info(f"🩵{emoji} Event from Zen: {typestr} {light.address.number}  level {level if level is not None else '--'}  colour {colour if colour is not None else '--'}  scene {scene if scene is not None else '--'}")
+        self.logger.info(
+            f"🩵{emoji} Event from Zen: {typestr} {light.address.number}  "
+            f"level {light.level if light.level is not None else '--'}  "
+            f"colour {light.colour if light.colour is not None else '--'}  "
+            f"scene {light.scene if light.scene is not None else '--'}"
+        )
         
         # log traceback
         # self.logger.debug(f"   stack trace: {traceback.format_stack()}")
@@ -874,17 +879,17 @@ class ZenMQTTBridge:
     
     # mqtt group light change calls _mqtt_light_change
         
-    async def _zen_group_change(self, group: ZenGroup, level: int | None = None, colour: ZenColour | None = None, scene: int | None = None, discoordinated: bool | None = None) -> None:
+    async def _zen_group_change(self, *, group: ZenGroup, discoordinated: bool = False) -> None:
         select_mqtt_topic = group.client_data.get("select", {}).get('mqtt_topic', None)
 
         # Get the scene label for the ID from the group
-        if select_mqtt_topic and scene is not None:
-            scene_label = group.get_scene_label_from_number(scene)
+        if select_mqtt_topic and group.scene is not None:
+            scene_label = group.get_scene_label_from_number(group.scene)
             if scene_label is not None:
                 await self._publish_state(select_mqtt_topic, scene_label)
             else:
                 await self._publish_state(select_mqtt_topic, "None")
-                self.logger.warning(f"Group {group} has no scene with ID {scene}")
+                self.logger.warning(f"Group {group} has no scene with ID {group.scene}")
         
         # If discoordinated, set the group-light's state to null and return
         if discoordinated:
@@ -895,7 +900,7 @@ class ZenMQTTBridge:
             return
         
         # Do light stuff
-        await self._zen_light_change(light=group, level=level, colour=colour, scene=scene)
+        await self._zen_light_change(light=group)
 
     # ================================
     #           BUTTONS
@@ -967,13 +972,13 @@ class ZenMQTTBridge:
         # Return all motion sensors
         return sensors
     
-    async def _zen_motion_event(self, sensor: ZenMotionSensor, occupied: bool) -> None:
-        self.logger.debug(f"🩵👀 Event from Zen: sensor {sensor} occupied: {occupied}")
+    async def _zen_motion_event(self, *, sensor: ZenMotionSensor) -> None:
+        self.logger.debug(f"🩵👀 Event from Zen: sensor {sensor} occupied: {sensor.occupied}")
         mqtt_topic = sensor.client_data.get("binary_sensor", {}).get("mqtt_topic", None)
         if not mqtt_topic:
             self.logger.error(f"Sensor {sensor} has no MQTT topic")
             return
-        await self._publish_state(mqtt_topic, "ON" if occupied else "OFF")
+        await self._publish_state(mqtt_topic, "ON" if sensor.occupied else "OFF")
 
     # ================================
     #        SYSTEM VARIABLES
@@ -1030,9 +1035,9 @@ class ZenMQTTBridge:
         elif sysvar.client_data.get("sensor", None):
             return # Read only
 
-    async def _zen_system_variable_change(self, system_variable: ZenSystemVariable, value:int, changed: bool, by_me: bool) -> None:
+    async def _zen_system_variable_change(self, *, system_variable: ZenSystemVariable, by_me: bool = False) -> None:
+        value = system_variable.value
         self.logger.debug(f"🩵⚡️ Event from Zen: {system_variable.controller.name} system variable {system_variable.id} set to {value}")
-        # print(f"System Variable Change Event - controller {system_variable.controller.name} system_variable {system_variable.id} value {value} changed {changed} by_me {by_me}")
         if system_variable.client_data.get("switch", None):
             mqtt_topic = system_variable.client_data["switch"]["mqtt_topic"]
             await self._publish_state(mqtt_topic, "OFF" if value == 0 else "ON")
