@@ -139,17 +139,20 @@ class EntityRegistry:
     def purge_controller(self, controller_name: str) -> None:
         """Drop cached entities that belong to ``controller_name``."""
         self.controllers.pop(controller_name, None)
-        for store in (
-            self.profiles,
-            self.lights,
-            self.groups,
-            self.buttons,
-            self.absolute_inputs,
-            self.motion_sensors,
-            self.system_variables,
-        ):
-            for key in [k for k in store if k[0] == controller_name]:
-                store.pop(key, None)
+        for profile_key in [k for k in self.profiles if k[0] == controller_name]:
+            del self.profiles[profile_key]
+        for light_key in [k for k in self.lights if k[0] == controller_name]:
+            del self.lights[light_key]
+        for group_key in [k for k in self.groups if k[0] == controller_name]:
+            del self.groups[group_key]
+        for button_key in [k for k in self.buttons if k[0] == controller_name]:
+            del self.buttons[button_key]
+        for absolute_key in [k for k in self.absolute_inputs if k[0] == controller_name]:
+            del self.absolute_inputs[absolute_key]
+        for motion_key in [k for k in self.motion_sensors if k[0] == controller_name]:
+            del self.motion_sensors[motion_key]
+        for sysvar_key in [k for k in self.system_variables if k[0] == controller_name]:
+            del self.system_variables[sysvar_key]
 
 
 class EntityContext:
