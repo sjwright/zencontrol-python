@@ -22,47 +22,6 @@ from ..api.types import Const
 from .context import EntityContext
 
 
-def _serialize_colour(colour: ZenColour | None) -> dict[str, int | str | None] | None:
-    if colour is None or colour.type is None:
-        return None
-    data: dict[str, int | str | None] = {"type": colour.type.name.lower()}
-    match colour.type:
-        case ZenColourType.TC:
-            data["kelvin"] = colour.kelvin
-        case ZenColourType.RGBWAF:
-            data["r"] = colour.r
-            data["g"] = colour.g
-            data["b"] = colour.b
-            data["w"] = colour.w
-            data["a"] = colour.a
-            data["f"] = colour.f
-        case ZenColourType.XY:
-            data["x"] = colour.x
-            data["y"] = colour.y
-    return data
-
-
-def _hydrate_colour(data: dict[str, Any] | None) -> ZenColour | None:
-    if data is None:
-        return None
-    colour_type = ZenColourType[str(data["type"]).upper()]
-    match colour_type:
-        case ZenColourType.TC:
-            return ZenColour(type=colour_type, kelvin=data.get("kelvin"))
-        case ZenColourType.RGBWAF:
-            return ZenColour(
-                type=colour_type,
-                r=data.get("r"),
-                g=data.get("g"),
-                b=data.get("b"),
-                w=data.get("w"),
-                a=data.get("a"),
-                f=data.get("f"),
-            )
-        case ZenColourType.XY:
-            return ZenColour(type=colour_type, x=data.get("x"), y=data.get("y"))
-
-
 def _serialize_group_address(address: ZenAddress) -> dict[str, int]:
     return {"number": address.number}
 
@@ -570,7 +529,7 @@ class ZenLight(ZenControlGear):
             "features": dict(self.features),
             "properties": dict(self.properties),
             "scene_levels": list(self._scene_levels),
-            "scene_colours": [_serialize_colour(colour) for colour in self._scene_colours],
+            "scene_colours": [colour.to_dict() if colour is not None else None for colour in self._scene_colours],
         })
     def interview_hydrate(self, data: str | dict[str, Any]) -> bool:
         try:
@@ -582,7 +541,7 @@ class ZenLight(ZenControlGear):
             self.features.update(data.get("features", {}))
             self.properties.update(data.get("properties", {}))
             self._scene_levels = list(data.get("scene_levels", []))
-            self._scene_colours = [_hydrate_colour(colour) for colour in data.get("scene_colours", [])]
+            self._scene_colours = [ZenColour.from_dict(colour) for colour in data.get("scene_colours", [])]
             membership = [
                 ZenAddress(controller=self.address.controller, type=ZenAddressType.GROUP, number=group["number"])
                 for group in data.get("group_membership", [])

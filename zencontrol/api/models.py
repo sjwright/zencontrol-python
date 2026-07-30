@@ -24,7 +24,7 @@ import logging
 import struct
 import time
 from dataclasses import dataclass, field
-from typing import Protocol, Self
+from typing import Any, Protocol, Self
 
 from .types import Const, ZenAddressType, ZenColourType, ZenInstanceType
 
@@ -287,6 +287,30 @@ class ZenColour:
             case _:
                 return None
     
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> Self | None:
+        """Restore from ``to_dict`` output; None if data is None."""
+        if data is None:
+            return None
+        colour_type = ZenColourType[str(data["type"]).upper()]
+        match colour_type:
+            case ZenColourType.TC:
+                return cls(type=colour_type, kelvin=data.get("kelvin"))
+            case ZenColourType.RGBWAF:
+                return cls(
+                    type=colour_type,
+                    r=data.get("r"),
+                    g=data.get("g"),
+                    b=data.get("b"),
+                    w=data.get("w"),
+                    a=data.get("a"),
+                    f=data.get("f"),
+                )
+            case ZenColourType.XY:
+                return cls(type=colour_type, x=data.get("x"), y=data.get("y"))
+            case _:
+                return None
+
     def __post_init__(self) -> None:
         match self.type:
             case ZenColourType.TC:
@@ -369,6 +393,26 @@ class ZenColour:
                 return struct.pack(">BHH", 0x10, self.x, self.y)
             case _:
                 return b""
+    
+    def to_dict(self) -> dict[str, int | str | None] | None:
+        """Serialize for interview cache / JSON; None if type is unset."""
+        if self.type is None:
+            return None
+        data: dict[str, int | str | None] = {"type": self.type.name.lower()}
+        match self.type:
+            case ZenColourType.TC:
+                data["kelvin"] = self.kelvin
+            case ZenColourType.RGBWAF:
+                data["r"] = self.r
+                data["g"] = self.g
+                data["b"] = self.b
+                data["w"] = self.w
+                data["a"] = self.a
+                data["f"] = self.f
+            case ZenColourType.XY:
+                data["x"] = self.x
+                data["y"] = self.y
+        return data
 
     def command_payload(self) -> bytes:
         """Colour type and channel bytes for DALI_COLOUR (follows address and arc level)."""
