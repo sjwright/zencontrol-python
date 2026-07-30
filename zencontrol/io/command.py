@@ -35,7 +35,7 @@ Basic example:
 import asyncio
 import logging
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Self, cast
@@ -129,7 +129,7 @@ class ZenResponse:
 class ZenRequestProtocol(asyncio.DatagramProtocol):
     def __init__(
         self,
-        response_handler: Callable[[bytes, tuple[str, int]], Awaitable[None]],
+        response_handler: Callable[[bytes, tuple[str, int]], None],
         logger: logging.Logger | None = None,
         on_transport_lost: Callable[[Exception | None], None] | None = None,
     ) -> None:
@@ -142,17 +142,9 @@ class ZenRequestProtocol(asyncio.DatagramProtocol):
         self.transport = cast(asyncio.DatagramTransport, transport)
         
     def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
-        self._run_handler(self.response_handler(data, addr))
-
-    def _run_handler(self, coro: Awaitable[None]) -> None:
-        task = asyncio.ensure_future(coro)
-        task.add_done_callback(self._handler_done)
-
-    def _handler_done(self, task: asyncio.Task[None]) -> None:
-        if task.cancelled():
-            return
-        exc = task.exception()
-        if exc:
+        try:
+            self.response_handler(data, addr)
+        except Exception as exc:
             self.logger.error(f"Response handler failed: {exc}", exc_info=exc)
         
     def error_received(self, exc: Exception) -> None:
@@ -347,7 +339,7 @@ class ZenClient:
                 f"RTT: {rtt_ms:.0f}ms",
             )
 
-    async def _receive_response(self, datagram: bytes, addr: tuple[str, int]) -> None:
+    def _receive_response(self, datagram: bytes, addr: tuple[str, int]) -> None:
         
         # Too short to be a valid packet
         if len(datagram) < 4:

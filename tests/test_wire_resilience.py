@@ -339,7 +339,7 @@ async def test_invalid_checksum_completes_pending_as_invalid() -> None:
     client._pending[7] = (fut, req)
 
     # OK type, seq 7, len 0, bad checksum
-    await client._receive_response(bytes([0xA0, 7, 0, 0xFF]), ("127.0.0.1", 5108))
+    client._receive_response(bytes([0xA0, 7, 0, 0xFF]), ("127.0.0.1", 5108))
     assert fut.done()
     assert fut.result().response_type == ZenResponseType.INVALID
 
