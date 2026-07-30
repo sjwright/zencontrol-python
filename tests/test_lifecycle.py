@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from zencontrol import ZenControl, ZenLight
+from zencontrol import ZenControl
 from zencontrol.api.models import ZenAddress
 from zencontrol.api.types import ZenAddressType
 
@@ -29,8 +29,8 @@ async def test_remove_controller_closes_client_and_purges_cache() -> None:
     fake_client.close = AsyncMock()
     zen.commands.set_client(ctrl_a, fake_client)
     address = ZenAddress(controller=ctrl_a, type=ZenAddressType.ECG, number=1)
-    ZenLight(ctx=zen.context, address=address)
-    assert "ctrl-a 1" in zen.context.registry.lights
+    zen.context.light(address)
+    assert ("ctrl-a", 1) in zen.context.registry.lights
 
     # Stale dispatch-tail entry must not survive remove.
     async def _noop() -> None:
@@ -45,7 +45,7 @@ async def test_remove_controller_closes_client_and_purges_cache() -> None:
     assert zen.commands.client_for(ctrl_a) is None
     assert zen.controllers == [ctrl_b]
     assert "ctrl-a" not in zen.context.registry.controllers
-    assert "ctrl-a 1" not in zen.context.registry.lights
+    assert ("ctrl-a", 1) not in zen.context.registry.lights
     assert "ctrl-b" in zen.context.registry.controllers
     assert "ctrl-a" not in zen._dispatcher.tail
     assert "ctrl-b" in zen._dispatcher.tail
@@ -70,8 +70,8 @@ async def test_aclose_closes_clients_and_clears_instances() -> None:
     zen.commands.set_client(ctrl, fake_client)
 
     address = ZenAddress(controller=ctrl, type=ZenAddressType.ECG, number=1)
-    ZenLight(ctx=zen.context, address=address)
-    assert "ctrl-a 1" in zen.context.registry.lights
+    zen.context.light(address)
+    assert ("ctrl-a", 1) in zen.context.registry.lights
     assert "ctrl-a" in zen.context.registry.controllers
 
     await zen.aclose()
@@ -118,12 +118,12 @@ async def test_stop_does_not_clear_entity_caches() -> None:
         port=5108,
     )
     address = ZenAddress(controller=ctrl, type=ZenAddressType.ECG, number=2)
-    ZenLight(ctx=zen.context, address=address)
+    zen.context.light(address)
 
     # stop without ever starting should be a no-op for disconnect
     await zen.stop()
 
-    assert "ctrl-b 2" in zen.context.registry.lights
+    assert ("ctrl-b", 2) in zen.context.registry.lights
     assert "ctrl-b" in zen.context.registry.controllers
     await zen.aclose()
 
@@ -131,8 +131,8 @@ async def test_stop_does_not_clear_entity_caches() -> None:
 def test_clear_entity_caches_clears_context_registry() -> None:
     zen = ZenControl()
     zen.context.registry.controllers["x"] = MagicMock()
-    zen.context.registry.lights["x"] = MagicMock()
-    zen.context.registry.groups["x"] = MagicMock()
+    zen.context.registry.lights[("x", 0)] = MagicMock()
+    zen.context.registry.groups[("x", 0)] = MagicMock()
 
     zen.clear_entity_caches()
 

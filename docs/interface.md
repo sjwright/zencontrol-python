@@ -87,6 +87,8 @@ health = zen.event_health_for(ctrl)  # RECEIVING / SILENT / …
 
 `get_lights()`, `get_groups()`, `get_instances()`, `get_profiles()`, and `get_system_variables()` scan the controller(s) and return **singletons** for this `ZenControl` (same address → same object). Passing `controller=ctrl` limits the scan. `get_buttons()` / `get_motion_sensors()` / `get_absolute_inputs()` remain as filters over `get_instances()`.
 
+Identity is owned by `zen.context` factories (`ctx.light(address)`, `ctx.group(address)`, …). Prefer those (or the async `ctx.create_*` interview wrappers) over constructing entity classes directly.
+
 Each `create` / first fetch runs `interview()` (labels, features, membership, timers, …). Cached state (`light.level`, `sensor.occupied`, …) then updates from events and occasional refresh.
 
 | Type | Control / read highlights |

@@ -480,8 +480,8 @@ class ZenControl:
     def add_controller(
         self, id: int, name: str, label: str, host: str, port: int = 5108, mac: str | None = None, filtering: bool = False
     ) -> ZenController:
-        controller = ZenController(
-            ctx=self.context, id=id, name=name, label=label, host=host, port=port, mac=mac, filtering=filtering
+        controller = self.context.controller(
+            id=id, name=name, label=label, host=host, port=port, mac=mac, filtering=filtering
         )
         self.controllers.append(controller)
         self.identities.forget(host=host, mac=mac)
@@ -641,7 +641,7 @@ class ZenControl:
             if numbers is None:
                 continue
             for number in numbers:
-                profile = await ZenProfile.create(ctx=self.context, controller=ctrl, number=number)
+                profile = await self.context.create_profile(ctrl, number)
                 profiles.add(profile)
         return profiles
 
@@ -652,7 +652,7 @@ class ZenControl:
         for ctrl in controllers:
             addresses = await self.commands.query_group_numbers(controller=ctrl)
             for address in addresses:
-                group = await ZenGroup.create(ctx=self.context, address=address)
+                group = await self.context.create_group(address)
                 groups.add(group)
         return groups
 
@@ -663,7 +663,7 @@ class ZenControl:
         for ctrl in controllers:
             addresses = await self.commands.query_control_gear_dali_addresses(controller=ctrl)
             for address in addresses:
-                light = await ZenLight.create(ctx=self.context, address=address)
+                light = await self.context.create_light(address)
                 lights.add(light)
         # Second pass: labels are known; split shared comma-labels into sub_labels.
         _assign_light_sub_labels(lights)
@@ -696,11 +696,11 @@ class ZenControl:
             for instance in await self._scan_ecd_instances(ctrl):
                 match instance.type:
                     case ZenInstanceType.PUSH_BUTTON:
-                        entities.add(await ZenButton.create(ctx=self.context, instance=instance))
+                        entities.add(await self.context.create_button(instance))
                     case ZenInstanceType.OCCUPANCY_SENSOR:
-                        entities.add(await ZenMotionSensor.create(ctx=self.context, instance=instance))
+                        entities.add(await self.context.create_motion_sensor(instance))
                     case ZenInstanceType.ABSOLUTE_INPUT:
-                        entities.add(await ZenAbsoluteInput.create(ctx=self.context, instance=instance))
+                        entities.add(await self.context.create_absolute_input(instance))
                     case _:
                         continue
         return entities
@@ -731,7 +731,7 @@ class ZenControl:
                 label = await self.commands.query_system_variable_name(controller=ctrl, variable=variable)
                 if label:
                     failed_attempts = 0
-                    sysvar = await ZenSystemVariable.create(ctx=self.context, controller=ctrl, id=variable, label=label)
+                    sysvar = await self.context.create_system_variable(ctrl, variable, label=label)
                     sysvars.add(sysvar)
                 else:
                     failed_attempts += 1

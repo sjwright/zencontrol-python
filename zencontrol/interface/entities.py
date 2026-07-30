@@ -6,7 +6,7 @@ import asyncio
 import json
 import time
 from collections.abc import Coroutine
-from typing import Any, Self, cast
+from typing import Any, cast
 
 from ..api import (
     ZenRgbColour,
@@ -21,7 +21,7 @@ from ..api import (
 )
 from ..api import ZenController as SuperZenController
 from ..api.commands import ZenCommandClient
-from ..api.models import ControllerRef, mac_to_bytes
+from ..api.models import ControllerRef
 from ..api.types import Const
 from .context import EntityContext
 
@@ -84,35 +84,17 @@ class ZenController(SuperZenController):
     sysvars: set[ZenSystemVariable]
     client_data: dict[str, Any]
 
-    def __new__(cls, ctx: EntityContext, id: int, name: str, label: str, host: str, port: int = 5108, mac: str | None = None, filtering: bool = False) -> ZenController:
-        # Unique per context + controller name
-        registry = ctx.registry.controllers
-        if name not in registry:
-            inst = super().__new__(cls)
-            registry[name] = inst
-            inst.connected = False
-            object.__setattr__(inst, "_ip", None)
-            object.__setattr__(inst, "_dataclass_initialized", False)
-            inst._reset()
-            # Don't call interview() here - it will be called async later
-        inst = registry[name]
-        # Always refresh config fields; never wipe transport/interview state via __init__
-        inst.ctx = ctx
-        inst.commands = ctx.commands
-        inst.id = str(id)
-        inst.name = name
-        inst.label = label
-        inst.host = host
-        inst.port = port
-        inst.mac = mac  # mac_bytes is derived from mac
-        inst.filtering = filtering
-        mac_to_bytes(mac)  # eager validate on config refresh
-        return cast(ZenController, inst)
-
-    def __init__(self, ctx: EntityContext, id: int, name: str, label: str, host: str, port: int = 5108, mac: str | None = None, filtering: bool = False) -> None:
-        # Dataclass __init__ resets version/etc. Run only once per singleton.
-        if getattr(self, "_dataclass_initialized", False):
-            return
+    def __init__(
+        self,
+        ctx: EntityContext,
+        id: int,
+        name: str,
+        label: str,
+        host: str,
+        port: int = 5108,
+        mac: str | None = None,
+        filtering: bool = False,
+    ) -> None:
         super().__init__(
             id=str(id),
             name=name,
@@ -124,18 +106,13 @@ class ZenController(SuperZenController):
         )
         self.ctx = ctx
         self.commands = ctx.commands
-        object.__setattr__(self, "_dataclass_initialized", True)
-    
-    @classmethod
-    async def create(cls, ctx: EntityContext, id: int, name: str, label: str, host: str, port: int = 5108, mac: str | None = None, filtering: bool = False) -> ZenController:
-        """Async factory method for ZenController"""
-        controller = cls(ctx=ctx, id=id, name=name, label=label, host=host, port=port, mac=mac, filtering=filtering)
-        await controller.interview()
-        return controller
+        self.connected = False
+        self._reset()
+
     def __repr__(self) -> str:
         return f"ZenController<{self.name}>"
     def _reset(self) -> None:
-        # label is set from config in __new__ or from interview(); not runtime state
+        # label is set from config via EntityContext.controller() or interview()
         self.version = None
         self.profile = None
         self.profiles = set()
@@ -155,17 +132,17 @@ class ZenController(SuperZenController):
         self.version = await commands.query_controller_version_number(self)
         current_profile = await commands.query_current_profile_number(self)
         if current_profile is not None:
-            self.profile = ZenProfile(ctx=self.ctx, controller=self, number=current_profile)
+            self.profile = self.ctx.profile(self, current_profile)
         self.connected = True
         return True
     async def _event_received(self, profile: int | None = None) -> None:
         if profile is not None:
-            self.profile = ZenProfile(ctx=self.ctx, controller=self, number=profile)
+            self.profile = self.ctx.profile(self, profile)
             cb = self.ctx.callbacks.profile_change
             if callable(cb):
                 await cb(profile=self.profile)
     def get_sysvar(self, id: int) -> ZenSystemVariable:
-        return ZenSystemVariable(ctx=self.ctx, controller=self, id=id)
+        return self.ctx.system_variable(self, id)
     async def is_controller_ready(self) -> bool | None:
         return await self.commands.query_controller_startup_complete(self)
     async def is_dali_ready(self) -> bool | None:
@@ -207,31 +184,13 @@ class ZenProfile:
     label: str | None = None
     client_data: dict[str, Any]
 
-    def __new__(cls, ctx: EntityContext, controller: ZenController, number: int) -> ZenProfile:
-        # Unique per context + controller + profile number
-        compound_id = f"{controller.name} {number}"
-        registry = ctx.registry.profiles
-        if compound_id not in registry:
-            inst = super().__new__(cls)
-            registry[compound_id] = inst
-            inst.ctx = ctx
-            inst.commands = ctx.commands
-            inst.controller = controller
-            inst.number = number
-            inst._reset()
-            # Don't call interview() here - it will be called async later
-        return cast(ZenProfile, registry[compound_id])
-
     def __init__(self, ctx: EntityContext, controller: ZenController, number: int) -> None:
-        # __new__ initializes new entities; cached lookups must preserve identity fields.
-        pass
-    
-    @classmethod
-    async def create(cls, ctx: EntityContext, controller: ZenController, number: int) -> ZenProfile:
-        """Async factory method for ZenProfile"""
-        profile = cls(ctx, controller, number)
-        await profile.interview()
-        return profile
+        self.ctx = ctx
+        self.commands = ctx.commands
+        self.controller = controller
+        self.number = number
+        self._reset()
+
     def __repr__(self) -> str:
         return f"ZenProfile<{self.controller.name} profile {self.number}: {self.label}>"
     def _reset(self) -> None:
@@ -420,29 +379,12 @@ class ZenLight(ZenControlGear):
     features: dict[str, bool]
     properties: dict[str, int | None]
 
-    def __new__(cls, ctx: EntityContext, address: ZenAddress) -> Self:
-        compound_id = f"{address.controller.name} {address.number}"
-        registry = ctx.registry.lights
-        if compound_id not in registry:
-            inst = super().__new__(cls)
-            registry[compound_id] = inst
-            inst.ctx = ctx
-            inst.commands = ctx.commands
-            inst.address = address
-            inst._reset()
-            # Don't call interview() here - it will be called async later
-        return cast(Self, registry[compound_id])
-
     def __init__(self, ctx: EntityContext, address: ZenAddress) -> None:
-        # __new__ initializes new entities; cached lookups must preserve identity fields.
-        pass
-    
-    @classmethod
-    async def create(cls, ctx: EntityContext, address: ZenAddress) -> ZenLight:
-        """Async factory method for ZenLight"""
-        instance = cls(ctx, address)
-        await instance.interview()
-        return instance
+        self.ctx = ctx
+        self.commands = ctx.commands
+        self.address = address
+        self._reset()
+
     def __repr__(self) -> str:
         return f"ZenLight<{self.address.controller.name} ecg {self.address.number}: {self.label}>"
     def _reset(self) -> None:
@@ -471,7 +413,7 @@ class ZenLight(ZenControlGear):
         self.groups.clear()
         self.group_membership = list(membership)
         for group_address in self.group_membership:
-            group = ZenGroup(ctx=self.ctx, address=group_address)
+            group = self.ctx.group(group_address)
             group.lights.add(self)
             self.groups.add(group)
     def interview_serialize(self) -> str:
@@ -607,31 +549,12 @@ class ZenLight(ZenControlGear):
 class ZenGroup(ZenControlGear):
     lights: set[ZenLight]
 
-    def __new__(cls, ctx: EntityContext, address: ZenAddress) -> ZenGroup:
-        # Unique per context + controller + group address
-        compound_id = f"{address.controller.name} g{address.number}"
-        registry = ctx.registry.groups
-        if compound_id not in registry:
-            inst = super().__new__(cls)
-            registry[compound_id] = inst
-            inst.ctx = ctx
-            inst.commands = ctx.commands
-            inst.address = address
-            inst.lights = set()  # member lights; managed via ZenLight._apply_group_membership
-            inst._reset()
-            # Don't call interview() here - it will be called async later
-        return cast(ZenGroup, registry[compound_id])
-
     def __init__(self, ctx: EntityContext, address: ZenAddress) -> None:
-        # __new__ initializes new entities; cached lookups must preserve identity fields.
-        pass
-
-    @classmethod
-    async def create(cls, ctx: EntityContext, address: ZenAddress) -> ZenGroup:
-        """Async factory method for ZenGroup"""
-        group = cls(ctx, address)
-        await group.interview()
-        return group
+        self.ctx = ctx
+        self.commands = ctx.commands
+        self.address = address
+        self.lights = set()  # member lights; managed via ZenLight._apply_group_membership
+        self._reset()
 
     def __repr__(self) -> str:
         return f"ZenGroup<{self.address.controller.name} group {self.address.number}: {self.label}>"
@@ -715,30 +638,12 @@ class ZenButton:
     long_press_count: int = 0
     client_data: dict[str, Any]
 
-    def __new__(cls, ctx: EntityContext, instance: ZenInstance) -> ZenButton:
-        # Unique per context + controller + address + instance
-        compound_id = f"{instance.address.controller.name} {instance.address.number} {instance.number}"
-        registry = ctx.registry.buttons
-        if compound_id not in registry:
-            inst = super().__new__(cls)
-            registry[compound_id] = inst
-            inst.ctx = ctx
-            inst.commands = ctx.commands
-            inst.instance = instance
-            inst._reset()
-            # Don't call interview() here - it will be called async later
-        return cast(ZenButton, registry[compound_id])
-
     def __init__(self, ctx: EntityContext, instance: ZenInstance) -> None:
-        # __new__ initializes new entities; cached lookups must preserve identity fields.
-        pass
-    
-    @classmethod
-    async def create(cls, ctx: EntityContext, instance: ZenInstance) -> ZenButton:
-        """Async factory method for ZenButton"""
-        button = cls(ctx, instance)
-        await button.interview()
-        return button
+        self.ctx = ctx
+        self.commands = ctx.commands
+        self.instance = instance
+        self._reset()
+
     def __repr__(self) -> str:
         return f"ZenButton<{self.instance.address.controller.name} ecd {self.instance.address.number} inst {self.instance.number}: {self.label} / {self.instance_label}>"
     def _reset(self) -> None:
@@ -815,28 +720,11 @@ class ZenAbsoluteInput:
     _value: int | None = None
     client_data: dict[str, Any]
 
-    def __new__(cls, ctx: EntityContext, instance: ZenInstance) -> ZenAbsoluteInput:
-        compound_id = f"{instance.address.controller.name} {instance.address.number} {instance.number}"
-        registry = ctx.registry.absolute_inputs
-        if compound_id not in registry:
-            inst = super().__new__(cls)
-            registry[compound_id] = inst
-            inst.ctx = ctx
-            inst.commands = ctx.commands
-            inst.instance = instance
-            inst._reset()
-        return cast(ZenAbsoluteInput, registry[compound_id])
-
     def __init__(self, ctx: EntityContext, instance: ZenInstance) -> None:
-        # __new__ initializes new entities; cached lookups must preserve identity fields.
-        pass
-
-    @classmethod
-    async def create(cls, ctx: EntityContext, instance: ZenInstance) -> ZenAbsoluteInput:
-        """Async factory method for ZenAbsoluteInput."""
-        absolute_input = cls(ctx, instance)
-        await absolute_input.interview()
-        return absolute_input
+        self.ctx = ctx
+        self.commands = ctx.commands
+        self.instance = instance
+        self._reset()
 
     def __repr__(self) -> str:
         return (
@@ -915,30 +803,12 @@ class ZenMotionSensor:
     _occupied: bool | None = None
     client_data: dict[str, Any]
 
-    def __new__(cls, ctx: EntityContext, instance: ZenInstance) -> ZenMotionSensor:
-        # Unique per context + controller + address + instance
-        compound_id = f"{instance.address.controller.name} {instance.address.number} {instance.number}"
-        registry = ctx.registry.motion_sensors
-        if compound_id not in registry:
-            inst = super().__new__(cls)
-            registry[compound_id] = inst
-            inst.ctx = ctx
-            inst.commands = ctx.commands
-            inst.instance = instance
-            inst._reset()
-            # Don't call interview() here - it will be called async later
-        return cast(ZenMotionSensor, registry[compound_id])
-
     def __init__(self, ctx: EntityContext, instance: ZenInstance) -> None:
-        # __new__ initializes new entities; cached lookups must preserve identity fields.
-        pass
-    
-    @classmethod
-    async def create(cls, ctx: EntityContext, instance: ZenInstance) -> ZenMotionSensor:
-        """Async factory method for ZenMotionSensor"""
-        sensor = cls(ctx, instance)
-        await sensor.interview()
-        return sensor
+        self.ctx = ctx
+        self.commands = ctx.commands
+        self.instance = instance
+        self._reset()
+
     def __repr__(self) -> str:
         return f"ZenMotionSensor<{self.instance.address.controller.name} ecd {self.instance.address.number} inst {self.instance.number}: {self.label} / {self.instance_label}>"
     def _reset(self) -> None:
@@ -1082,38 +952,22 @@ class ZenSystemVariable:
     _future_value: int | None = None
     client_data: dict[str, Any]
 
-    def __new__(cls, ctx: EntityContext, controller: ZenController, id: int, value: int | None = None, label: str | None = None) -> ZenSystemVariable:
-        # Unique per context + controller + id
-        compound_id = f"{controller.name} {id}"
-        registry = ctx.registry.system_variables
-        if compound_id not in registry:
-            inst = super().__new__(cls)
-            registry[compound_id] = inst
-            inst.ctx = ctx
-            inst.commands = ctx.commands
-            inst.controller = controller
-            inst.id = id
-            inst._reset()
-            inst._value = value
-            inst.label = label
-            # Don't call interview() here - it will be called async later
-        inst = cast(ZenSystemVariable, registry[compound_id])
-        if value is not None:
-            inst._value = value
-        if label is not None:
-            inst.label = label
-        return inst
+    def __init__(
+        self,
+        ctx: EntityContext,
+        controller: ZenController,
+        id: int,
+        value: int | None = None,
+        label: str | None = None,
+    ) -> None:
+        self.ctx = ctx
+        self.commands = ctx.commands
+        self.controller = controller
+        self.id = id
+        self._reset()
+        self._value = value
+        self.label = label
 
-    def __init__(self, ctx: EntityContext, controller: ZenController, id: int, value: int | None = None, label: str | None = None) -> None:
-        # __new__ initializes new entities; cached lookups must preserve identity fields.
-        pass
-    
-    @classmethod
-    async def create(cls, ctx: EntityContext, controller: ZenController, id: int, value: int | None = None, label: str | None = None) -> ZenSystemVariable:
-        """Async factory method for ZenSystemVariable"""
-        sysvar = cls(ctx, controller, id, value, label)
-        await sysvar.interview()
-        return sysvar
     def __repr__(self) -> str:
         return f"ZenSystemVariable<{self.controller.name} sv {self.id}: {self.label}>"
     def _reset(self) -> None:

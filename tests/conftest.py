@@ -147,7 +147,6 @@ async def live_sim() -> LiveSimulator:
     from zencontrol_simulator.server import Simulator
     from zencontrol_simulator.world import load_world
 
-    from zencontrol import ZenController
     from zencontrol.testing import ZenTestClient
 
     config = _simulator_config_path()
@@ -162,14 +161,13 @@ async def live_sim() -> LiveSimulator:
     mac = ":".join(f"{b:02x}" for b in world.mac)
 
     protocol = ZenTestClient(unicast=True, listen_ip="127.0.0.1", listen_port=0)
-    controller = ZenController(
+    controller = protocol.context.controller(
         id=1,
         name="sim",
         label="Sim",
         host="127.0.0.1",
         port=port,
         mac=mac,
-        ctx=protocol.context,
     )
     protocol.set_controllers([controller])
 

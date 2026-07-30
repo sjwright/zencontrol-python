@@ -11,7 +11,6 @@ from zencontrol.api.models import ZenAddress, ZenInstance
 from zencontrol.api.types import ZenAddressType, ZenInstanceType
 from zencontrol.interface.interface import ZenAbsoluteInput, ZenControl, ZenController
 
-
 def _ecd_instance(zen: ZenControl, *, number: int = 0, inst: int = 1) -> tuple[ZenController, ZenInstance]:
     ctrl = zen.add_controller(id=1, name="house", label="House", host="127.0.0.1", port=5108)
     addr = ZenAddress(controller=ctrl, type=ZenAddressType.ECD, number=number)
@@ -28,7 +27,7 @@ async def test_absolute_input_event_parses_16bit_value() -> None:
         changes.append((absolute_input, absolute_input.value))
 
     zen.callbacks.absolute_input_change = on_change
-    absolute = ZenAbsoluteInput(ctx=zen.context, instance=instance)
+    absolute = zen.context.absolute_input(instance)
     assert absolute.interview_hydrate({"serial": "1", "label": "Panel", "instance_label": "Dial"})
 
     async def _dispatch(ev: AbsoluteInput) -> None:
@@ -53,7 +52,7 @@ async def test_absolute_input_event_parses_16bit_value() -> None:
 async def test_absolute_input_event_ignores_short_payload() -> None:
     zen = ZenControl()
     _ctrl, instance = _ecd_instance(zen)
-    absolute = ZenAbsoluteInput(ctx=zen.context, instance=instance)
+    absolute = zen.context.absolute_input(instance)
     await absolute._event_received(bytes([1]))
     assert absolute.value is None
 
@@ -119,7 +118,7 @@ async def test_ecd_getters_share_instance_scan() -> None:
 async def test_absolute_input_singleton_per_protocol() -> None:
     zen = ZenControl()
     _ctrl, instance = _ecd_instance(zen)
-    a = ZenAbsoluteInput(ctx=zen.context, instance=instance)
-    b = ZenAbsoluteInput(ctx=zen.context, instance=instance)
+    a = zen.context.absolute_input(instance)
+    b = zen.context.absolute_input(instance)
     assert a is b
-    assert "house 0 1" in zen.context.registry.absolute_inputs
+    assert ("house", 0, 1) in zen.context.registry.absolute_inputs

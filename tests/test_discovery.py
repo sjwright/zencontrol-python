@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from helpers_endpoints import fake_endpoint_factory, require_event
 
-from zencontrol import ZenControl, ZenController
+from zencontrol import ZenControl
 from zencontrol.api.commands import ZenCommandClient
 from zencontrol.api.event_router import ZenEventReceiver
 from zencontrol.api.models import DiscoveredController, mac_key
@@ -172,14 +172,13 @@ async def test_discover_started_here_returns_results_after_teardown() -> None:
 @pytest.mark.asyncio
 async def test_registered_controller_is_not_discovered() -> None:
     commands, receiver = _receiver_with_discovered_callback()
-    ctrl = ZenController(
+    ctrl = EntityContext(commands=commands).controller(
         id=1,
         name="known",
         label="Known",
         host="192.168.1.50",
         port=5108,
         mac="02:00:00:00:00:01",
-        ctx=EntityContext(commands=commands),
     )
 
     async def handler(_ev: object) -> None:
@@ -200,14 +199,13 @@ async def test_registering_controller_forgets_identified() -> None:
     await receiver.handle(_event())
     assert len(receiver.identities.discovered) == 1
 
-    ctrl = ZenController(
+    ctrl = EntityContext(commands=commands).controller(
         id=1,
         name="kitchen",
         label="Kitchen",
         host="192.168.1.50",
         port=5108,
         mac="02:00:00:00:00:01",
-        ctx=EntityContext(commands=commands),
     )
     receiver.identities.forget(host=ctrl.host, mac=ctrl.mac)
     assert receiver.identities.discovered == []
@@ -232,14 +230,13 @@ async def test_discovery_never_awaits_label_query() -> None:
 @pytest.mark.asyncio
 async def test_new_controller_discovered_while_one_is_registered() -> None:
     commands, receiver = _receiver_with_discovered_callback()
-    known = ZenController(
+    known = EntityContext(commands=commands).controller(
         id=1,
         name="known",
         label="Known",
         host="192.168.1.10",
         port=5108,
         mac="11:22:33:44:55:66",
-        ctx=EntityContext(commands=commands),
     )
     async def _ignore(_ev: object) -> None:
         pass
@@ -313,14 +310,13 @@ async def test_enrich_discovered_keeps_identity_on_timeout() -> None:
 @pytest.mark.asyncio
 async def test_provisional_subscription_learns_mac() -> None:
     commands, receiver = _receiver_with_discovered_callback()
-    ctrl = ZenController(
+    ctrl = EntityContext(commands=commands).controller(
         id=1,
         name="pending",
         label="Pending",
         host="192.168.1.50",
         port=5108,
         mac=None,
-        ctx=EntityContext(commands=commands),
     )
     assert ctrl.mac is None
 

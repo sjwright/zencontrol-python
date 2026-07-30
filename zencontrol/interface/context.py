@@ -12,7 +12,7 @@ from collections.abc import Awaitable, Coroutine
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from ..api.commands import ZenCommandClient
-from ..api.models import DiscoveredController
+from ..api.models import DiscoveredController, ZenAddress, ZenInstance, mac_to_bytes
 
 if TYPE_CHECKING:
     from .entities import (
@@ -112,18 +112,19 @@ class EntityRegistry:
     """Per-context caches for interface-layer entity identity.
 
     Entities keyed here are unique within one ``EntityContext`` / ``ZenControl``
-    instance, not process-wide.
+    instance, not process-wide. Non-controller keys are tuples whose first
+    element is always the controller name.
     """
 
     def __init__(self) -> None:
-        self.controllers: dict[str, Any] = {}
-        self.profiles: dict[str, Any] = {}
-        self.lights: dict[str, Any] = {}
-        self.groups: dict[str, Any] = {}
-        self.buttons: dict[str, Any] = {}
-        self.absolute_inputs: dict[str, Any] = {}
-        self.motion_sensors: dict[str, Any] = {}
-        self.system_variables: dict[str, Any] = {}
+        self.controllers: dict[str, ZenController] = {}
+        self.profiles: dict[tuple[str, int], ZenProfile] = {}
+        self.lights: dict[tuple[str, int], ZenLight] = {}
+        self.groups: dict[tuple[str, int], ZenGroup] = {}
+        self.buttons: dict[tuple[str, int, int], ZenButton] = {}
+        self.absolute_inputs: dict[tuple[str, int, int], ZenAbsoluteInput] = {}
+        self.motion_sensors: dict[tuple[str, int, int], ZenMotionSensor] = {}
+        self.system_variables: dict[tuple[str, int], ZenSystemVariable] = {}
 
     def clear(self) -> None:
         self.controllers.clear()
@@ -138,7 +139,6 @@ class EntityRegistry:
     def purge_controller(self, controller_name: str) -> None:
         """Drop cached entities that belong to ``controller_name``."""
         self.controllers.pop(controller_name, None)
-        prefix = f"{controller_name} "
         for store in (
             self.profiles,
             self.lights,
@@ -148,7 +148,7 @@ class EntityRegistry:
             self.motion_sensors,
             self.system_variables,
         ):
-            for key in [k for k in store if k == controller_name or k.startswith(prefix)]:
+            for key in [k for k in store if k[0] == controller_name]:
                 store.pop(key, None)
 
 
@@ -159,6 +159,9 @@ class EntityContext:
     need event monitoring, discovery, or session lifecycle — it creates and
     owns an ``EntityContext``. Use this directly only when you drive
     ``ZenCommandClient`` yourself without the event session.
+
+    Entity identity is obtained via factory methods (``light``, ``group``, …);
+    construct entities only through those (or the async ``create_*`` wrappers).
     """
 
     def __init__(self, commands: ZenCommandClient, logger: logging.Logger | None = None) -> None:
@@ -175,6 +178,182 @@ class EntityContext:
     def purge_controller_entities(self, controller_name: str) -> None:
         """Drop interface-layer singletons for one controller."""
         self.registry.purge_controller(controller_name)
+
+    # ----- identity factories (hit-path: A1/B1/C1/D1) -----
+
+    def controller(
+        self,
+        id: int,
+        name: str,
+        label: str,
+        host: str,
+        port: int = 5108,
+        mac: str | None = None,
+        filtering: bool = False,
+    ) -> ZenController:
+        from .entities import ZenController
+
+        store = self.registry.controllers
+        if name not in store:
+            store[name] = ZenController(
+                self,
+                id=id,
+                name=name,
+                label=label,
+                host=host,
+                port=port,
+                mac=mac,
+                filtering=filtering,
+            )
+            return store[name]
+
+        ctrl = store[name]
+        ctrl.ctx = self
+        ctrl.commands = self.commands
+        ctrl.id = str(id)
+        ctrl.name = name
+        ctrl.label = label
+        ctrl.host = host
+        ctrl.port = port
+        ctrl.mac = mac
+        ctrl.filtering = filtering
+        mac_to_bytes(mac)  # eager validate on config refresh
+        return ctrl
+
+    def profile(self, controller: ZenController, number: int) -> ZenProfile:
+        from .entities import ZenProfile
+
+        key = (controller.name, number)
+        store = self.registry.profiles
+        if key not in store:
+            store[key] = ZenProfile(self, controller, number)
+        return store[key]
+
+    def light(self, address: ZenAddress) -> ZenLight:
+        from .entities import ZenLight
+
+        key = (address.controller.name, address.number)
+        store = self.registry.lights
+        if key not in store:
+            store[key] = ZenLight(self, address)
+        return store[key]
+
+    def group(self, address: ZenAddress) -> ZenGroup:
+        from .entities import ZenGroup
+
+        key = (address.controller.name, address.number)
+        store = self.registry.groups
+        if key not in store:
+            store[key] = ZenGroup(self, address)
+        return store[key]
+
+    def button(self, instance: ZenInstance) -> ZenButton:
+        from .entities import ZenButton
+
+        key = (instance.address.controller.name, instance.address.number, instance.number)
+        store = self.registry.buttons
+        if key not in store:
+            store[key] = ZenButton(self, instance)
+        return store[key]
+
+    def absolute_input(self, instance: ZenInstance) -> ZenAbsoluteInput:
+        from .entities import ZenAbsoluteInput
+
+        key = (instance.address.controller.name, instance.address.number, instance.number)
+        store = self.registry.absolute_inputs
+        if key not in store:
+            store[key] = ZenAbsoluteInput(self, instance)
+        return store[key]
+
+    def motion_sensor(self, instance: ZenInstance) -> ZenMotionSensor:
+        from .entities import ZenMotionSensor
+
+        key = (instance.address.controller.name, instance.address.number, instance.number)
+        store = self.registry.motion_sensors
+        if key not in store:
+            store[key] = ZenMotionSensor(self, instance)
+        return store[key]
+
+    def system_variable(
+        self,
+        controller: ZenController,
+        id: int,
+        value: int | None = None,
+        label: str | None = None,
+    ) -> ZenSystemVariable:
+        from .entities import ZenSystemVariable
+
+        key = (controller.name, id)
+        store = self.registry.system_variables
+        if key not in store:
+            store[key] = ZenSystemVariable(self, controller, id, value, label)
+            return store[key]
+
+        sv = store[key]
+        if value is not None:
+            sv._value = value
+        if label is not None:
+            sv.label = label
+        return sv
+
+    # ----- async create (factory + interview) -----
+
+    async def create_controller(
+        self,
+        id: int,
+        name: str,
+        label: str,
+        host: str,
+        port: int = 5108,
+        mac: str | None = None,
+        filtering: bool = False,
+    ) -> ZenController:
+        ctrl = self.controller(
+            id=id, name=name, label=label, host=host, port=port, mac=mac, filtering=filtering
+        )
+        await ctrl.interview()
+        return ctrl
+
+    async def create_profile(self, controller: ZenController, number: int) -> ZenProfile:
+        profile = self.profile(controller, number)
+        await profile.interview()
+        return profile
+
+    async def create_light(self, address: ZenAddress) -> ZenLight:
+        light = self.light(address)
+        await light.interview()
+        return light
+
+    async def create_group(self, address: ZenAddress) -> ZenGroup:
+        group = self.group(address)
+        await group.interview()
+        return group
+
+    async def create_button(self, instance: ZenInstance) -> ZenButton:
+        button = self.button(instance)
+        await button.interview()
+        return button
+
+    async def create_absolute_input(self, instance: ZenInstance) -> ZenAbsoluteInput:
+        absolute_input = self.absolute_input(instance)
+        await absolute_input.interview()
+        return absolute_input
+
+    async def create_motion_sensor(self, instance: ZenInstance) -> ZenMotionSensor:
+        sensor = self.motion_sensor(instance)
+        await sensor.interview()
+        return sensor
+
+    async def create_system_variable(
+        self,
+        controller: ZenController,
+        id: int,
+        value: int | None = None,
+        label: str | None = None,
+    ) -> ZenSystemVariable:
+        sysvar = self.system_variable(controller, id, value, label)
+        await sysvar.interview()
+        return sysvar
 
     def track_task(self, coro: Coroutine[Any, Any, Any]) -> asyncio.Task[Any]:
         """Schedule fire-and-forget work and track it for cancellation on shutdown."""

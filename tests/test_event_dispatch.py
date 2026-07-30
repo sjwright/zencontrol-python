@@ -54,11 +54,10 @@ async def test_subscription_handler_returns_before_callback_runs() -> None:
         mac="02:00:00:00:00:01",
     )
     # Ensure a light singleton exists for address 0.
-    from zencontrol import ZenAddress, ZenAddressType, ZenLight
+    from zencontrol import ZenAddress, ZenAddressType
 
-    light = ZenLight(
-        ctx=zen.context,
-        address=ZenAddress(controller=ctrl, type=ZenAddressType.ECG, number=0),
+    light = zen.context.light(
+        ZenAddress(controller=ctrl, type=ZenAddressType.ECG, number=0),
     )
     light.features = {"brightness": True}
 
@@ -159,13 +158,12 @@ async def test_dispatch_chain_ignores_predecessor_cancel_but_honours_own() -> No
 @pytest.mark.asyncio
 async def test_dispatch_drops_unused_and_deprecated_event_kinds() -> None:
     """LEVEL_CHANGE / GROUP_LEVEL_CHANGE / GROUP_OCCUPIED must not touch entities."""
-    from zencontrol import ZenAddress, ZenLight
+    from zencontrol import ZenAddress
 
     zen = ZenControl()
     ctrl = zen.add_controller(id=1, name="house", label="House", host="127.0.0.1", mac="02:00:00:00:00:01")
-    light = ZenLight(
-        ctx=zen.context,
-        address=ZenAddress(controller=ctrl, type=ZenAddressType.ECG, number=5),
+    light = zen.context.light(
+        ZenAddress(controller=ctrl, type=ZenAddressType.ECG, number=5),
     )
     light.features = {"brightness": True}
     light.level = 10

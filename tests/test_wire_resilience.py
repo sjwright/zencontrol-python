@@ -9,7 +9,6 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import pytest
 from helpers_endpoints import fake_endpoint_factory
 
-from zencontrol import ZenController
 from zencontrol.api.commands import ZenCommandClient
 from zencontrol.api.event_router import DEFAULT_MAX_QUEUE_SIZE, ZenEventReceiver
 from zencontrol.api.types import Transport
@@ -222,13 +221,12 @@ def test_mark_disconnected_unblocks_pending_with_timeout() -> None:
 @pytest.mark.asyncio
 async def test_send_packet_timeout_invalidates_client_and_refreshes_ip() -> None:
     protocol = ZenCommandClient()
-    controller = ZenController(
+    controller = EntityContext(commands=protocol).controller(
         id=1,
         name="ctrl",
         label="Ctrl",
         host="zen.local",
         port=5108,
-        ctx=EntityContext(commands=protocol),
     )
 
     fake_client = MagicMock()
@@ -253,13 +251,12 @@ async def test_send_packet_timeout_invalidates_client_and_refreshes_ip() -> None
 @pytest.mark.asyncio
 async def test_ensure_client_recreates_when_disconnected() -> None:
     protocol = ZenCommandClient()
-    controller = ZenController(
+    controller = EntityContext(commands=protocol).controller(
         id=1,
         name="ctrl",
         label="Ctrl",
         host="127.0.0.1",
         port=5108,
-        ctx=EntityContext(commands=protocol),
     )
     stale = MagicMock()
     stale.is_connected.return_value = False
@@ -349,13 +346,12 @@ async def test_send_packet_error_returns_without_raising() -> None:
     from zencontrol.api.types import ZenErrorCode
 
     protocol = ZenCommandClient()
-    controller = ZenController(
+    controller = EntityContext(commands=protocol).controller(
         id=1,
         name="ctrl",
         label="Ctrl",
         host="127.0.0.1",
         port=5108,
-        ctx=EntityContext(commands=protocol),
     )
     fake_client = MagicMock()
     fake_client.is_connected.return_value = True
@@ -378,23 +374,21 @@ async def test_send_packet_error_returns_without_raising() -> None:
 def test_mac_requires_six_bytes() -> None:
     protocol = ZenCommandClient()
     with pytest.raises(ValueError, match="6 bytes"):
-        ZenController(
+        EntityContext(commands=protocol).controller(
             id=1,
             name="ctrl",
             label="Ctrl",
             host="127.0.0.1",
             port=5108,
             mac="aa:bb",
-            ctx=EntityContext(commands=protocol),
         )
 
-    ctrl = ZenController(
+    ctrl = EntityContext(commands=protocol).controller(
         id=1,
         name="ctrl2",
         label="Ctrl",
         host="127.0.0.1",
         port=5108,
         mac="aa:bb:cc:dd:ee:ff",
-        ctx=EntityContext(commands=protocol),
     )
     assert ctrl.mac_bytes == bytes.fromhex("aabbccddeeff")

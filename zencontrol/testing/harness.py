@@ -8,7 +8,7 @@ Example::
     from zencontrol import ZenController
 
     p = ZenTestClient(unicast=True, listen_ip="127.0.0.1", listen_port=0)
-    ctrl = ZenController(..., ctx=p.context)
+    ctrl = p.context.controller(..., ...)
     p.set_controllers([ctrl])
 """
 

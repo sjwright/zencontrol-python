@@ -9,7 +9,7 @@ from run_main import run_with_keyboard_interrupt
 import asyncio
 import yaml
 from pathlib import Path
-from zencontrol import ZenCommandClient, ZenController, ZenAddress, ZenInstance, ZenEventMode
+from zencontrol import ZenCommandClient, ZenAddress, ZenInstance, ZenEventMode
 from zencontrol.interface import EntityContext
 
 async def main():
@@ -20,7 +20,7 @@ async def main():
     # Create protocol and controller
     async with ZenCommandClient(print_traffic=True) as tpi:
         ctx = EntityContext(commands=tpi)
-        ctrl = ZenController(ctx=ctx, **config.get('zencontrol')[0])
+        ctrl = ctx.controller(**config.get('zencontrol')[0])
         
         print("Testing multicast event monitoring...")
         print("=" * 50)

@@ -9,7 +9,7 @@ if str(ROOT) not in sys.path:
 
 import yaml
 
-from zencontrol import ZenAddress, ZenController
+from zencontrol import ZenAddress
 from zencontrol.interface import EntityContext
 from zencontrol.api.commands import ZenCommandClient
 from zencontrol.api.event_decode import ZenEventCode
@@ -28,7 +28,7 @@ async def test_level_change_v2():
 
     async with ZenCommandClient(print_traffic=True) as tpi:
         ctx = EntityContext(commands=tpi)
-        ctrl = ZenController(ctx=ctx, **config["zencontrol"][0])
+        ctrl = ctx.controller(**config["zencontrol"][0])
 
         original_process = tpi._process_zen_event
 
