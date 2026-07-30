@@ -16,8 +16,7 @@ It could be an ECG, ECD, or Group address.
 A "ZenInstance" represents a single instance of an specific ZenAddress.
 
 A colour is exactly one of "ZenTcColour", "ZenXyColour", or "ZenRgbColour"
-("ZenColour" is the union). Wire / dict decoding live in
-"colour_from_bytes" / "colour_from_dict".
+("ZenColour" is the union). Wire decoding lives in "colour_from_bytes".
 
 """
 
@@ -25,7 +24,7 @@ import logging
 import struct
 import time
 from dataclasses import dataclass, field
-from typing import Any, Protocol, Self
+from typing import Protocol, Self
 
 from .types import Const, ZenAddressType, ZenColourType, ZenInstanceType
 
@@ -292,9 +291,6 @@ class ZenTcColour:
         """Encode as returned by QUERY_DALI_COLOUR (no address or arc level)."""
         return struct.pack(">BH", ZenColourType.TC.value, self.kelvin)
 
-    def to_dict(self) -> dict[str, int | str | None]:
-        return {"type": "tc", "kelvin": self.kelvin}
-
     def command_payload(self) -> bytes:
         """Colour type and channel bytes for DALI_COLOUR (follows address and arc level)."""
         return self.to_bytes()
@@ -316,9 +312,6 @@ class ZenXyColour:
     def to_bytes(self) -> bytes:
         """Encode as returned by QUERY_DALI_COLOUR (no address or arc level)."""
         return struct.pack(">BHH", ZenColourType.XY.value, self.x, self.y)
-
-    def to_dict(self) -> dict[str, int | str | None]:
-        return {"type": "xy", "x": self.x, "y": self.y}
 
     def command_payload(self) -> bytes:
         """Colour type and channel bytes for DALI_COLOUR (follows address and arc level)."""
@@ -351,28 +344,20 @@ class ZenRgbColour:
             raise ValueError(f"F must be between 0 and 255, received {self.f}")
 
     def to_bytes(self) -> bytes:
-        """Encode as returned by QUERY_DALI_COLOUR (no address or arc level)."""
+        """Encode as returned by QUERY_DALI_COLOUR (no address or arc level).
+
+        Missing W/A/F channels encode as 0xFF (unused / no change).
+        """
         return struct.pack(
             "BBBBBBB",
             ZenColourType.RGBWAF.value,
             self.r,
             self.g,
             self.b,
-            self.w if self.w is not None else 0,
-            self.a if self.a is not None else 0,
-            self.f if self.f is not None else 0,
+            self.w if self.w is not None else 0xFF,
+            self.a if self.a is not None else 0xFF,
+            self.f if self.f is not None else 0xFF,
         )
-
-    def to_dict(self) -> dict[str, int | str | None]:
-        return {
-            "type": "rgbwaf",
-            "r": self.r,
-            "g": self.g,
-            "b": self.b,
-            "w": self.w,
-            "a": self.a,
-            "f": self.f,
-        }
 
     def command_payload(self) -> bytes:
         """Colour type and channel bytes for DALI_COLOUR (follows address and arc level)."""
@@ -402,23 +387,3 @@ def colour_from_bytes(data: bytes) -> ZenColour | None:
         case _:
             return None
 
-
-def colour_from_dict(data: dict[str, Any] | None) -> ZenColour | None:
-    """Restore from ``to_dict`` output; None if data is None."""
-    if data is None:
-        return None
-    colour_type = ZenColourType[str(data["type"]).upper()]
-    match colour_type:
-        case ZenColourType.TC:
-            return ZenTcColour(kelvin=data["kelvin"])
-        case ZenColourType.RGBWAF:
-            return ZenRgbColour(
-                r=data["r"],
-                g=data["g"],
-                b=data["b"],
-                w=data.get("w"),
-                a=data.get("a"),
-                f=data.get("f"),
-            )
-        case ZenColourType.XY:
-            return ZenXyColour(x=data["x"], y=data["y"])

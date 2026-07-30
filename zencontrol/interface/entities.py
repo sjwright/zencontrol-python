@@ -17,7 +17,7 @@ from ..api import (
     ZenColour,
     ZenColourType,
     ZenInstance,
-    colour_from_dict,
+    colour_from_bytes,
 )
 from ..api import ZenController as SuperZenController
 from ..api.commands import ZenCommandClient
@@ -248,7 +248,7 @@ class ZenProfile:
             self.label = data.get("label")
             self.controller.profiles.add(self)
             return True
-        except Exception:
+        except Exception: # pylint: disable=broad-exception-caught
             return False
     async def interview(self) -> bool:
         self.label = await self.commands.query_profile_label(self.controller, self.number)
@@ -484,7 +484,10 @@ class ZenLight(ZenControlGear):
             "features": dict(self.features),
             "properties": dict(self.properties),
             "scene_levels": list(self._scene_levels),
-            "scene_colours": [colour.to_dict() if colour is not None else None for colour in self._scene_colours],
+            "scene_colours": [
+                list(colour.to_bytes()) if colour is not None else None
+                for colour in self._scene_colours
+            ],
         })
     def interview_hydrate(self, data: str | dict[str, Any]) -> bool:
         try:
@@ -496,7 +499,10 @@ class ZenLight(ZenControlGear):
             self.features.update(data.get("features", {}))
             self.properties.update(data.get("properties", {}))
             self._scene_levels = list(data.get("scene_levels", []))
-            self._scene_colours = [colour_from_dict(colour) for colour in data.get("scene_colours", [])]
+            self._scene_colours = [
+                colour_from_bytes(bytes(raw)) if raw is not None else None
+                for raw in data.get("scene_colours", [])
+            ]
             membership = [
                 ZenAddress(controller=self.address.controller, type=ZenAddressType.GROUP, number=group["number"])
                 for group in data.get("group_membership", [])
@@ -504,7 +510,7 @@ class ZenLight(ZenControlGear):
             self._apply_group_membership(membership)
             _registered(self.address.controller).lights.add(self)
             return True
-        except Exception:
+        except Exception: # pylint: disable=broad-exception-caught
             return False
     async def interview(self) -> bool:
         cgstatus = await self.commands.dali_query_control_gear_status(self.address)
@@ -645,7 +651,7 @@ class ZenGroup(ZenControlGear):
             self._scene_labels = list(data.get("scene_labels", []))
             _registered(self.address.controller).groups.add(self)
             return True
-        except Exception:
+        except Exception: # pylint: disable=broad-exception-caught
             return False
     async def interview(self) -> bool:
         self.label = _or_group_label(await self.commands.query_group_label(self.address), self.address.number)
@@ -758,7 +764,7 @@ class ZenButton:
             self.instance.address.serial = cast(str | None, self.serial)
             _registered(self.instance.address.controller).buttons.add(self)
             return True
-        except Exception:
+        except Exception: # pylint: disable=broad-exception-caught
             return False
     async def interview(self) -> bool:
         inst = self.instance
@@ -863,7 +869,7 @@ class ZenAbsoluteInput:
             self.instance.address.serial = cast(str | None, self.serial)
             _registered(self.instance.address.controller).absolute_inputs.add(self)
             return True
-        except Exception:
+        except Exception: # pylint: disable=broad-exception-caught
             return False
 
     async def interview(self) -> bool:
@@ -968,7 +974,7 @@ class ZenMotionSensor:
             self.instance.address.serial = cast(str | None, self.serial)
             _registered(self.instance.address.controller).motion_sensors.add(self)
             return True
-        except Exception:
+        except Exception: # pylint: disable=broad-exception-caught
             return False
     async def interview(self) -> bool:
         inst = self.instance
@@ -1126,7 +1132,7 @@ class ZenSystemVariable:
             self._future_value = None
             self.controller.sysvars.add(self)
             return True
-        except Exception:
+        except Exception: # pylint: disable=broad-exception-caught
             return False
     async def interview(self) -> bool:
         ctrl = self.controller

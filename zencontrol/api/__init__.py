@@ -17,7 +17,6 @@ from .models import (
     ZenController,
     ZenInstance,
     colour_from_bytes,
-    colour_from_dict,
 )
 from .types import (
     Transport,
@@ -46,7 +45,6 @@ __all__ = [
     "ZenXyColour",
     "ZenRgbColour",
     "colour_from_bytes",
-    "colour_from_dict",
     "DiscoveredController",
 
     # Types
