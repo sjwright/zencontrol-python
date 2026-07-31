@@ -185,6 +185,8 @@ class ZenCommandClient:
         self.print_traffic = print_traffic
         # Command-plane UDP clients keyed by controller name (not on the model).
         self._clients: dict[str, ZenClient] = {}
+        # When set, _send_packet appends wall-clock msec per TPI command name.
+        self._api_timings: dict[str, list[float]] | None = None
 
     async def __aenter__(self) -> Self:
         """Async context manager entry"""
@@ -197,6 +199,48 @@ class ZenCommandClient:
     async def aclose(self) -> None:
         """Close UDP command clients."""
         await self.close_all_clients()
+
+    # ============================
+    # API TIMING
+    # ============================
+
+    def start_api_timing(self) -> None:
+        """Begin collecting wall-clock msec per TPI command (clears prior samples)."""
+        self._api_timings = {}
+
+    def stop_api_timing(self) -> dict[str, list[float]]:
+        """Stop collecting and return {CMD.name: [msec, ...]} samples."""
+        timings = self._api_timings or {}
+        self._api_timings = None
+        return timings
+
+    def api_timing_stats(self) -> dict[str, dict[str, float | int]]:
+        """Return {CMD.name: {min, avg, max, n, total}} for samples collected so far."""
+        out: dict[str, dict[str, float | int]] = {}
+        if not self._api_timings:
+            return out
+        for name, samples in self._api_timings.items():
+            if not samples:
+                continue
+            n = len(samples)
+            total = sum(samples)
+            out[name] = {
+                "min": min(samples),
+                "avg": total / n,
+                "max": max(samples),
+                "n": n,
+                "total": total,
+            }
+        return out
+
+    def _record_api_timing(self, command: int, elapsed_ms: float) -> None:
+        if self._api_timings is None:
+            return
+        try:
+            name = CMD(command).name
+        except ValueError:
+            name = f"0x{command:02X}"
+        self._api_timings.setdefault(name, []).append(elapsed_ms)
 
     # ============================
     # CLIENT MANAGEMENT
@@ -275,7 +319,11 @@ class ZenCommandClient:
         await self._ensure_client(controller)
         client = self._clients.get(controller.name)
         assert client is not None
-        response = await client.send_request_with_retries(request, retries=ClientConst.DEFAULT_RETRIES)
+        t0 = time.perf_counter()
+        try:
+            response = await client.send_request_with_retries(request, retries=ClientConst.DEFAULT_RETRIES)
+        finally:
+            self._record_api_timing(request.command, (time.perf_counter() - t0) * 1000)
         if response.response_type == ZenResponseType.TIMEOUT:
             await self._invalidate_client(controller)
             controller.refresh_ip() # check if hostname resolves to a different IP address
