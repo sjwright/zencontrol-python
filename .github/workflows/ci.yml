@@ -19,17 +19,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out zencontrol-python
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           path: zencontrol-python
 
       - name: Check out zencontrol-simulator
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: sjwright/zencontrol-simulator
           path: zencontrol-simulator
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.14"
           cache: pip
