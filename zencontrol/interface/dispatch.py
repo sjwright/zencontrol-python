@@ -22,7 +22,7 @@ from ..api.event_decode import (
     ZenDecodedEvent,
 )
 from .context import EntityContext
-from .entities import ZenController
+from .entities import ZenController, ZenLight
 
 
 class EventDispatcher:
@@ -117,7 +117,9 @@ class EventDispatcher:
                 if address is None:
                     return
                 if address.type == ZenAddressType.ECG:
-                    await self.ctx.light(address)._event_received_level(level)
+                    gear = self.ctx.ecg_lookup(address)
+                    if gear is not None:
+                        await gear._event_received_level(level)
                 elif address.type == ZenAddressType.GROUP:
                     await self.ctx.group(address)._event_received_level(level)
 
@@ -132,7 +134,9 @@ class EventDispatcher:
                 if colour is None:
                     return
                 if address.type == ZenAddressType.ECG:
-                    await self.ctx.light(address)._event_received_colour(colour)
+                    gear = self.ctx.ecg_lookup(address)
+                    if gear is not None and isinstance(gear, ZenLight):
+                        await gear._event_received_colour(colour)
                 elif address.type == ZenAddressType.GROUP:
                     group = self.ctx.group(address)
                     await group._event_received_colour(colour)
@@ -145,12 +149,18 @@ class EventDispatcher:
                     return
                 active = bool(active)
                 if address.type == ZenAddressType.ECG:
-                    await self.ctx.light(address)._event_received_scene(scene, active)
+                    gear = self.ctx.ecg_lookup(address)
+                    if gear is not None:
+                        await gear._event_received_scene(scene, active)
                 elif address.type == ZenAddressType.GROUP:
                     group = self.ctx.group(address)
                     await group._event_received_scene(scene, active)
                     for light in group.lights:
                         await light._event_received_scene(scene, active, cascaded_from=group)
+                    for fan in group.fans:
+                        await fan._event_received_scene(scene, active, cascaded_from=group)
+                    for blind in group.blinds:
+                        await blind._event_received_scene(scene, active, cascaded_from=group)
 
             case SystemVariableChange(target, value):
                 await self.ctx.system_variable(ctrl, target)._event_received(value)

@@ -77,6 +77,8 @@ class ZenController(SuperZenController):
     profile: ZenProfile | None = None
     profiles: set[ZenProfile]
     lights: set[ZenLight]
+    fans: set[ZenFan]
+    blinds: set[ZenBlind]
     groups: set[ZenGroup]
     buttons: set[ZenButton]
     absolute_inputs: set[ZenAbsoluteInput]
@@ -117,6 +119,8 @@ class ZenController(SuperZenController):
         self.profile = None
         self.profiles = set()
         self.lights = set()
+        self.fans = set()
+        self.blinds = set()
         self.groups = set()
         self.buttons = set()
         self.absolute_inputs = set()
@@ -168,10 +172,10 @@ class ZenController(SuperZenController):
 
 
 def _registered(controller: ControllerRef) -> ZenController:
-    """Narrow ``address.controller`` to the interface subclass.
+    """Narrow address.controller to the interface subclass.
 
-    Addresses are typed with ``ControllerRef`` so ``api`` does not import this
-    layer; every registered controller is a ``ZenController`` instance.
+    Addresses are typed with ControllerRef so api does not import this
+    layer; every registered controller is a ZenController instance.
     """
     return cast(ZenController, controller)
 
@@ -555,14 +559,304 @@ class ZenLight(ZenControlGear):
             await self.ctx.callbacks.light_change(light=self)
 
 
-class ZenGroup(ZenControlGear):
-    lights: set[ZenLight]
+class ZenFan(ZenControlGear):
+    kind = "fan"
+    # Off + mid-band command arcs for speeds 1-3 + full for speed 4.
+    _SPEED_ARCS: tuple[int, ...] = (0, 32, 95, 159, 254)
+    serial: (int | str) | None = None
+    ean: int | None = None
+    bus_unit: int | None = None
+    operating_mode: int | None = None
+    cgtype: list[int]
+    groups: set[ZenGroup]
+    group_membership: list[ZenAddress]
 
     def __init__(self, ctx: EntityContext, address: ZenAddress) -> None:
         self.ctx = ctx
         self.commands = ctx.commands
         self.address = address
-        self.lights = set()  # member lights; managed via ZenLight._apply_group_membership
+        self._reset()
+
+    def __repr__(self) -> str:
+        return f"ZenFan<{self.address.controller.name} ecg {self.address.number}: {self.label}>"
+
+    def _reset(self) -> None:
+        self._reset_gear_state()
+        self.serial = None
+        self.ean = None
+        self.bus_unit = None
+        self.operating_mode = None
+        self.cgtype = []
+        self.groups = set()
+        self.group_membership = []
+
+    def _apply_group_membership(self, membership: list[ZenAddress]) -> None:
+        for existing_group in self.groups:
+            existing_group.fans.discard(self)
+        self.groups.clear()
+        self.group_membership = list(membership)
+        for group_address in self.group_membership:
+            group = self.ctx.group(group_address)
+            group.fans.add(self)
+            self.groups.add(group)
+
+    def interview_serialize(self) -> str:
+        return json.dumps({
+            "kind": self.kind,
+            "label": self.label,
+            "serial": self.serial,
+            "ean": self.ean,
+            "bus_unit": self.bus_unit,
+            "operating_mode": self.operating_mode,
+            "cgtype": list(self.cgtype),
+            "group_membership": [_serialize_group_address(group) for group in self.group_membership],
+            "scene_levels": list(self._scene_levels),
+        })
+
+    def interview_hydrate(self, data: str | dict[str, Any]) -> bool:
+        try:
+            data = _loads_interview_data(data)
+            self.label = data.get("label")
+            self.serial = data.get("serial")
+            self.ean = data.get("ean")
+            self.bus_unit = data.get("bus_unit")
+            self.operating_mode = data.get("operating_mode")
+            self.cgtype = list(data.get("cgtype", []))
+            self._scene_levels = list(data.get("scene_levels", [None] * Const.MAX_SCENE))
+            if len(self._scene_levels) < Const.MAX_SCENE:
+                self._scene_levels.extend([None] * (Const.MAX_SCENE - len(self._scene_levels)))
+            membership = [
+                ZenAddress(controller=self.address.controller, type=ZenAddressType.GROUP, number=group["number"])
+                for group in data.get("group_membership", [])
+            ]
+            self._apply_group_membership(membership)
+            _registered(self.address.controller).fans.add(self)
+            return True
+        except Exception:  # pylint: disable=broad-exception-caught
+            return False
+
+    async def interview(self) -> bool:
+        cgstatus = await self.commands.dali_query_control_gear_status(self.address)
+        if cgstatus:
+            if self.label is None:
+                self.label = _or_device_label(await self.commands.query_dali_device_label(self.address), self.address)
+            if self.serial is None:
+                self.serial = await self.commands.query_dali_serial(self.address)
+            if self.ean is None:
+                self.ean = await self.commands.query_dali_ean(self.address)
+            if self.operating_mode is None:
+                self.operating_mode = await self.commands.query_operating_mode_by_address(self.address)
+            self.cgtype = await self.commands.dali_query_cg_type(self.address) or []
+            self._scene_levels = await self.commands.query_scene_levels_by_address(self.address) or [None] * Const.MAX_SCENE
+            groups = await self.commands.query_group_membership_by_address(self.address)
+            self._apply_group_membership(groups or [])
+            _registered(self.address.controller).fans.add(self)
+            return True
+        self._reset()
+        return False
+
+    @staticmethod
+    def speed_from_arc(arc: int | None) -> int:
+        """Map arc level to speed 0-4 using zencontrol default bands."""
+        if arc is None or arc <= 0:
+            return 0
+        if arc <= 63:
+            return 1
+        if arc <= 127:
+            return 2
+        if arc <= 191:
+            return 3
+        return 4
+
+    @staticmethod
+    def arc_for_speed(speed: int) -> int:
+        """Command arc for speed 0-4."""
+        if not 0 <= speed <= 4:
+            raise ValueError(f"Fan speed must be 0-4, got {speed}")
+        return ZenFan._SPEED_ARCS[speed]
+
+    @property
+    def speed(self) -> int:
+        return self.speed_from_arc(self.level)
+
+    async def set_speed(self, speed: int, fade: bool = True) -> bool | None:
+        return await self.set(level=self.arc_for_speed(speed), fade=fade)
+
+    async def _notify_change(self) -> None:
+        if callable(self.ctx.callbacks.fan_change):
+            await self.ctx.callbacks.fan_change(fan=self)
+
+
+class ZenBlind(ZenControlGear):
+    kind = "blind"
+    serial: (int | str) | None = None
+    ean: int | None = None
+    bus_unit: int | None = None
+    operating_mode: int | None = None
+    cgtype: list[int]
+    groups: set[ZenGroup]
+    group_membership: list[ZenAddress]
+
+    def __init__(self, ctx: EntityContext, address: ZenAddress) -> None:
+        self.ctx = ctx
+        self.commands = ctx.commands
+        self.address = address
+        self._reset()
+
+    def __repr__(self) -> str:
+        return f"ZenBlind<{self.address.controller.name} ecg {self.address.number}: {self.label}>"
+
+    def _reset(self) -> None:
+        self._reset_gear_state()
+        self.serial = None
+        self.ean = None
+        self.bus_unit = None
+        self.operating_mode = None
+        self.cgtype = []
+        self.groups = set()
+        self.group_membership = []
+
+    def _apply_group_membership(self, membership: list[ZenAddress]) -> None:
+        for existing_group in self.groups:
+            existing_group.blinds.discard(self)
+        self.groups.clear()
+        self.group_membership = list(membership)
+        for group_address in self.group_membership:
+            group = self.ctx.group(group_address)
+            group.blinds.add(self)
+            self.groups.add(group)
+
+    def interview_serialize(self) -> str:
+        return json.dumps({
+            "kind": self.kind,
+            "label": self.label,
+            "serial": self.serial,
+            "ean": self.ean,
+            "bus_unit": self.bus_unit,
+            "operating_mode": self.operating_mode,
+            "cgtype": list(self.cgtype),
+            "group_membership": [_serialize_group_address(group) for group in self.group_membership],
+            "scene_levels": list(self._scene_levels),
+        })
+
+    def interview_hydrate(self, data: str | dict[str, Any]) -> bool:
+        try:
+            data = _loads_interview_data(data)
+            self.label = data.get("label")
+            self.serial = data.get("serial")
+            self.ean = data.get("ean")
+            self.bus_unit = data.get("bus_unit")
+            self.operating_mode = data.get("operating_mode")
+            self.cgtype = list(data.get("cgtype", []))
+            self._scene_levels = list(data.get("scene_levels", [None] * Const.MAX_SCENE))
+            if len(self._scene_levels) < Const.MAX_SCENE:
+                self._scene_levels.extend([None] * (Const.MAX_SCENE - len(self._scene_levels)))
+            membership = [
+                ZenAddress(controller=self.address.controller, type=ZenAddressType.GROUP, number=group["number"])
+                for group in data.get("group_membership", [])
+            ]
+            self._apply_group_membership(membership)
+            _registered(self.address.controller).blinds.add(self)
+            return True
+        except Exception:  # pylint: disable=broad-exception-caught
+            return False
+
+    async def interview(self) -> bool:
+        cgstatus = await self.commands.dali_query_control_gear_status(self.address)
+        if cgstatus:
+            if self.label is None:
+                self.label = _or_device_label(await self.commands.query_dali_device_label(self.address), self.address)
+            if self.serial is None:
+                self.serial = await self.commands.query_dali_serial(self.address)
+            if self.ean is None:
+                self.ean = await self.commands.query_dali_ean(self.address)
+            if self.operating_mode is None:
+                self.operating_mode = await self.commands.query_operating_mode_by_address(self.address)
+            self.cgtype = await self.commands.dali_query_cg_type(self.address) or []
+            self._scene_levels = await self.commands.query_scene_levels_by_address(self.address) or [None] * Const.MAX_SCENE
+            groups = await self.commands.query_group_membership_by_address(self.address)
+            self._apply_group_membership(groups or [])
+            _registered(self.address.controller).blinds.add(self)
+            return True
+        self._reset()
+        return False
+
+    @staticmethod
+    def position_from_arc(arc: int | None) -> int | None:
+        """Linear 0-100 position; None if unknown (incl. MASK 255)."""
+        if arc is None or arc == 255:
+            return None
+        if arc <= 0:
+            return 0
+        if arc >= 254:
+            return 100
+        return round(arc / 254 * 100)
+
+    @staticmethod
+    def arc_for_position(position: int) -> int:
+        """Linear position 0-100 → arc 0-254."""
+        if not 0 <= position <= 100:
+            raise ValueError(f"Position must be 0-100, got {position}")
+        if position <= 0:
+            return 0
+        if position >= 100:
+            return 254
+        return round(position / 100 * 254)
+
+    @property
+    def position(self) -> int | None:
+        return self.position_from_arc(self.level)
+
+    async def set_position(self, position: int, fade: bool = True) -> bool | None:
+        return await self.set(level=self.arc_for_position(position), fade=fade)
+
+    async def open(self, fade: bool = True) -> bool | None:
+        return await self.set(level=Const.MAX_LEVEL, fade=fade)
+
+    async def close(self, fade: bool = True) -> bool | None:
+        return await self.off(fade=fade)
+
+    async def stop(self) -> bool | None:
+        return await self.dali_stop_fade()
+
+    async def _event_received_level(self, level: int, cascaded_from: ZenGroup | None = None) -> None:
+        # MASK 255 = unknown / mid-travel — still notify (lights ignore 255).
+        if level == self.level:
+            return
+        self.level = level
+        if self.scene is not None:
+            self.scene = None
+        await self._after_direct_change(level_changed=True, colour_changed=False, cascaded_from=cascaded_from)
+        await self._notify_change()
+
+    async def refresh_state_from_controller(self) -> None:
+        refreshed_level = await self.commands.dali_query_level(self.address)
+        refreshed_scene = None
+        if await self.commands.dali_query_last_scene_is_current(self.address):
+            refreshed_scene = await self.commands.dali_query_last_scene(self.address)
+        # None from query is failure/MASK collapse — do not clear a known position.
+        if refreshed_level is not None:
+            await self._event_received_level(refreshed_level)
+        if refreshed_scene is not None:
+            await self._event_received_scene(refreshed_scene, active=True)
+
+    async def _notify_change(self) -> None:
+        if callable(self.ctx.callbacks.blind_change):
+            await self.ctx.callbacks.blind_change(blind=self)
+
+
+class ZenGroup(ZenControlGear):
+    lights: set[ZenLight]
+    fans: set[ZenFan]
+    blinds: set[ZenBlind]
+
+    def __init__(self, ctx: EntityContext, address: ZenAddress) -> None:
+        self.ctx = ctx
+        self.commands = ctx.commands
+        self.address = address
+        self.lights = set()
+        self.fans = set()
+        self.blinds = set()
         self._reset()
 
     def __repr__(self) -> str:
@@ -725,8 +1019,8 @@ class ZenAbsoluteInput:
     """DALI ECD absolute (numerical) input instance — dials, sliders, etc.
 
     Controllers emit value-change events only; TPI has no query/set command for
-    the current value, so ``value`` stays ``None`` until the first event.
-    Payload matches ``_protocol.txt``: ``[instance, value_hi, value_lo]``.
+    the current value, so value stays None until the first event.
+    Payload matches _protocol.txt: [instance, value_hi, value_lo].
     """
 
     ctx: EntityContext

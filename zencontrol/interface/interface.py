@@ -37,9 +37,11 @@ from .discovery import ControllerDiscovery
 from .dispatch import EventDispatcher
 from .entities import (
     ZenAbsoluteInput,
+    ZenBlind,
     ZenButton,
     ZenControlGear,
     ZenController,
+    ZenFan,
     ZenGroup,
     ZenLight,
     ZenMotionSensor,
@@ -660,7 +662,13 @@ class ZenControl:
     async def get_control_gear(
         self, controller: ZenController | None = None
     ) -> set[ZenControlGear]:
-        """Interview all control gear (lights today; more kinds later)."""
+        """Interview all control gear, discriminating light / fan / blind."""
+        # (ean, bus_unit) → kind. Dummy placeholders until field/support seeds real GTINs.
+        # bus_unit None matches any bus unit for that EAN.
+        allowlist: dict[tuple[int, int | None], str] = {
+            (9990000000001, None): "fan", # dummy placeholder for fan
+            (9990000000002, None): "blind", # dummy placeholder for blind
+        }
         gear: set[ZenControlGear] = set()
         controllers = [controller] if controller else self.controllers
         for ctrl in controllers:
@@ -668,7 +676,26 @@ class ZenControl:
             for address in addresses:
                 label = await self.commands.query_dali_device_label(address)
                 ean = await self.commands.query_dali_ean(address)
-                gear.add(await self.context.create_light(address, label=label, ean=ean))
+                bus_unit: int | None = None
+                kind: str | None = None
+                if ean is not None:
+                    kind = allowlist.get((ean, bus_unit)) or allowlist.get((ean, None))
+                if kind is None:
+                    text = (label or "").casefold().strip()
+                    # Blind before fan (pathological labels containing both tokens).
+                    if text == "blind" or text.endswith(" blind"):
+                        kind = "blind"
+                    elif text == "fan" or text.endswith(" fan"):
+                        kind = "fan"
+                    else:
+                        kind = "light"
+                match kind:
+                    case "fan":
+                        gear.add(await self.context.create_fan(address, label=label, ean=ean))
+                    case "blind":
+                        gear.add(await self.context.create_blind(address, label=label, ean=ean))
+                    case _:
+                        gear.add(await self.context.create_light(address, label=label, ean=ean))
         lights = {g for g in gear if isinstance(g, ZenLight)}
         _assign_light_sub_labels(lights)
         return gear
@@ -676,6 +703,14 @@ class ZenControl:
     async def get_lights(self, controller: ZenController | None = None) -> set[ZenLight]:
         """Return lights among discovered control gear (prefer ``get_control_gear``)."""
         return {g for g in await self.get_control_gear(controller) if isinstance(g, ZenLight)}
+
+    async def get_fans(self, controller: ZenController | None = None) -> set[ZenFan]:
+        """Return fans among discovered control gear (prefer ``get_control_gear``)."""
+        return {g for g in await self.get_control_gear(controller) if isinstance(g, ZenFan)}
+
+    async def get_blinds(self, controller: ZenController | None = None) -> set[ZenBlind]:
+        """Return blinds among discovered control gear (prefer ``get_control_gear``)."""
+        return {g for g in await self.get_control_gear(controller) if isinstance(g, ZenBlind)}
 
     async def _get_addresses_with_instances(self, controller: ZenController) -> list[ZenAddress]:
         """Return all DALI addresses that have instances (full address-space scan)."""

@@ -19,6 +19,8 @@ async def test_interview_discovers_entities(live_zen):
     await ctrl.interview()
 
     lights = await zen.get_lights()
+    fans = await zen.get_fans()
+    blinds = await zen.get_blinds()
     groups = await zen.get_groups()
     buttons = await zen.get_buttons()
     absolute_inputs = await zen.get_absolute_inputs()
@@ -27,6 +29,8 @@ async def test_interview_discovers_entities(live_zen):
     sysvars = await zen.get_system_variables(give_up_after=5)
 
     assert len(lights) == 12
+    assert len(fans) == 1 and next(iter(fans)).label == "Living Fan"
+    assert len(blinds) == 1 and next(iter(blinds)).label == "Theatre Blind"
     assert len(groups) == 6
     assert len(buttons) >= 9
     assert len(absolute_inputs) >= 1

@@ -26,7 +26,7 @@ async def test_discover_gear_groups_and_devices(live_sim):
     p, c = live_sim.commands, live_sim.controller
 
     gears = await p.query_control_gear_dali_addresses(c)
-    assert sorted(a.number for a in gears) == list(range(12))
+    assert sorted(a.number for a in gears) == list(range(14))
 
     groups = await p.query_group_numbers(c)
     assert sorted(a.number for a in groups) == [0, 1, 2, 3, 4, 5]

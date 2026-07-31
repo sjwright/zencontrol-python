@@ -1,17 +1,19 @@
 """
-High-level interface: ``ZenControl`` composition root and entity models.
+High-level interface: ZenControl composition root and entity models.
 
-Prefer ``ZenControl`` for applications (commands + events + discovery).
-``EntityContext`` is the advanced/command-only surface used when you own the
+Prefer ZenControl for applications (commands + events + discovery).
+EntityContext is the advanced/command-only surface used when you own the
 command client yourself and do not need the event session.
 """
 
 from .context import ControllerRuntimeStatus, EntityContext, ZenCallbacks
 from .entities import (
     ZenAbsoluteInput,
+    ZenBlind,
     ZenButton,
     ZenControlGear,
     ZenController,
+    ZenFan,
     ZenGroup,
     ZenLight,
     ZenMotionSensor,
@@ -33,6 +35,8 @@ __all__ = [
     "ZenProfile",
     "ZenControlGear",
     "ZenLight",
+    "ZenFan",
+    "ZenBlind",
     "ZenGroup",
     "ZenButton",
     "ZenAbsoluteInput",

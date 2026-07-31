@@ -1,7 +1,7 @@
 """Entity-layer context: callbacks, registry, and fire-and-forget tasks.
 
-Keeps ``ZenCommandClient`` as a pure TPI/UDP command plane. High-level entity
-identity and application callbacks live here, owned by ``ZenControl``.
+Keeps ZenCommandClient as a pure TPI/UDP command plane. High-level entity
+identity and application callbacks live here, owned by ZenControl.
 """
 
 from __future__ import annotations
@@ -17,8 +17,10 @@ from ..api.models import DiscoveredController, ZenAddress, ZenInstance, mac_to_b
 if TYPE_CHECKING:
     from .entities import (
         ZenAbsoluteInput,
+        ZenBlind,
         ZenButton,
         ZenController,
+        ZenFan,
         ZenGroup,
         ZenLight,
         ZenMotionSensor,
@@ -53,6 +55,14 @@ class LightChangeHandler(Protocol):
     def __call__(self, *, light: ZenLight) -> Awaitable[None]: ...
 
 
+class FanChangeHandler(Protocol):
+    def __call__(self, *, fan: ZenFan) -> Awaitable[None]: ...
+
+
+class BlindChangeHandler(Protocol):
+    def __call__(self, *, blind: ZenBlind) -> Awaitable[None]: ...
+
+
 class ButtonPressHandler(Protocol):
     def __call__(self, *, button: ZenButton) -> Awaitable[None]: ...
 
@@ -84,8 +94,8 @@ class ControllerStatusChangeHandler(Protocol):
 class ZenCallbacks:
     """Per-ZenControl high-level callback registry.
 
-    Stored on ``EntityContext.callbacks`` so entity singletons reach their
-    owning integration's callbacks via ``self.ctx.callbacks``.
+    Stored on EntityContext.callbacks so entity singletons reach their
+    owning integration's callbacks via self.ctx.callbacks.
     """
 
     def __init__(self) -> None:
@@ -96,6 +106,8 @@ class ZenCallbacks:
         self.profile_change: ProfileChangeHandler | None = None
         self.group_change: GroupChangeHandler | None = None
         self.light_change: LightChangeHandler | None = None
+        self.fan_change: FanChangeHandler | None = None
+        self.blind_change: BlindChangeHandler | None = None
         self.button_press: ButtonPressHandler | None = None
         self.button_long_press: ButtonPressHandler | None = None
         self.absolute_input_change: AbsoluteInputChangeHandler | None = None
@@ -111,7 +123,7 @@ class ZenCallbacks:
 class EntityRegistry:
     """Per-context caches for interface-layer entity identity.
 
-    Entities keyed here are unique within one ``EntityContext`` / ``ZenControl``
+    Entities keyed here are unique within one EntityContext / ZenControl
     instance, not process-wide. Non-controller keys are tuples whose first
     element is always the controller name.
     """
@@ -120,6 +132,8 @@ class EntityRegistry:
         self.controllers: dict[str, ZenController] = {}
         self.profiles: dict[tuple[str, int], ZenProfile] = {}
         self.lights: dict[tuple[str, int], ZenLight] = {}
+        self.fans: dict[tuple[str, int], ZenFan] = {}
+        self.blinds: dict[tuple[str, int], ZenBlind] = {}
         self.groups: dict[tuple[str, int], ZenGroup] = {}
         self.buttons: dict[tuple[str, int, int], ZenButton] = {}
         self.absolute_inputs: dict[tuple[str, int, int], ZenAbsoluteInput] = {}
@@ -130,6 +144,8 @@ class EntityRegistry:
         self.controllers.clear()
         self.profiles.clear()
         self.lights.clear()
+        self.fans.clear()
+        self.blinds.clear()
         self.groups.clear()
         self.buttons.clear()
         self.absolute_inputs.clear()
@@ -137,12 +153,16 @@ class EntityRegistry:
         self.system_variables.clear()
 
     def purge_controller(self, controller_name: str) -> None:
-        """Drop cached entities that belong to ``controller_name``."""
+        """Drop cached entities that belong to controller_name."""
         self.controllers.pop(controller_name, None)
         for profile_key in [k for k in self.profiles if k[0] == controller_name]:
             del self.profiles[profile_key]
         for light_key in [k for k in self.lights if k[0] == controller_name]:
             del self.lights[light_key]
+        for fan_key in [k for k in self.fans if k[0] == controller_name]:
+            del self.fans[fan_key]
+        for blind_key in [k for k in self.blinds if k[0] == controller_name]:
+            del self.blinds[blind_key]
         for group_key in [k for k in self.groups if k[0] == controller_name]:
             del self.groups[group_key]
         for button_key in [k for k in self.buttons if k[0] == controller_name]:
@@ -158,13 +178,13 @@ class EntityRegistry:
 class EntityContext:
     """Owns entity callbacks, identity registry, and deferred interface tasks.
 
-    Advanced/command-only surface. Prefer ``ZenControl`` for applications that
+    Advanced/command-only surface. Prefer ZenControl for applications that
     need event monitoring, discovery, or session lifecycle — it creates and
-    owns an ``EntityContext``. Use this directly only when you drive
-    ``ZenCommandClient`` yourself without the event session.
+    owns an EntityContext. Use this directly only when you drive
+    ZenCommandClient yourself without the event session.
 
-    Entity identity is obtained via factory methods (``light``, ``group``, …);
-    construct entities only through those (or the async ``create_*`` wrappers).
+    Entity identity is obtained via factory methods (light, group, …);
+    construct entities only through those (or the async create_* wrappers).
     """
 
     def __init__(self, commands: ZenCommandClient, logger: logging.Logger | None = None) -> None:
@@ -236,10 +256,45 @@ class EntityContext:
         from .entities import ZenLight
 
         key = (address.controller.name, address.number)
+        self.registry.fans.pop(key, None)
+        self.registry.blinds.pop(key, None)
         store = self.registry.lights
         if key not in store:
             store[key] = ZenLight(self, address)
         return store[key]
+
+    def fan(self, address: ZenAddress) -> ZenFan:
+        from .entities import ZenFan
+
+        key = (address.controller.name, address.number)
+        self.registry.lights.pop(key, None)
+        self.registry.blinds.pop(key, None)
+        store = self.registry.fans
+        if key not in store:
+            store[key] = ZenFan(self, address)
+        return store[key]
+
+    def blind(self, address: ZenAddress) -> ZenBlind:
+        from .entities import ZenBlind
+
+        key = (address.controller.name, address.number)
+        self.registry.lights.pop(key, None)
+        self.registry.fans.pop(key, None)
+        store = self.registry.blinds
+        if key not in store:
+            store[key] = ZenBlind(self, address)
+        return store[key]
+
+    def ecg_lookup(self, address: ZenAddress) -> ZenLight | ZenFan | ZenBlind | None:
+        """Lookup-only across light/fan/blind registries (no lazy create)."""
+        key = (address.controller.name, address.number)
+        if key in self.registry.lights:
+            return self.registry.lights[key]
+        if key in self.registry.fans:
+            return self.registry.fans[key]
+        if key in self.registry.blinds:
+            return self.registry.blinds[key]
+        return None
 
     def group(self, address: ZenAddress) -> ZenGroup:
         from .entities import ZenGroup
@@ -328,6 +383,20 @@ class EntityContext:
         if ean is not None: light.ean = ean
         await light.interview()
         return light
+
+    async def create_fan(self, address: ZenAddress, *, label: str | None = None, ean: int | None = None) -> ZenFan:
+        fan = self.fan(address)
+        if label is not None: fan.label = label
+        if ean is not None: fan.ean = ean
+        await fan.interview()
+        return fan
+
+    async def create_blind(self, address: ZenAddress, *, label: str | None = None, ean: int | None = None) -> ZenBlind:
+        blind = self.blind(address)
+        if label is not None: blind.label = label
+        if ean is not None: blind.ean = ean
+        await blind.interview()
+        return blind
 
     async def create_group(self, address: ZenAddress) -> ZenGroup:
         group = self.group(address)

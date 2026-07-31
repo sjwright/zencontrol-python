@@ -85,9 +85,11 @@ health = zen.event_health_for(ctrl)  # RECEIVING / SILENT / …
 
 ## Entities
 
-`get_lights()`, `get_groups()`, `get_instances()`, `get_profiles()`, and `get_system_variables()` scan the controller(s) and return **singletons** for this `ZenControl` (same address → same object). Passing `controller=ctrl` limits the scan. `get_buttons()` / `get_motion_sensors()` / `get_absolute_inputs()` remain as filters over `get_instances()`.
+`get_control_gear()` / `get_lights()` / `get_fans()` / `get_blinds()`, `get_groups()`, `get_instances()`, `get_profiles()`, and `get_system_variables()` scan the controller(s) and return **singletons** for this `ZenControl` (same address → same object). Passing `controller=ctrl` limits the scan. Prefer one `get_control_gear()` and partition when you need all ECG kinds. `get_buttons()` / `get_motion_sensors()` / `get_absolute_inputs()` remain as filters over `get_instances()`.
 
-Identity is owned by `zen.context` factories (`ctx.light(address)`, `ctx.group(address)`, …). Prefer those (or the async `ctx.create_*` interview wrappers) over constructing entity classes directly.
+Fans and blinds are classified by label suffix (`… Fan` / `… Blind`) or a GTIN+bus-unit allowlist when seeded; they are **not** returned from `get_lights()`.
+
+Identity is owned by `zen.context` factories (`ctx.light(address)`, `ctx.fan(address)`, `ctx.blind(address)`, `ctx.group(address)`, …). Prefer those (or the async `ctx.create_*` interview wrappers) over constructing entity classes directly.
 
 Each `create` / first fetch runs `interview()` (labels, features, membership, timers, …). Cached state (`light.level`, `sensor.occupied`, …) then updates from events and occasional refresh.
 
@@ -95,6 +97,8 @@ Each `create` / first fetch runs `interview()` (labels, features, membership, ti
 | --- | --- |
 | `ZenControlGear` | Shared base for all control gear (ECG) and groups: `level`/`colour`/`scene` |
 | `ZenLight` | Lighting ECG gear: group membership, membership-driven discoordination |
+| `ZenFan` | Ceiling fan speeds via discrete ARC levels (`set_speed` / `speed`) |
+| `ZenBlind` | Position 0-100%; `stop()` sends DAPC MASK (255) |
 | `ZenGroup` | Group gear: mostly the same as lights, plus scene label helpers and group state assertions |
 | `ZenButton` | Press / long-press via callbacks |
 | `ZenMotionSensor` | `occupied`; occupancy events |
@@ -120,7 +124,9 @@ All hooks are on `zen.callbacks` (`ZenCallbacks`). Wire events are dispatched **
 
 | Callback | Arguments (keyword) | When |
 | --- | --- | --- |
-| `light_change` | `light` | Gear level / colour / scene changed — read state from the entity |
+| `light_change` | `light` | Light level / colour / scene changed — read state from the entity |
+| `fan_change` | `fan` | Fan level / scene changed |
+| `blind_change` | `blind` | Blind level / scene changed |
 | `group_change` | `group`, `discoordinated` | Group target changed — read state from the entity; `discoordinated=True` when members diverge |
 | `button_press` / `button_long_press` | `button` | ECD push button |
 | `motion_event` | `sensor` | Occupancy — read `sensor.occupied` |
