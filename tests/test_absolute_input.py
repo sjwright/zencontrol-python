@@ -8,7 +8,7 @@ import pytest
 
 from zencontrol.api.event_decode import AbsoluteInput
 from zencontrol.api.models import ZenAddress, ZenInstance
-from zencontrol.api.types import ZenAddressType, ZenInstanceType
+from zencontrol.api.types import OccupancyInstanceTimers, ZenAddressType, ZenInstanceType
 from zencontrol.interface.interface import ZenAbsoluteInput, ZenControl, ZenController
 
 def _ecd_instance(zen: ZenControl, *, number: int = 0, inst: int = 1) -> tuple[ZenController, ZenInstance]:
@@ -98,7 +98,7 @@ async def test_ecd_getters_share_instance_scan() -> None:
     zen.commands.query_dali_ean = AsyncMock(return_value=1234567890123)
     zen.commands.query_dali_instance_label = AsyncMock(return_value="Inst")
     zen.commands.query_occupancy_instance_timers = AsyncMock(
-        return_value={"deadtime": 0, "hold": 60, "last_detect": 0}
+        return_value=OccupancyInstanceTimers(deadtime=0, hold=60, report=0, last_detect=0)
     )
 
     buttons = await zen.get_buttons(controller=ctrl)

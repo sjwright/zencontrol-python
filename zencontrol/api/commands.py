@@ -59,7 +59,15 @@ from .models import (
 )
 from .types import (
     Const,
+    ControlGearStatus,
+    DaliColourFeatures,
+    OccupancyInstanceTimers,
+    ProfileBehaviour,
+    ProfileState,
+    TpiEventUnicastAddress,
+    Transport,
     ZenAddressType,
+    ZenCgType,
     ZenErrorCode,
     ZenEventMode,
     ZenInstanceType,
@@ -526,7 +534,7 @@ class ZenCommandClient:
 
     async def tpi_event_emit(self, controller: ControllerRef, mode: ZenEventMode | None = None) -> bool:
         """Enable or disable TPI Event emission. Returns True if successful, else False."""
-        if mode is None: mode = ZenEventMode(enabled=True, filtering=False, unicast=False, multicast=True)
+        if mode is None: mode = ZenEventMode(enabled=True, filtering=False, transport=Transport.MULTICAST)
         mask = mode.bitmask()
         # response = self._response_to_bytes_or_none(await self._send_basic(controller, CMD.ENABLE_TPI_EVENT_EMIT, 0x00)) # disable first to clear any existing state... I think this is a bug?
         response = self._response_to_bytes_or_none(await self._send_basic(controller, CMD.ENABLE_TPI_EVENT_EMIT, mask))
@@ -567,29 +575,18 @@ class ZenCommandClient:
             return None
         return response.data if response.data else None
 
-    async def query_tpi_event_unicast_address(self, controller: ControllerRef) -> dict[str, Any] | None:
+    async def query_tpi_event_unicast_address(self, controller: ControllerRef) -> TpiEventUnicastAddress | None:
         """Query TPI Events state and unicast configuration.
         Sends a Basic frame to query the TPI Event emit state, Unicast Port and Unicast Address.
-       
-        Args:
-            controller: ZenController instance
-            
-        Returns:
-            Optional dict containing:
-            - bool: Whether TPI Events are enabled
-            - bool: Whether Unicast mode is enabled  
-            - int: Configured unicast port
-            - str: Configured unicast IP address
-            
-            Returns None if query fails
+        Returns: TpiEventUnicastAddress or None if the query fails.
         """
         response = self._response_to_bytes_or_none(await self._send_basic(controller, CMD.QUERY_TPI_EVENT_UNICAST_ADDRESS))
         if response and len(response) >= 7:
-            return {
-                'mode': ZenEventMode.from_byte(response[0]),
-                'port': (response[1] << 8) | response[2],
-                'ip': f"{response[3]}.{response[4]}.{response[5]}.{response[6]}"
-            }
+            return TpiEventUnicastAddress(
+                mode=ZenEventMode.from_byte(response[0]),
+                port=(response[1] << 8) | response[2],
+                ip=f"{response[3]}.{response[4]}.{response[5]}.{response[6]}",
+            )
         return None
 
     async def query_group_numbers(self, controller: ControllerRef) -> list[ZenAddress]:
@@ -609,8 +606,10 @@ class ZenCommandClient:
             return None
         return colour_from_bytes(response)
     
-    async def query_profile_information(self, controller: ControllerRef) -> (tuple[dict[str, Any], dict[int, dict[str, bool | int | str]]]) | None:
-        """Query a controller for profile information. Returns a tuple of two dicts, or None if query fails."""
+    async def query_profile_information(
+        self, controller: ControllerRef
+    ) -> tuple[ProfileState, dict[int, ProfileBehaviour]] | None:
+        """Query a controller for profile information. Returns state + profiles, or None if query fails."""
         response = self._response_to_bytes_or_none(await self._send_basic(controller, CMD.QUERY_PROFILE_INFORMATION))
         if not response or len(response) < 12:
             return None
@@ -620,14 +619,14 @@ class ZenCommandClient:
         # 4-7 0x22334455 Last Overridden Profile UTC
         # 8-11 0x44556677 Last Scheduled Profile UTC
         unpacked = struct.unpack('>HHII', response[0:12])
-        state: dict[str, Any] = {
-            'current_active_profile': unpacked[0],
-            'last_scheduled_profile': unpacked[1],
-            'last_overridden_profile_utc': dt.fromtimestamp(unpacked[2]),
-            'last_scheduled_profile_utc': dt.fromtimestamp(unpacked[3])
-        }
+        state = ProfileState(
+            current_active_profile=unpacked[0],
+            last_scheduled_profile=unpacked[1],
+            last_overridden_profile_utc=dt.fromtimestamp(unpacked[2]),
+            last_scheduled_profile_utc=dt.fromtimestamp(unpacked[3]),
+        )
         # Process profiles in groups of 3 bytes (2 bytes for profile number, 1 byte for profile behaviour)
-        profiles: dict[int, dict[str, bool | int | str]] = {}
+        profiles: dict[int, ProfileBehaviour] = {}
         for i in range(12, len(response), 3):
             profile_number = struct.unpack('>H', response[i:i+2])[0]
             profile_behaviour = response[i+2]
@@ -636,8 +635,11 @@ class ZenCommandClient:
             enabled = not bool(profile_behaviour & 0x01)
             priority = (profile_behaviour >> 1) & 0x03
             priority_label = ["Scheduled", "Medium", "High", "Emergency"][priority]
-            profiles[profile_number] = {"enabled": enabled, "priority": priority, "priority_label": priority_label}
-        # Return tuple of state and profiles
+            profiles[profile_number] = ProfileBehaviour(
+                enabled=enabled,
+                priority=priority,
+                priority_label=priority_label,
+            )
         return state, profiles
     
     async def query_profile_numbers(self, controller: ControllerRef) -> list[int] | None:
@@ -653,24 +655,20 @@ class ZenCommandClient:
             return profile_numbers
         return None
 
-    async def query_occupancy_instance_timers(self, instance: ZenInstance) -> dict[str, Any] | None:
-        """Query timer values for a DALI occupancy sensor instance. Returns dict, or None if query fails.
+    async def query_occupancy_instance_timers(self, instance: ZenInstance) -> OccupancyInstanceTimers | None:
+        """Query timer values for a DALI occupancy sensor instance.
 
-        Returns:
-            dict:
-                - int: Deadtime in seconds (0-255)
-                - int: Hold time in seconds (0-255)
-                - int: Report time in seconds (0-255)
-                - int: Seconds since last occupied status (0-65535)
+        Returns OccupancyInstanceTimers (deadtime/hold/report seconds and
+        seconds since last occupied status), or None if the query fails.
         """
         response = self._response_to_bytes_or_none(await self._send_basic(instance.address.controller, CMD.QUERY_OCCUPANCY_INSTANCE_TIMERS, instance.address.ecd(), [0x00, 0x00, instance.number]))
         if response and len(response) >= 5:
-            return {
-                'deadtime': response[0],
-                'hold': response[1],
-                'report': response[2],
-                'last_detect': (response[3] << 8) | response[4]
-            }
+            return OccupancyInstanceTimers(
+                deadtime=response[0],
+                hold=response[1],
+                report=response[2],
+                last_detect=(response[3] << 8) | response[4],
+            )
         return None
 
     async def query_instances_by_address(self, address: ZenAddress) -> list[ZenInstance]:
@@ -894,7 +892,7 @@ class ZenCommandClient:
         """Send DIRECT ARC level (0-254) to an address (ECG or group or broadcast). Will fade to the new level. Returns True if acknowledged, else False."""
         if not 0 <= level <= Const.MAX_LEVEL: raise ValueError(f"Level must be between 0 and {Const.MAX_LEVEL}, got {level}")
         return self._response_ok_no_none(await self._send_basic(address.controller, CMD.DALI_ARC_LEVEL, address.ecg_or_group_or_broadcast(), [0x00, 0x00, level]))
-    
+
     async def dali_on_step_up(self, address: ZenAddress) -> bool | None:
         """Send ON AND STEP UP to an address (ECG or group or broadcast). If a device is off, it will turn it on. If a device is on, it will step up. No fade."""
         return self._response_ok_no_none(await self._send_basic(address.controller, CMD.DALI_ON_STEP_UP, address.ecg_or_group_or_broadcast()))
@@ -929,33 +927,34 @@ class ZenCommandClient:
         if response == 255: return None # 255 indicates mixed levels
         return response
     
-    async def dali_query_control_gear_status(self, address: ZenAddress) -> dict[str, Any] | None:
-        """Query the Status for a DALI address (ECG or group or broadcast). Returns a dictionary of status flags."""
+    async def dali_query_control_gear_status(self, address: ZenAddress) -> ControlGearStatus | None:
+        """Query the Status for a DALI address (ECG or group or broadcast)."""
         response = self._response_to_bytes_or_none(await self._send_basic(address.controller, CMD.DALI_QUERY_CONTROL_GEAR_STATUS, address.ecg_or_group_or_broadcast()))
         if response and len(response) == 1:
-            return {
-                "cg_failure": bool(response[0] & 0x01),
-                "lamp_failure": bool(response[0] & 0x02),
-                "lamp_power_on": bool(response[0] & 0x04),
-                "limit_error": bool(response[0] & 0x08), # (an Arc-level > Max or < Min requested)
-                "fade_running": bool(response[0] & 0x10),
-                "reset": bool(response[0] & 0x20),
-                "missing_short_address": bool(response[0] & 0x40),
-                "power_failure": bool(response[0] & 0x80)
-            }
+            return ControlGearStatus(
+                cg_failure=bool(response[0] & 0x01),
+                lamp_failure=bool(response[0] & 0x02),
+                lamp_power_on=bool(response[0] & 0x04),
+                limit_error=bool(response[0] & 0x08),  # (an Arc-level > Max or < Min requested)
+                fade_running=bool(response[0] & 0x10),
+                reset=bool(response[0] & 0x20),
+                missing_short_address=bool(response[0] & 0x40),
+                power_failure=bool(response[0] & 0x80),
+            )
         return None
     
-    async def dali_query_cg_type(self, address: ZenAddress) -> list[int] | None:
+    async def dali_query_cg_type(self, address: ZenAddress) -> list[ZenCgType] | None:
         """Query device type information for a DALI address (ECG).
             
         Returns:
-            list[int] | None: List of device type numbers that the control gear belongs to.
-                                Returns empty list if device doesn't exist.
-                                Returns None if query fails.
+            list[ZenCgType] | None: Named device types whose bits are set in the
+            32-bit CG-type response. Empty list if the device exists but reports
+            no known types. None if the query fails. Unknown bit indices are
+            omitted.
         """
         response = self._response_to_bytes_or_none(await self._send_basic(address.controller, CMD.DALI_QUERY_CG_TYPE, address.ecg()))
         if response and len(response) == 4:
-            device_types = []
+            device_types: list[ZenCgType] = []
             # Process each byte which represents 8 device types
             for byte_index, byte_value in enumerate(response):
                 # Check each bit in the byte
@@ -963,7 +962,10 @@ class ZenCommandClient:
                     if byte_value & (1 << bit):
                         # Calculate actual device type number
                         device_type = byte_index * 8 + bit
-                        device_types.append(device_type)
+                        try:
+                            device_types.append(ZenCgType(device_type))
+                        except ValueError:
+                            pass
             return device_types
         return None
     
@@ -1157,36 +1159,28 @@ class ZenCommandClient:
         """
         return self._response_ok_no_none(await self._send_basic(address.controller, CMD.DALI_STOP_FADE, address.ecg_or_group_or_broadcast()))
     
-    async def query_dali_colour_features(self, address: ZenAddress) -> dict[str, Any] | None:
+    async def query_dali_colour_features(self, address: ZenAddress) -> DaliColourFeatures | None:
         """Query the colour features/capabilities of a DALI device.
         
-        Args:
-            address: ZenAddress
-            
-        Returns:
-            Dictionary containing colour capabilities, or None if query failed:
-            {
-                'supports_xy': bool,          # Supports CIE 1931 XY coordinates
-                'primary_count': int,         # Number of primaries (0-7)
-                'rgbwaf_channels': int,      # Number of RGBWAF channels (0-7)
-            }
+        Returns DaliColourFeatures, or a zeroed instance when the controller
+        answers with no payload. Returns None only when the query fails.
         """
         response = self._response_to_bytes_or_none(await self._send_basic(address.controller, CMD.QUERY_DALI_COLOUR_FEATURES, address.ecg()))
         if response and len(response) == 1:
             features = response[0]
-            return {
-                'supports_xy': bool(features & 0x01),      # Bit 0
-                'supports_tunable': bool(features & 0x02), # Bit 1
-                'primary_count': (features & 0x1C) >> 2,   # Bits 2-4
-                'rgbwaf_channels': (features & 0xE0) >> 5, # Bits 5-7
-            }
-        elif response is None:
-            return {
-                'supports_xy': False,
-                'supports_tunable': False,
-                'primary_count': 0,
-                'rgbwaf_channels': 0,
-            }
+            return DaliColourFeatures(
+                supports_xy=bool(features & 0x01),  # Bit 0
+                supports_tunable=bool(features & 0x02),  # Bit 1
+                primary_count=(features & 0x1C) >> 2,  # Bits 2-4
+                rgbwaf_channels=(features & 0xE0) >> 5,  # Bits 5-7
+            )
+        if response is None:
+            return DaliColourFeatures(
+                supports_xy=False,
+                supports_tunable=False,
+                primary_count=0,
+                rgbwaf_channels=0,
+            )
         return None
     
     async def query_dali_colour_temp_limits(self, address: ZenAddress) -> dict[str, Any] | None:

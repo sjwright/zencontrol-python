@@ -9,7 +9,7 @@ from run_main import run_with_keyboard_interrupt
 import asyncio
 import yaml
 from pathlib import Path
-from zencontrol import ZenCommandClient, ZenAddress, ZenInstance, ZenEventMode
+from zencontrol import Transport, ZenCommandClient, ZenAddress, ZenInstance, ZenEventMode
 from zencontrol.interface import EntityContext
 
 async def main():
@@ -29,7 +29,7 @@ async def main():
             y = await tpi.query_tpi_event_emit_state(ctrl)
             print(f"Initial event emit state: {y}")
 
-            x = await tpi.tpi_event_emit(ctrl, ZenEventMode(enabled=False, filtering=ctrl.filtering, unicast=False, multicast=True))
+            x = await tpi.tpi_event_emit(ctrl, ZenEventMode(enabled=False, filtering=ctrl.filtering, transport=Transport.MULTICAST))
             print(f"Set event emit state: {x}")
 
             y = await tpi.query_tpi_event_emit_state(ctrl)

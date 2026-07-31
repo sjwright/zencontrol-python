@@ -1,21 +1,26 @@
 """
-API enums and constants
-=======================
+API enums, constants, and typed query results
+=============================================
 
 This module holds vocabulary shared by commands, models, and the event plane.
 
-"ZenAddressType", "ZenInstanceType", and "ZenColourType" describe DALI targets
-and colour modes. "ZenErrorCode" names TPI error replies.
+"ZenAddressType", "ZenInstanceType", "ZenColourType", and "ZenCgType" describe
+DALI targets, colour modes, and control-gear device types. "ZenErrorCode" names
+TPI error replies.
 
 "Transport" and "ZenEventMode" describe how a controller emits events
 (multicast or unicast) and build the emit-state bitmask for the command plane.
+
+Frozen dataclasses such as TpiEventUnicastAddress and ControlGearStatus
+type the structured replies from query commands.
 
 "Const" is a collection of constants and defaults used throughout the API.
 
 """
 
 from dataclasses import dataclass
-from enum import Enum
+from datetime import datetime
+from enum import Enum, IntEnum
 from typing import Self
 
 
@@ -47,7 +52,7 @@ class ZenColourType(Enum):
     RGBWAF = 0x80
 
 
-class ZenErrorCode(Enum):
+class ZenErrorCode(IntEnum):
     CHECKSUM = 0x01
     SHORT_CIRCUIT = 0x02
     RECEIVE_ERROR = 0x03
@@ -63,37 +68,30 @@ class ZenErrorCode(Enum):
     UNKNOWN_TARGET = 0xB8
 
 
+class ZenCgType(IntEnum):
+    """DALI control-gear device type numbers (bit index in DALI_QUERY_CG_TYPE)."""
+
+    FLUORESCENT = 0
+    EMERGENCY = 1
+    DISCHARGE = 2
+    HALOGEN = 3
+    INCANDESCENT = 4
+    DC = 5
+    LED = 6
+    RELAY = 7
+    COLOUR_CONTROL = 8
+    LOAD_REFERENCING = 15
+    THERMAL_GEAR_PROTECTION = 16
+    DIMMING_CURVE_SELECTION = 17
+
+
 @dataclass(slots=True)
 class ZenEventMode:
-    """TPI event emit mode. Exactly one transport - dual bools are unrepresentable."""
+    """TPI event emit mode. Exactly one transport (multicast or unicast)."""
 
     enabled: bool = False
     filtering: bool = False
     transport: Transport = Transport.MULTICAST
-
-    def __init__(
-        self,
-        enabled: bool = False,
-        filtering: bool = False,
-        transport: Transport | None = None,
-        *,
-        unicast: bool | None = None,
-        multicast: bool | None = None,
-    ) -> None:
-        object.__setattr__(self, "enabled", enabled)
-        object.__setattr__(self, "filtering", filtering)
-        if transport is not None:
-            if unicast is not None or multicast is not None:
-                raise ValueError("pass transport= or unicast=/multicast=, not both")
-            object.__setattr__(self, "transport", transport)
-        elif unicast is not None or multicast is not None:
-            u = bool(unicast)
-            m = bool(multicast) if multicast is not None else not u
-            if u and m:
-                raise ValueError("a controller emits on exactly one transport (I3)")
-            object.__setattr__(self, "transport", Transport.UNICAST if u else Transport.MULTICAST)
-        else:
-            object.__setattr__(self, "transport", Transport.MULTICAST)
 
     @property
     def unicast(self) -> bool:
@@ -123,6 +121,68 @@ class ZenEventMode:
             filtering=(mode_flag & 0x02) != 0,
             transport=(Transport.UNICAST if (mode_flag & 0x40) != 0 else Transport.MULTICAST),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class TpiEventUnicastAddress:
+    """Result of QUERY_TPI_EVENT_UNICAST_ADDRESS."""
+
+    mode: ZenEventMode
+    port: int
+    ip: str
+
+
+@dataclass(frozen=True, slots=True)
+class ControlGearStatus:
+    """Result of DALI_QUERY_CONTROL_GEAR_STATUS (one status byte)."""
+
+    cg_failure: bool
+    lamp_failure: bool
+    lamp_power_on: bool
+    limit_error: bool
+    fade_running: bool
+    reset: bool
+    missing_short_address: bool
+    power_failure: bool
+
+
+@dataclass(frozen=True, slots=True)
+class DaliColourFeatures:
+    """Result of QUERY_DALI_COLOUR_FEATURES."""
+
+    supports_xy: bool
+    supports_tunable: bool
+    primary_count: int
+    rgbwaf_channels: int
+
+
+@dataclass(frozen=True, slots=True)
+class OccupancyInstanceTimers:
+    """Result of QUERY_OCCUPANCY_INSTANCE_TIMERS."""
+
+    deadtime: int
+    hold: int
+    report: int
+    last_detect: int
+
+
+@dataclass(frozen=True, slots=True)
+class ProfileBehaviour:
+    """One profile record from QUERY_PROFILE_INFORMATION."""
+
+    enabled: bool
+    priority: int
+    priority_label: str
+
+
+@dataclass(frozen=True, slots=True)
+class ProfileState:
+    """Header of QUERY_PROFILE_INFORMATION."""
+
+    current_active_profile: int
+    last_scheduled_profile: int
+    last_overridden_profile_utc: datetime
+    last_scheduled_profile_utc: datetime
 
 
 # API-level constants

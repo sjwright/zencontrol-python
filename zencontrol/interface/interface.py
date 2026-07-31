@@ -31,6 +31,7 @@ from ..api.event_decode import ZenDecodedEvent
 from ..api.event_router import EventHealth, Lease, ZenEventReceiver
 from ..api.models import DiscoveredController
 from ..api.types import Const, Transport, ZenEventMode
+from ..api.types import TpiEventUnicastAddress
 from ..exceptions import ZenConnectionError
 from .context import ControllerRuntimeStatus, EntityContext, ZenCallbacks
 from .discovery import ControllerDiscovery
@@ -448,7 +449,7 @@ class ZenControl:
 
     @property
     def callbacks(self) -> ZenCallbacks:
-        """Application callback registry (same object as ``context.callbacks``)."""
+        """Application callback registry (same object as context.callbacks)."""
         return self.context.callbacks
 
     @property
@@ -494,7 +495,7 @@ class ZenControl:
         """Detach a controller and close its command client.
 
         Safe to call while event monitoring is running. Does not stop the shared
-        listener; callers that own the last controller should ``aclose()``.
+        listener; callers that own the last controller should aclose().
         """
         name = controller if isinstance(controller, str) else controller.name
         removed = [c for c in self.controllers if c.name == name]
@@ -516,7 +517,7 @@ class ZenControl:
     async def configure_controller_events(self, controller: ZenController) -> bool:
         """Enable TPI event emit for one controller using this client's listen mode.
 
-        Call after ``add_controller`` when event monitoring is already running so a
+        Call after add_controller when event monitoring is already running so a
         newly attached controller joins the shared listener. Returns True when the
         emit-enable command succeeds.
         """
@@ -545,7 +546,7 @@ class ZenControl:
         the controller is reachable and events are confirmed/enabled, False when
         the ping timed out / failed or re-assert could not enable emit.
 
-        Never re-asserts while ``is_controller_ready()`` is false — the startup
+        Never re-asserts while is_controller_ready() is false — the startup
         sequence can take several minutes after a reboot.
         """
         if not self.is_event_monitoring_active():
@@ -579,7 +580,7 @@ class ZenControl:
         needs_reassert = False
         info = await self.commands.query_tpi_event_unicast_address(controller)
         if info is not None:
-            mode = info["mode"]
+            mode = info.mode
             if not mode.enabled or bool(mode.unicast) != unicast:
                 needs_reassert = True
             elif unicast and self._unicast_target_mismatch(controller, info):
@@ -610,10 +611,10 @@ class ZenControl:
         await self._notify_controller_status(controller, "online")
         return True
 
-    def _unicast_target_mismatch(self, controller: ZenController, info: dict[str, Any]) -> bool:
+    def _unicast_target_mismatch(self, controller: ZenController, info: TpiEventUnicastAddress) -> bool:
         """True when the controller's programmed unicast target is wrong for it.
 
-        Compares against that controller's binding advertise (per-``toward``).
+        Compares against that controller's binding advertise (per-toward).
         Without a live advertise there is nothing to compare — return False.
         """
         if self._wiring is None:
@@ -623,7 +624,7 @@ class ZenControl:
         if advertise is None:
             return False
         expected_ip, expected_port = advertise
-        return info.get("port") != expected_port or info.get("ip") != expected_ip
+        return info.port != expected_port or info.ip != expected_ip
 
     async def _notify_controller_status(self, controller: ZenController, status: ControllerRuntimeStatus) -> None:
         """Notify listeners of online / starting / unreachable."""
@@ -701,15 +702,15 @@ class ZenControl:
         return gear
 
     async def get_lights(self, controller: ZenController | None = None) -> set[ZenLight]:
-        """Return lights among discovered control gear (prefer ``get_control_gear``)."""
+        """Return lights among discovered control gear (prefer get_control_gear)."""
         return {g for g in await self.get_control_gear(controller) if isinstance(g, ZenLight)}
 
     async def get_fans(self, controller: ZenController | None = None) -> set[ZenFan]:
-        """Return fans among discovered control gear (prefer ``get_control_gear``)."""
+        """Return fans among discovered control gear (prefer get_control_gear)."""
         return {g for g in await self.get_control_gear(controller) if isinstance(g, ZenFan)}
 
     async def get_blinds(self, controller: ZenController | None = None) -> set[ZenBlind]:
-        """Return blinds among discovered control gear (prefer ``get_control_gear``)."""
+        """Return blinds among discovered control gear (prefer get_control_gear)."""
         return {g for g in await self.get_control_gear(controller) if isinstance(g, ZenBlind)}
 
     async def _get_addresses_with_instances(self, controller: ZenController) -> list[ZenAddress]:
@@ -717,10 +718,10 @@ class ZenControl:
         return await self.commands.query_dali_addresses_with_instances(controller)
 
     async def _scan_ecd_instances(self, controller: ZenController) -> list[ZenInstance]:
-        """Return every ECD instance on ``controller`` (one query per address).
+        """Return every ECD instance on controller (one query per address).
 
-        Results are cached until ``clear_entity_caches()`` so repeated
-        ``get_instances`` calls share a single address-space scan.
+        Results are cached until clear_entity_caches() so repeated
+        get_instances calls share a single address-space scan.
         """
         cached = self._ecd_instances_by_controller.get(controller.name)
         if cached is not None:
@@ -749,15 +750,15 @@ class ZenControl:
         return entities
 
     async def get_buttons(self, controller: ZenController | None = None) -> set[ZenButton]:
-        """Return push-button instances (prefer ``get_instances``)."""
+        """Return push-button instances (prefer get_instances)."""
         return {e for e in await self.get_instances(controller) if isinstance(e, ZenButton)}
 
     async def get_motion_sensors(self, controller: ZenController | None = None) -> set[ZenMotionSensor]:
-        """Return occupancy-sensor instances (prefer ``get_instances``)."""
+        """Return occupancy-sensor instances (prefer get_instances)."""
         return {e for e in await self.get_instances(controller) if isinstance(e, ZenMotionSensor)}
 
     async def get_absolute_inputs(self, controller: ZenController | None = None) -> set[ZenAbsoluteInput]:
-        """Return absolute-input instances (prefer ``get_instances``)."""
+        """Return absolute-input instances (prefer get_instances)."""
         return {e for e in await self.get_instances(controller) if isinstance(e, ZenAbsoluteInput)}
 
     async def get_system_variables(

@@ -243,9 +243,11 @@ def test_event_mode_bitmask_matrix(mode: ZenEventMode, expected: int) -> None:
     assert mode.bitmask() == expected
 
 
-def test_event_mode_rejects_dual_transport_flags() -> None:
-    with pytest.raises(ValueError, match="exactly one transport"):
-        ZenEventMode(enabled=True, unicast=True, multicast=True)
+def test_event_mode_transport_properties() -> None:
+    multi = ZenEventMode(enabled=True, transport=Transport.MULTICAST)
+    assert multi.multicast is True and multi.unicast is False
+    uni = ZenEventMode(enabled=True, transport=Transport.UNICAST)
+    assert uni.unicast is True and uni.multicast is False
 
 
 def test_event_mode_from_byte_roundtrip() -> None:

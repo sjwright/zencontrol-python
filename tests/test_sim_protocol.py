@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from helpers import LEGACY_ACK, wait_until
 
-from zencontrol import ZenRgbColour, ZenTcColour, ZenXyColour, ZenEventMask, ZenEventMode
+from zencontrol import Transport, ZenCgType, ZenRgbColour, ZenTcColour, ZenXyColour, ZenEventMask, ZenEventMode
 
 pytestmark = pytest.mark.simulator
 
@@ -53,11 +53,11 @@ async def test_light_identity_features_and_membership(live_sim):
     assert serial is not None and serial > 0
 
     cg = await p.dali_query_cg_type(ecg0)
-    assert cg is not None and 6 in cg and 8 in cg
+    assert cg is not None and ZenCgType.LED in cg and ZenCgType.COLOUR_CONTROL in cg
 
     features = await p.query_dali_colour_features(ecg0)
     assert features is not None
-    assert features.get("supports_tunable") or features.get("colour_temperature")
+    assert features.supports_tunable
 
     limits = await p.query_dali_colour_temp_limits(ecg0)
     assert limits is not None
@@ -169,13 +169,13 @@ async def test_profiles_and_system_variables(live_sim):
 async def test_tpi_event_mode_and_filters(live_sim):
     p, c = live_sim.commands, live_sim.controller
 
-    assert await p.tpi_event_emit(c, ZenEventMode(enabled=True, filtering=False, unicast=False, multicast=True)) is True
+    assert await p.tpi_event_emit(c, ZenEventMode(enabled=True, filtering=False, transport=Transport.MULTICAST)) is True
     assert await p.query_tpi_event_emit_state(c) is True
 
     await p.set_tpi_event_unicast_address(c, ipaddr="127.0.0.1", port=6970)
     info = await p.query_tpi_event_unicast_address(c)
     assert info is not None
-    assert info["port"] == 6970
+    assert info.port == 6970
 
     addr = live_sim.ecg(0)
     mask = ZenEventMask.LEVEL_CHANGE_V2
@@ -344,14 +344,14 @@ async def test_custom_fade_stop_and_auto_complete(live_sim):
     assert await p.dali_custom_fade(addr, 100, 5) is True
     status = await p.dali_query_control_gear_status(addr)
     assert status is not None
-    assert status["fade_running"] is True
+    assert status.fade_running is True
     level = await p.dali_query_level(addr)
     assert level is not None and 0 <= level <= 100
 
     assert await p.dali_stop_fade(addr) is True
     status2 = await p.dali_query_control_gear_status(addr)
     assert status2 is not None
-    assert status2["fade_running"] is False
+    assert status2.fade_running is False
 
     await p.dali_arc_level(addr, 0)
     assert await p.dali_custom_fade(addr, 50, 1) is True
@@ -381,7 +381,7 @@ async def test_colour_xy_set_and_query(live_sim):
     addr = live_sim.ecg(3)
     features = await p.query_dali_colour_features(addr)
     assert features is not None
-    assert features.get("supports_xy") is True
+    assert features.supports_xy is True
 
     colour = ZenXyColour(x=12345, y=23456)
     assert await p.dali_colour(addr, colour, level=90) is True
@@ -465,7 +465,7 @@ async def test_group_last_scene_and_status(live_sim):
     assert await p.dali_custom_fade(live_sim.ecg(1), 80, 5) is True
     status = await p.dali_query_control_gear_status(g0)
     assert status is not None
-    assert status["fade_running"] is True
+    assert status.fade_running is True
 
 
 @pytest.mark.asyncio
@@ -509,9 +509,9 @@ async def test_occupancy_timers(live_sim):
     inst = live_sim.instance(0, 2, type_code=3)
     timers = await p.query_occupancy_instance_timers(inst)
     assert timers is not None
-    assert timers["hold"] == 60
-    assert timers["deadtime"] == 1
-    assert "last_detect" in timers
+    assert timers.hold == 60
+    assert timers.deadtime == 1
+    assert timers.last_detect is not None
 
 
 @pytest.mark.asyncio
@@ -581,15 +581,15 @@ async def test_query_profile_information(live_sim):
     result = await p.query_profile_information(c)
     assert result is not None
     state, profiles = result
-    assert state["current_active_profile"] == 1
-    assert state["last_scheduled_profile"] == 1
-    assert state["last_overridden_profile_utc"].timestamp() == 0x22334455
-    assert state["last_scheduled_profile_utc"].timestamp() == 0x44556677
+    assert state.current_active_profile == 1
+    assert state.last_scheduled_profile == 1
+    assert state.last_overridden_profile_utc.timestamp() == 0x22334455
+    assert state.last_scheduled_profile_utc.timestamp() == 0x44556677
     assert set(profiles) == {1, 2, 3}
     # Assert protocol fields (enabled/priority); labels are library niceties.
-    assert profiles[1]["enabled"] is True and profiles[1]["priority"] == 0
-    assert profiles[2]["enabled"] is True and profiles[2]["priority"] == 1
-    assert profiles[3]["enabled"] is False and profiles[3]["priority"] == 0
+    assert profiles[1].enabled is True and profiles[1].priority == 0
+    assert profiles[2].enabled is True and profiles[2].priority == 1
+    assert profiles[3].enabled is False and profiles[3].priority == 0
 
 
 @pytest.mark.asyncio
@@ -613,5 +613,5 @@ async def test_clear_tpi_event_unicast_address(live_sim):
     await p.set_tpi_event_unicast_address(c)
     info = await p.query_tpi_event_unicast_address(c)
     assert info is not None
-    assert info["port"] == 0
-    assert info["ip"] == "0.0.0.0"
+    assert info.port == 0
+    assert info.ip == "0.0.0.0"

@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock
 import pytest
 from helpers_endpoints import fake_endpoint_factory
 
-from zencontrol.api.types import ZenEventMode
+from zencontrol.api.types import TpiEventUnicastAddress, Transport, ZenEventMode
 from zencontrol.interface.interface import ZenControl
 
 
@@ -74,11 +74,11 @@ async def test_assert_noop_when_emit_enabled() -> None:
     ctrl.is_controller_ready = AsyncMock(return_value=True)
 
     zen.commands.query_tpi_event_unicast_address = AsyncMock(
-        return_value={
-            "mode": ZenEventMode(enabled=True, unicast=False, multicast=True),
-            "port": 0,
-            "ip": "0.0.0.0",
-        }
+        return_value=TpiEventUnicastAddress(
+            mode=ZenEventMode(enabled=True, transport=Transport.MULTICAST),
+            port=0,
+            ip="0.0.0.0",
+        )
     )
     zen.configure_controller_events = AsyncMock()
 
@@ -101,11 +101,11 @@ async def test_assert_reconfigures_on_unicast_target_mismatch() -> None:
     zen.wiring = wiring
 
     zen.commands.query_tpi_event_unicast_address = AsyncMock(
-        return_value={
-            "mode": ZenEventMode(enabled=True, unicast=True, multicast=False),
-            "port": 6970,
-            "ip": "192.168.1.99",  # stale target after HA IP change / reboot
-        }
+        return_value=TpiEventUnicastAddress(
+            mode=ZenEventMode(enabled=True, transport=Transport.UNICAST),
+            port=6970,
+            ip="192.168.1.99",  # stale target after HA IP change / reboot
+        )
     )
     zen.configure_controller_events = AsyncMock(return_value=True)
 
@@ -141,16 +141,16 @@ async def test_assert_compares_per_binding_advertise() -> None:
 
     async def query(controller):
         if controller.name == "ctrl-a":
-            return {
-                "mode": ZenEventMode(enabled=True, unicast=True, multicast=False),
-                "port": 6970,
-                "ip": "10.0.0.1",
-            }
-        return {
-            "mode": ZenEventMode(enabled=True, unicast=True, multicast=False),
-            "port": 6970,
-            "ip": "192.168.1.10",
-        }
+            return TpiEventUnicastAddress(
+                mode=ZenEventMode(enabled=True, transport=Transport.UNICAST),
+                port=6970,
+                ip="10.0.0.1",
+            )
+        return TpiEventUnicastAddress(
+            mode=ZenEventMode(enabled=True, transport=Transport.UNICAST),
+            port=6970,
+            ip="192.168.1.10",
+        )
 
     zen.commands.query_tpi_event_unicast_address = AsyncMock(side_effect=query)
 
@@ -160,11 +160,11 @@ async def test_assert_compares_per_binding_advertise() -> None:
 
     # ctrl-b programmed with ctrl-a's address must re-assert.
     zen.commands.query_tpi_event_unicast_address = AsyncMock(
-        return_value={
-            "mode": ZenEventMode(enabled=True, unicast=True, multicast=False),
-            "port": 6970,
-            "ip": "10.0.0.1",
-        }
+        return_value=TpiEventUnicastAddress(
+            mode=ZenEventMode(enabled=True, transport=Transport.UNICAST),
+            port=6970,
+            ip="10.0.0.1",
+        )
     )
     assert await zen.assert_controller_events(ctrl_b) is True  # type: ignore[arg-type]
     zen.configure_controller_events.assert_awaited_once_with(ctrl_b)

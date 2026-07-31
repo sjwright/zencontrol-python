@@ -30,12 +30,14 @@ async def main():
             print(f"Current profile: {current_profile}")
 
             profile_info, profiles = await tpi.query_profile_information(ctrl)
-            for info in profile_info:
-                print(f"  {info} = {profile_info[info]}")
+            print(f"  current_active_profile = {profile_info.current_active_profile}")
+            print(f"  last_scheduled_profile = {profile_info.last_scheduled_profile}")
+            print(f"  last_overridden_profile_utc = {profile_info.last_overridden_profile_utc}")
+            print(f"  last_scheduled_profile_utc = {profile_info.last_scheduled_profile_utc}")
 
-            for profile in profiles:
+            for profile, behaviour in profiles.items():
                 label = await tpi.query_profile_label(ctrl, profile)
-                print(f"  {profile} = {label} {profiles[profile]}")
+                print(f"  {profile} = {label} {behaviour}")
                 
         except Exception as e:
             print(f"Error during testing: {e}")

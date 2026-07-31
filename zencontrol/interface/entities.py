@@ -22,12 +22,22 @@ from ..api import (
 from ..api import ZenController as SuperZenController
 from ..api.commands import ZenCommandClient
 from ..api.models import ControllerRef
-from ..api.types import Const
+from ..api.types import Const, ZenCgType
 from .context import EntityContext
 
 
 def _serialize_group_address(address: ZenAddress) -> dict[str, int]:
     return {"number": address.number}
+
+
+def _cgtypes_from_data(raw: list[Any]) -> list[ZenCgType]:
+    types: list[ZenCgType] = []
+    for item in raw:
+        try:
+            types.append(ZenCgType(int(item)))
+        except ValueError:
+            pass
+    return types
 
 
 def _loads_interview_data(data: str | dict[str, Any]) -> dict[str, Any]:
@@ -378,7 +388,7 @@ class ZenLight(ZenControlGear):
     sub_label: str | None = None
     serial: (int | str) | None = None
     ean: int | None = None
-    cgtype: list[int]
+    cgtype: list[ZenCgType]
     groups: set[ZenGroup]
     group_membership: list[ZenAddress]
     features: dict[str, bool]
@@ -445,7 +455,7 @@ class ZenLight(ZenControlGear):
             self.sub_label = data.get("sub_label")
             self.serial = data.get("serial")
             self.ean = data.get("ean")
-            self.cgtype = list(data.get("cgtype", []))
+            self.cgtype = _cgtypes_from_data(list(data.get("cgtype", [])))
             self.features.update(data.get("features", {}))
             self.properties.update(data.get("properties", {}))
             self._scene_levels = list(data.get("scene_levels", []))
@@ -473,32 +483,32 @@ class ZenLight(ZenControlGear):
                 self.ean = await self.commands.query_dali_ean(self.address)
             self.cgtype = await self.commands.dali_query_cg_type(self.address) or []
             
-            # If cgtype contains 6, it supports brightness
-            if 6 in self.cgtype:
+            # If cgtype contains LED, it supports brightness
+            if ZenCgType.LED in self.cgtype:
                 self.features["brightness"] = True
 
-            # If cgtype contains 8, it supports some kind of colour
+            # If cgtype contains COLOUR_CONTROL, it supports some kind of colour
             colour_known = any(self.features.get(k) for k in ("XY", "temperature", "RGB", "RGBW", "RGBWW"))
-            if 8 in self.cgtype and not colour_known:
+            if ZenCgType.COLOUR_CONTROL in self.cgtype and not colour_known:
                 cgtype = await self.commands.query_dali_colour_features(self.address)
                 # XY is independent of TC/RGBWAF; a fixture may support more than one.
-                if cgtype and cgtype.get("supports_xy", False) is True:
+                if cgtype and cgtype.supports_xy:
                     self.features["brightness"] = True
                     self.features["XY"] = True
-                if cgtype and cgtype.get("supports_tunable", False) is True:
+                if cgtype and cgtype.supports_tunable:
                     self.features["brightness"] = True
                     self.features["temperature"] = True
                     colour_temp_limits = await self.commands.query_dali_colour_temp_limits(self.address)
                     if colour_temp_limits:
                         self.properties["min_kelvin"] = colour_temp_limits.get("soft_warmest", Const.DEFAULT_WARMEST_TEMP)
                         self.properties["max_kelvin"] = colour_temp_limits.get("soft_coolest", Const.DEFAULT_COOLEST_TEMP)
-                elif cgtype and cgtype.get("rgbwaf_channels", 0) == Const.RGB_CHANNELS:
+                elif cgtype and cgtype.rgbwaf_channels == Const.RGB_CHANNELS:
                     self.features["brightness"] = True
                     self.features["RGB"] = True
-                elif cgtype and cgtype.get("rgbwaf_channels", 0) == Const.RGBW_CHANNELS:
+                elif cgtype and cgtype.rgbwaf_channels == Const.RGBW_CHANNELS:
                     self.features["brightness"] = True
                     self.features["RGBW"] = True
-                elif cgtype and cgtype.get("rgbwaf_channels", 0) == Const.RGBWW_CHANNELS:
+                elif cgtype and cgtype.rgbwaf_channels == Const.RGBWW_CHANNELS:
                     self.features["brightness"] = True
                     self.features["RGBWW"] = True
             
@@ -567,7 +577,7 @@ class ZenFan(ZenControlGear):
     ean: int | None = None
     bus_unit: int | None = None
     operating_mode: int | None = None
-    cgtype: list[int]
+    cgtype: list[ZenCgType]
     groups: set[ZenGroup]
     group_membership: list[ZenAddress]
 
@@ -621,7 +631,7 @@ class ZenFan(ZenControlGear):
             self.ean = data.get("ean")
             self.bus_unit = data.get("bus_unit")
             self.operating_mode = data.get("operating_mode")
-            self.cgtype = list(data.get("cgtype", []))
+            self.cgtype = _cgtypes_from_data(list(data.get("cgtype", [])))
             self._scene_levels = list(data.get("scene_levels", [None] * Const.MAX_SCENE))
             if len(self._scene_levels) < Const.MAX_SCENE:
                 self._scene_levels.extend([None] * (Const.MAX_SCENE - len(self._scene_levels)))
@@ -693,7 +703,7 @@ class ZenBlind(ZenControlGear):
     ean: int | None = None
     bus_unit: int | None = None
     operating_mode: int | None = None
-    cgtype: list[int]
+    cgtype: list[ZenCgType]
     groups: set[ZenGroup]
     group_membership: list[ZenAddress]
 
@@ -747,7 +757,7 @@ class ZenBlind(ZenControlGear):
             self.ean = data.get("ean")
             self.bus_unit = data.get("bus_unit")
             self.operating_mode = data.get("operating_mode")
-            self.cgtype = list(data.get("cgtype", []))
+            self.cgtype = _cgtypes_from_data(list(data.get("cgtype", [])))
             self._scene_levels = list(data.get("scene_levels", [None] * Const.MAX_SCENE))
             if len(self._scene_levels) < Const.MAX_SCENE:
                 self._scene_levels.extend([None] * (Const.MAX_SCENE - len(self._scene_levels)))
@@ -1189,9 +1199,9 @@ class ZenMotionSensor:
             self.label = addr.label
             if self.instance_label is None:
                 self.instance_label = _or_instance_label(await self.commands.query_dali_instance_label(inst), inst)
-            self.deadtime = occupancy_timers["deadtime"]
-            self.hold_time = occupancy_timers["hold"]
-            self.last_detect = time.time() - occupancy_timers["last_detect"]
+            self.deadtime = occupancy_timers.deadtime
+            self.hold_time = occupancy_timers.hold
+            self.last_detect = time.time() - occupancy_timers.last_detect
             self._occupied = None
         else:
             self._reset()
@@ -1213,9 +1223,9 @@ class ZenMotionSensor:
 
         # `last_detect` is stored as "time when last motion happened"
         # converted into a duration since last motion (same as interview()).
-        self.deadtime = occupancy_timers["deadtime"]
-        self.hold_time = occupancy_timers["hold"]
-        self.last_detect = time.time() - occupancy_timers["last_detect"]
+        self.deadtime = occupancy_timers.deadtime
+        self.hold_time = occupancy_timers.hold
+        self.last_detect = time.time() - occupancy_timers.last_detect
         self._occupied = None
         return True
     @property

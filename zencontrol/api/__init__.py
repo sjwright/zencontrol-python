@@ -21,7 +21,9 @@ from .models import (
 from .types import (
     Transport,
     ZenAddressType,
+    ZenCgType,
     ZenColourType,
+    ZenErrorCode,
     ZenEventMode,
     ZenInstanceType,
 )
@@ -51,6 +53,8 @@ __all__ = [
     "ZenAddressType",
     "ZenInstanceType",
     "ZenColourType",
+    "ZenCgType",
+    "ZenErrorCode",
     "Transport",
     "ZenEventCode",
     "ZenEventMask",

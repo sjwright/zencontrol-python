@@ -358,7 +358,7 @@ async def test_send_packet_error_returns_without_raising() -> None:
     fake_client.send_request_with_retries = AsyncMock(
         return_value=ZenResponse(
             ZenResponseType.ERROR,
-            data=bytes([ZenErrorCode.PAID_FEATURE.value]),
+            data=bytes([ZenErrorCode.PAID_FEATURE]),
         )
     )
     protocol.set_client(controller, fake_client)
@@ -368,7 +368,7 @@ async def test_send_packet_error_returns_without_raising() -> None:
         ZenRequest(command=0x10, data=[0x00, 0x00, 0x00, 0x00]),
     )
     assert response.response_type == ZenResponseType.ERROR
-    assert response.data == bytes([ZenErrorCode.PAID_FEATURE.value])
+    assert response.data == bytes([ZenErrorCode.PAID_FEATURE])
 
 
 def test_mac_requires_six_bytes() -> None:
