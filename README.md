@@ -1,27 +1,27 @@
 # zencontrol-python
 
-This is an implementation of the **Zencontrol TPI Advanced** protocol, written in Python. This library has been written with three levels of abstraction:
+A Python implementation of the **Zencontrol TPI Advanced** protocol, organised in three layers:
 
-- zencontrol.io: Implementation of the raw TPI Advanced UDP packet specification;
-- zencontrol.api: Implementation of most TPI Advanced API commands and events;
-- zencontrol.interface: An opinionated abstraction layer suitable for integration into smart building control software. It provides methods, objects, and callbacks for managing lights, groups, profiles, buttons, motion sensors, and system variables.
+- zencontrol.io: raw TPI Advanced UDP packet framing;
+- zencontrol.api: control surface for TPI Advanced API commands and events;
+- zencontrol.interface: an opinionated world model, suitable for smart-building integrations. It provides a fully resolved set of methods, objects, and callbacks for lights, groups, buttons, sensors and everything else in your zencontrol universe.
 
 [**Documentation**](docs/overview.md)
 
-In addition to an extensive test suite, this library is extensively tested by
+In addition to its own test suite, this library is exercised heavily by
 [zencontrol-simulator](https://github.com/sjwright/zencontrol-simulator), a nearly feature-complete simulator of zencontrol hardware.
-As part of its own test suite, the simulator imports and implements this library to a substantial extent.
+As part of that suite, the simulator imports and drives this library to a substantial extent.
 
-This library is actively used as a central part of [zencontrol-homeassistant](https://github.com/sjwright/zencontrol-homeassistant), a Home Assistant integration. This integration gives you GUI access to most zencontrol-python features, making it an excellent practical demonstration of the library.
+As a practical demonstration of the library in production use, [zencontrol-homeassistant](https://github.com/sjwright/zencontrol-homeassistant) exposes the full capability of this library. Home Assistant is an open source smart building system ostensibly designed for residential homes, but is seeing increasing use in office environments too, because nothing else can match it for the sheer breadth of compatibility.
 
 ## Features
 
 Beyond basic lighting control, this library supports:
 
 * **Broad command surface** — inhibit, custom fade, step/up/down helpers, colour scene membership queries, EAN/serial, and most related TPI Advanced commands
-* **Object-based entity model** — Optional. Expresses lights, groups, profiles, buttons, motion sensors, absolute inputs, and system variables as rich objects with interview/discovery helpers
+* **Object-based entity model** — optional. Expresses lights, groups, profiles, buttons, motion sensors, absolute inputs, and system variables as rich objects with interview/discovery helpers
 * **UDP transport resilience** — request retries and queue-failure backoff
-* **Event keepalive** — periodic emit-state ping; re-enables TPI events (and unicast target) if a controller reboots while the listener stays up
+* **Event keepalive** — periodic emit-state ping; re-enables TPI configuration and event emission if a controller reboots while the listener stays up
 * **Multicast controller discovery** — find controllers on the LAN without a preconfigured host
 * **Button events** — discovery of control-device button instances, plus press and long-press event callbacks
 * **Absolute inputs** — discovery of numerical ECD instances (dials/sliders) with 16-bit value-change event callbacks
@@ -34,11 +34,11 @@ Beyond basic lighting control, this library supports:
 
 * RGB+ and XY colour commands have not been tested with hardware
 * Numerical (absolute) instances have not been tested with hardware
+* Fans and blinds have not been tested with field-deployed hardware
 
 ## Out of scope
 
-* Any commands involving DMX, Control4, or virtual instances (I don't have licenses for any of these so I couldn't test them even if I wanted to, but the scaffolding is there if anyone wishes to add support)
-* Any commands described in the documentation as "legacy" (they aren't useful)
+* Any commands involving DMX, Control4, or virtual instances (I don't have licenses for these, so I couldn't test them even if I wanted to — but the scaffolding is there if anyone wishes to add support)
 
 ## Requirements
 
@@ -66,9 +66,9 @@ pytest
 
 ## TPI Advanced wishlist
 
-* Command to return a controller's MAC address used for multicast packets _(There are other ways to get or infer the MAC access, but they're unreliable.)_
+* Command to return a controller's MAC address used for multicast packets _(There are other ways to get or infer the MAC address, but they're unreliable.)_
 * Command to list active system variables _(As a workaround, you can query every number for its label. This assumes no system variables of interest are unlabelled.)_
-* Command to read an ambient light sensor's lux value. _(As a workaround, you can target a light sensor to a system variable. Not elegant but it works.)_
+* Command to read an ambient light sensor's lux value. _(As a workaround, you can target a light sensor to a system variable. Not elegant, but it works.)_
 * Event notification for ambient light sensor lux values. _(Same workaround as above.)_
 
 ## License
