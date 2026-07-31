@@ -322,8 +322,10 @@ class EntityContext:
         await profile.interview()
         return profile
 
-    async def create_light(self, address: ZenAddress) -> ZenLight:
+    async def create_light(self, address: ZenAddress, *, label: str | None = None, ean: int | None = None) -> ZenLight:
         light = self.light(address)
+        if label is not None: light.label = label
+        if ean is not None: light.ean = ean
         await light.interview()
         return light
 

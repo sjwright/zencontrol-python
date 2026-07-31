@@ -38,6 +38,7 @@ from .dispatch import EventDispatcher
 from .entities import (
     ZenAbsoluteInput,
     ZenButton,
+    ZenControlGear,
     ZenController,
     ZenGroup,
     ZenLight,
@@ -656,18 +657,25 @@ class ZenControl:
                 groups.add(group)
         return groups
 
-    async def get_lights(self, controller: ZenController | None = None) -> set[ZenLight]:
-        """Return a set of all lights available (optionally for one controller)."""
-        lights: set[ZenLight] = set()
+    async def get_control_gear(
+        self, controller: ZenController | None = None
+    ) -> set[ZenControlGear]:
+        """Interview all control gear (lights today; more kinds later)."""
+        gear: set[ZenControlGear] = set()
         controllers = [controller] if controller else self.controllers
         for ctrl in controllers:
             addresses = await self.commands.query_control_gear_dali_addresses(controller=ctrl)
             for address in addresses:
-                light = await self.context.create_light(address)
-                lights.add(light)
-        # Second pass: labels are known; split shared comma-labels into sub_labels.
+                label = await self.commands.query_dali_device_label(address)
+                ean = await self.commands.query_dali_ean(address)
+                gear.add(await self.context.create_light(address, label=label, ean=ean))
+        lights = {g for g in gear if isinstance(g, ZenLight)}
         _assign_light_sub_labels(lights)
-        return lights
+        return gear
+
+    async def get_lights(self, controller: ZenController | None = None) -> set[ZenLight]:
+        """Return lights among discovered control gear (prefer ``get_control_gear``)."""
+        return {g for g in await self.get_control_gear(controller) if isinstance(g, ZenLight)}
 
     async def _get_addresses_with_instances(self, controller: ZenController) -> list[ZenAddress]:
         """Return all DALI addresses that have instances (full address-space scan)."""
