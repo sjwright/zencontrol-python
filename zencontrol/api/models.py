@@ -162,6 +162,7 @@ class ZenAddress:
     number: int
     label: str | None = field(default=None, init=False)
     serial: str | None = field(default=None, init=False)
+    ean: int | None = field(default=None, init=False)
 
     @classmethod
     def broadcast(cls, controller: ControllerRef) -> Self:

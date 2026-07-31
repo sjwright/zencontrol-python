@@ -69,6 +69,7 @@ async def test_get_absolute_inputs_filters_instance_type() -> None:
     zen.commands.query_instances_by_address = AsyncMock(return_value=[abs_inst, btn_inst])
     zen.commands.query_dali_device_label = AsyncMock(return_value="Wall")
     zen.commands.query_dali_serial = AsyncMock(return_value="ABC")
+    zen.commands.query_dali_ean = AsyncMock(return_value=1234567890123)
     zen.commands.query_dali_instance_label = AsyncMock(return_value="Slider")
 
     found = await zen.get_absolute_inputs(controller=ctrl)
@@ -94,6 +95,7 @@ async def test_ecd_getters_share_instance_scan() -> None:
     zen.commands.query_instances_by_address = query_instances
     zen.commands.query_dali_device_label = AsyncMock(return_value="Panel")
     zen.commands.query_dali_serial = AsyncMock(return_value="ABC")
+    zen.commands.query_dali_ean = AsyncMock(return_value=1234567890123)
     zen.commands.query_dali_instance_label = AsyncMock(return_value="Inst")
     zen.commands.query_occupancy_instance_timers = AsyncMock(
         return_value={"deadtime": 0, "hold": 60, "last_detect": 0}

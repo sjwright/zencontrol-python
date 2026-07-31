@@ -210,8 +210,8 @@ class ZenProfile:
         except Exception: # pylint: disable=broad-exception-caught
             return False
     async def interview(self) -> bool:
-        self.label = await self.commands.query_profile_label(self.controller, self.number)
-        # Add self to controller's set of profiles
+        if self.label is None:
+            self.label = await self.commands.query_profile_label(self.controller, self.number)
         self.controller.profiles.add(self)
         return True
     async def select(self) -> bool:
@@ -373,6 +373,7 @@ class ZenControlGear:
 class ZenLight(ZenControlGear):
     sub_label: str | None = None
     serial: (int | str) | None = None
+    ean: int | None = None
     cgtype: list[int]
     groups: set[ZenGroup]
     group_membership: list[ZenAddress]
@@ -391,6 +392,7 @@ class ZenLight(ZenControlGear):
         self._reset_gear_state()
         self.sub_label = None
         self.serial = None
+        self.ean = None
         self.cgtype = []
         self.groups = set()
         self.group_membership = []
@@ -421,6 +423,7 @@ class ZenLight(ZenControlGear):
             "label": self.label,
             "sub_label": self.sub_label,
             "serial": self.serial,
+            "ean": self.ean,
             "cgtype": list(self.cgtype),
             "group_membership": [_serialize_group_address(group) for group in self.group_membership],
             "features": dict(self.features),
@@ -437,6 +440,7 @@ class ZenLight(ZenControlGear):
             self.label = data.get("label")
             self.sub_label = data.get("sub_label")
             self.serial = data.get("serial")
+            self.ean = data.get("ean")
             self.cgtype = list(data.get("cgtype", []))
             self.features.update(data.get("features", {}))
             self.properties.update(data.get("properties", {}))
@@ -457,16 +461,21 @@ class ZenLight(ZenControlGear):
     async def interview(self) -> bool:
         cgstatus = await self.commands.dali_query_control_gear_status(self.address)
         if cgstatus:
-            self.label = _or_device_label(await self.commands.query_dali_device_label(self.address), self.address)
-            self.serial = await self.commands.query_dali_serial(self.address)
+            if self.label is None:
+                self.label = _or_device_label(await self.commands.query_dali_device_label(self.address), self.address)
+            if self.serial is None:
+                self.serial = await self.commands.query_dali_serial(self.address)
+            if self.ean is None:
+                self.ean = await self.commands.query_dali_ean(self.address)
             self.cgtype = await self.commands.dali_query_cg_type(self.address) or []
             
             # If cgtype contains 6, it supports brightness
             if 6 in self.cgtype:
                 self.features["brightness"] = True
-            
+
             # If cgtype contains 8, it supports some kind of colour
-            if 8 in self.cgtype:
+            colour_known = any(self.features.get(k) for k in ("XY", "temperature", "RGB", "RGBW", "RGBWW"))
+            if 8 in self.cgtype and not colour_known:
                 cgtype = await self.commands.query_dali_colour_features(self.address)
                 # XY is independent of TC/RGBWAF; a fixture may support more than one.
                 if cgtype and cgtype.get("supports_xy", False) is True:
@@ -577,9 +586,10 @@ class ZenGroup(ZenControlGear):
         except Exception: # pylint: disable=broad-exception-caught
             return False
     async def interview(self) -> bool:
-        self.label = _or_group_label(await self.commands.query_group_label(self.address), self.address.number)
-        self._scene_labels = await _group_scene_labels(self.commands, self.address)
-        # Add to controller's set of groups
+        if self.label is None:
+            self.label = _or_group_label(await self.commands.query_group_label(self.address), self.address.number)
+        if not any(self._scene_labels):
+            self._scene_labels = await _group_scene_labels(self.commands, self.address)
         _registered(self.address.controller).groups.add(self)
         return True
     def supports_colour(self, colour: ZenColourType|ZenColour) -> bool:
@@ -632,6 +642,7 @@ class ZenButton:
     commands: ZenCommandClient
     instance: ZenInstance
     serial: (int | str) | None = None
+    ean: int | None = None
     label: str | None = None
     instance_label: str | None = None
     last_press_time: float = 0.0
@@ -648,6 +659,7 @@ class ZenButton:
         return f"ZenButton<{self.instance.address.controller.name} ecd {self.instance.address.number} inst {self.instance.number}: {self.label} / {self.instance_label}>"
     def _reset(self) -> None:
         self.serial = None
+        self.ean = None
         self.label = None
         self.instance_label = None
         self.last_press_time = time.time()
@@ -656,6 +668,7 @@ class ZenButton:
     def interview_serialize(self) -> str:
         return json.dumps({
             "serial": self.serial,
+            "ean": self.ean,
             "label": self.label,
             "instance_label": self.instance_label,
         })
@@ -663,10 +676,12 @@ class ZenButton:
         try:
             data = _loads_interview_data(data)
             self.serial = data.get("serial")
+            self.ean = data.get("ean")
             self.label = data.get("label")
             self.instance_label = data.get("instance_label")
             self.instance.address.label = self.label
             self.instance.address.serial = cast(str | None, self.serial)
+            self.instance.address.ean = self.ean
             _registered(self.instance.address.controller).buttons.add(self)
             return True
         except Exception: # pylint: disable=broad-exception-caught
@@ -679,10 +694,13 @@ class ZenButton:
             addr.label = _or_device_label(await self.commands.query_dali_device_label(addr), addr)
         if addr.serial is None:
             addr.serial = cast(str | None, await self.commands.query_dali_serial(addr))
+        if addr.ean is None:
+            addr.ean = await self.commands.query_dali_ean(addr)
         self.label = addr.label
         self.serial = addr.serial
-        self.instance_label = _or_instance_label(await self.commands.query_dali_instance_label(inst), inst)
-        # Add to controller's set of buttons
+        self.ean = addr.ean
+        if self.instance_label is None:
+            self.instance_label = _or_instance_label(await self.commands.query_dali_instance_label(inst), inst)
         ctrl.buttons.add(self)
         return True
     async def _event_received(self, held: bool = False) -> None:
@@ -715,6 +733,7 @@ class ZenAbsoluteInput:
     commands: ZenCommandClient
     instance: ZenInstance
     serial: (int | str) | None = None
+    ean: int | None = None
     label: str | None = None
     instance_label: str | None = None
     _value: int | None = None
@@ -735,6 +754,7 @@ class ZenAbsoluteInput:
 
     def _reset(self) -> None:
         self.serial = None
+        self.ean = None
         self.label = None
         self.instance_label = None
         self._value = None
@@ -743,6 +763,7 @@ class ZenAbsoluteInput:
     def interview_serialize(self) -> str:
         return json.dumps({
             "serial": self.serial,
+            "ean": self.ean,
             "label": self.label,
             "instance_label": self.instance_label,
         })
@@ -751,10 +772,12 @@ class ZenAbsoluteInput:
         try:
             data = _loads_interview_data(data)
             self.serial = data.get("serial")
+            self.ean = data.get("ean")
             self.label = data.get("label")
             self.instance_label = data.get("instance_label")
             self.instance.address.label = self.label
             self.instance.address.serial = cast(str | None, self.serial)
+            self.instance.address.ean = self.ean
             _registered(self.instance.address.controller).absolute_inputs.add(self)
             return True
         except Exception: # pylint: disable=broad-exception-caught
@@ -768,9 +791,13 @@ class ZenAbsoluteInput:
             addr.label = _or_device_label(await self.commands.query_dali_device_label(addr), addr)
         if addr.serial is None:
             addr.serial = cast(str | None, await self.commands.query_dali_serial(addr))
+        if addr.ean is None:
+            addr.ean = await self.commands.query_dali_ean(addr)
         self.label = addr.label
         self.serial = addr.serial
-        self.instance_label = _or_instance_label(await self.commands.query_dali_instance_label(inst), inst)
+        self.ean = addr.ean
+        if self.instance_label is None:
+            self.instance_label = _or_instance_label(await self.commands.query_dali_instance_label(inst), inst)
         ctrl.absolute_inputs.add(self)
         return True
 
@@ -796,6 +823,7 @@ class ZenMotionSensor:
     hold_time: int = Const.DEFAULT_HOLD_TIME
     hold_expiry_task: asyncio.Task[None] | None = None
     serial: (int | str) | None = None
+    ean: int | None = None
     label: str | None = None
     instance_label: str | None = None
     deadtime: int | None = None
@@ -816,6 +844,7 @@ class ZenMotionSensor:
         self.hold_expiry_task = None
         #
         self.serial = None
+        self.ean = None
         self.label = None
         self.instance_label = None
         self.deadtime = None
@@ -826,6 +855,7 @@ class ZenMotionSensor:
     def interview_serialize(self) -> str:
         return json.dumps({
             "serial": self.serial,
+            "ean": self.ean,
             "label": self.label,
             "instance_label": self.instance_label,
             "deadtime": self.deadtime,
@@ -835,6 +865,7 @@ class ZenMotionSensor:
         try:
             data = _loads_interview_data(data)
             self.serial = data.get("serial")
+            self.ean = data.get("ean")
             self.label = data.get("label")
             self.instance_label = data.get("instance_label")
             self.deadtime = data.get("deadtime")
@@ -842,6 +873,7 @@ class ZenMotionSensor:
             self._occupied = None
             self.instance.address.label = self.label
             self.instance.address.serial = cast(str | None, self.serial)
+            self.instance.address.ean = self.ean
             _registered(self.instance.address.controller).motion_sensors.add(self)
             return True
         except Exception: # pylint: disable=broad-exception-caught
@@ -852,9 +884,17 @@ class ZenMotionSensor:
         ctrl = _registered(addr.controller)
         occupancy_timers = await self.commands.query_occupancy_instance_timers(inst)
         if occupancy_timers is not None:
-            self.serial = await self.commands.query_dali_serial(addr)
-            self.label = _or_device_label(await self.commands.query_dali_device_label(addr), addr)
-            self.instance_label = _or_instance_label(await self.commands.query_dali_instance_label(inst), inst)
+            if addr.serial is None:
+                addr.serial = cast(str | None, await self.commands.query_dali_serial(addr))
+            if addr.ean is None:
+                addr.ean = await self.commands.query_dali_ean(addr)
+            if addr.label is None:
+                addr.label = _or_device_label(await self.commands.query_dali_device_label(addr), addr)
+            self.serial = addr.serial
+            self.ean = addr.ean
+            self.label = addr.label
+            if self.instance_label is None:
+                self.instance_label = _or_instance_label(await self.commands.query_dali_instance_label(inst), inst)
             self.deadtime = occupancy_timers["deadtime"]
             self.hold_time = occupancy_timers["hold"]
             self.last_detect = time.time() - occupancy_timers["last_detect"]
@@ -862,7 +902,6 @@ class ZenMotionSensor:
         else:
             self._reset()
             return False
-        # Add to controller's set of motion sensors
         ctrl.motion_sensors.add(self)
         return True
 
