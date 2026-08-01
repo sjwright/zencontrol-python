@@ -278,7 +278,6 @@ async def test_group_scene_by_label_and_level(live_zen):
     groups = {g.address.number: g for g in await zen.get_groups()}
     group = groups[0]
 
-    assert group.get_scene_number_from_label("Relax") == 1
     assert await group.set_scene("Relax") is LEGACY_ACK
     assert live_sim.world.groups[0].last_scene == 1
     assert live_sim.world.lights[0].level == 80

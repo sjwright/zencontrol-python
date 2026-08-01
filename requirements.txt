@@ -1,3 +1,2 @@
 # Core runtime has no third-party deps (mirrors pyproject.toml).
 # Prefer: pip install .
-# MQTT bridge: pip install ".[mqtt]"

@@ -31,8 +31,8 @@ async def test_two_zencontrol_instances_isolate_entities() -> None:
     light_b = zen_b.context.light(addr_b)
 
     assert light_a is not light_b
-    light_a.client_data["mqtt"] = "topic-a"
-    assert "mqtt" not in light_b.client_data
+    light_a.label = "topic-a"
+    assert light_b.label is None
 
     await zen_a.aclose()
     assert zen_a.context.registry.lights == {}

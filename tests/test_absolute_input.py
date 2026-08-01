@@ -78,7 +78,7 @@ async def test_get_absolute_inputs_filters_instance_type() -> None:
     assert item.instance.type == ZenInstanceType.ABSOLUTE_INPUT
     assert item.label == "Wall"
     assert item.instance_label == "Slider"
-    assert item in ctrl.absolute_inputs
+    assert zen.context.absolute_input(abs_inst) is item
 
 
 @pytest.mark.asyncio

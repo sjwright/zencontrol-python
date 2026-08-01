@@ -71,7 +71,6 @@ Useful methods:
 
 - `await ctrl.interview()` — version / ready flags
 - `await ctrl.switch_to_profile(...)` / `return_to_scheduled_profile()`
-- `ctrl.get_sysvar(id)` — cached SV handle
 
 Health while monitoring:
 

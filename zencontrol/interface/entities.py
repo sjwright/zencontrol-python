@@ -21,7 +21,6 @@ from ..api import (
 )
 from ..api import ZenController as SuperZenController
 from ..api.commands import ZenCommandClient
-from ..api.models import ControllerRef
 from ..api.types import Const, ZenCgType
 from .context import EntityContext
 
@@ -85,16 +84,6 @@ class ZenController(SuperZenController):
 
     connected: bool = False
     profile: ZenProfile | None = None
-    profiles: set[ZenProfile]
-    lights: set[ZenLight]
-    fans: set[ZenFan]
-    blinds: set[ZenBlind]
-    groups: set[ZenGroup]
-    buttons: set[ZenButton]
-    absolute_inputs: set[ZenAbsoluteInput]
-    motion_sensors: set[ZenMotionSensor]
-    sysvars: set[ZenSystemVariable]
-    client_data: dict[str, Any]
 
     def __init__(
         self,
@@ -127,16 +116,6 @@ class ZenController(SuperZenController):
         # label is set from config via EntityContext.controller() or interview()
         self.version = None
         self.profile = None
-        self.profiles = set()
-        self.lights = set()
-        self.fans = set()
-        self.blinds = set()
-        self.groups = set()
-        self.buttons = set()
-        self.absolute_inputs = set()
-        self.motion_sensors = set()
-        self.sysvars = set()
-        self.client_data = {}
     async def interview(self) -> bool:
         commands = self.commands
         if self.label is None or self.label == "":
@@ -155,8 +134,6 @@ class ZenController(SuperZenController):
             cb = self.ctx.callbacks.profile_change
             if callable(cb):
                 await cb(profile=self.profile)
-    def get_sysvar(self, id: int) -> ZenSystemVariable:
-        return self.ctx.system_variable(self, id)
     async def is_controller_ready(self) -> bool | None:
         return await self.commands.query_controller_startup_complete(self)
     async def is_dali_ready(self) -> bool | None:
@@ -166,11 +143,12 @@ class ZenController(SuperZenController):
         if isinstance(profile, ZenProfile):
             zp = profile
         elif isinstance(profile, str):
-            for p in self.profiles:
-                if p.label == profile: zp = p
+            for key, p in self.ctx.registry.profiles.items():
+                if key[0] == self.name and p.label == profile:
+                    zp = p
+                    break
         elif isinstance(profile, int):
-            for p in self.profiles:
-                if p.number == profile: zp = p
+            zp = self.ctx.registry.profiles.get((self.name, profile))
         if isinstance(zp, ZenProfile):
             self.commands.logger.debug("Switching to profile %s", zp)
             result = await self.commands.change_profile_number(self, zp.number)
@@ -181,22 +159,12 @@ class ZenController(SuperZenController):
         return await self.commands.return_to_scheduled_profile(self)
 
 
-def _registered(controller: ControllerRef) -> ZenController:
-    """Narrow address.controller to the interface subclass.
-
-    Addresses are typed with ControllerRef so api does not import this
-    layer; every registered controller is a ZenController instance.
-    """
-    return cast(ZenController, controller)
-
-
 class ZenProfile:
     ctx: EntityContext
     commands: ZenCommandClient
     controller: ZenController
     number: int
     label: str | None = None
-    client_data: dict[str, Any]
 
     def __init__(self, ctx: EntityContext, controller: ZenController, number: int) -> None:
         self.ctx = ctx
@@ -209,7 +177,6 @@ class ZenProfile:
         return f"ZenProfile<{self.controller.name} profile {self.number}: {self.label}>"
     def _reset(self) -> None:
         self.label = None
-        self.client_data = {}
     def interview_serialize(self) -> str:
         return json.dumps({
             "number": self.number,
@@ -219,14 +186,12 @@ class ZenProfile:
         try:
             data = _loads_interview_data(data)
             self.label = data.get("label")
-            self.controller.profiles.add(self)
             return True
         except Exception: # pylint: disable=broad-exception-caught
             return False
     async def interview(self) -> bool:
         if self.label is None:
             self.label = await self.commands.query_profile_label(self.controller, self.number)
-        self.controller.profiles.add(self)
         return True
     async def select(self) -> bool:
         result = await self.commands.change_profile_number(self.controller, self.number)
@@ -251,7 +216,6 @@ class ZenControlGear:
     level: int | None = None
     colour: ZenColour | None = None
     scene: int | None = None
-    client_data: dict[str, Any]
 
     def _reset_gear_state(self) -> None:
         self.label = None
@@ -261,7 +225,6 @@ class ZenControlGear:
         self.level = None
         self.colour = None
         self.scene = None
-        self.client_data = {}
 
     def supports_colour(self, colour: ZenColourType | ZenColour) -> bool:
         return False
@@ -468,7 +431,6 @@ class ZenLight(ZenControlGear):
                 for group in data.get("group_membership", [])
             ]
             self._apply_group_membership(membership)
-            _registered(self.address.controller).lights.add(self)
             return True
         except Exception: # pylint: disable=broad-exception-caught
             return False
@@ -519,9 +481,6 @@ class ZenLight(ZenControlGear):
             # Groups
             groups = await self.commands.query_group_membership_by_address(self.address)
             self._apply_group_membership(groups or [])
-            
-            # Add to controller's set of lights
-            _registered(self.address.controller).lights.add(self)
 
             return True
         else:
@@ -640,7 +599,6 @@ class ZenFan(ZenControlGear):
                 for group in data.get("group_membership", [])
             ]
             self._apply_group_membership(membership)
-            _registered(self.address.controller).fans.add(self)
             return True
         except Exception:  # pylint: disable=broad-exception-caught
             return False
@@ -660,7 +618,6 @@ class ZenFan(ZenControlGear):
             self._scene_levels = await self.commands.query_scene_levels_by_address(self.address) or [None] * Const.MAX_SCENE
             groups = await self.commands.query_group_membership_by_address(self.address)
             self._apply_group_membership(groups or [])
-            _registered(self.address.controller).fans.add(self)
             return True
         self._reset()
         return False
@@ -766,7 +723,6 @@ class ZenBlind(ZenControlGear):
                 for group in data.get("group_membership", [])
             ]
             self._apply_group_membership(membership)
-            _registered(self.address.controller).blinds.add(self)
             return True
         except Exception:  # pylint: disable=broad-exception-caught
             return False
@@ -786,7 +742,6 @@ class ZenBlind(ZenControlGear):
             self._scene_levels = await self.commands.query_scene_levels_by_address(self.address) or [None] * Const.MAX_SCENE
             groups = await self.commands.query_group_membership_by_address(self.address)
             self._apply_group_membership(groups or [])
-            _registered(self.address.controller).blinds.add(self)
             return True
         self._reset()
         return False
@@ -885,7 +840,6 @@ class ZenGroup(ZenControlGear):
             data = _loads_interview_data(data)
             self.label = data.get("label")
             self._scene_labels = list(data.get("scene_labels", []))
-            _registered(self.address.controller).groups.add(self)
             return True
         except Exception: # pylint: disable=broad-exception-caught
             return False
@@ -894,7 +848,6 @@ class ZenGroup(ZenControlGear):
             self.label = _or_group_label(await self.commands.query_group_label(self.address), self.address.number)
         if not any(self._scene_labels):
             self._scene_labels = await _group_scene_labels(self.commands, self.address)
-        _registered(self.address.controller).groups.add(self)
         return True
     def supports_colour(self, colour: ZenColourType|ZenColour) -> bool:
         # If at least one light in the group supports this colour, return True
@@ -902,9 +855,6 @@ class ZenGroup(ZenControlGear):
             if light.supports_colour(colour):
                 return True
         return False
-    def get_scene_number_from_label(self, label: str) -> int | None:
-        # return list index of label in self._scene_labels
-        return next((i for i, s in enumerate(self._scene_labels) if s == label), None)
     def get_scene_label_from_number(self, number: int) -> str | None:
         # return label at index number in self._scene_labels
         return self._scene_labels[number]
@@ -928,19 +878,6 @@ class ZenGroup(ZenControlGear):
         if callable(self.ctx.callbacks.group_change):
             await self.ctx.callbacks.group_change(group=self, discoordinated=True)
 
-    def contains_dimmable_lights(self) -> bool:
-        # Is there at least one ZenLight in self.lights that supports dimming?
-        for light in self.lights:
-            if light.features["brightness"]:
-                return True
-        return False
-    def contains_temperature_lights(self) -> bool:
-        # Is there at least one ZenLight in self.lights that supports temperature?
-        for light in self.lights:
-            if light.features["temperature"]:
-                return True
-        return False
-
 class ZenButton:
     ctx: EntityContext
     commands: ZenCommandClient
@@ -951,7 +888,6 @@ class ZenButton:
     instance_label: str | None = None
     last_press_time: float = 0.0
     long_press_count: int = 0
-    client_data: dict[str, Any]
 
     def __init__(self, ctx: EntityContext, instance: ZenInstance) -> None:
         self.ctx = ctx
@@ -968,7 +904,6 @@ class ZenButton:
         self.instance_label = None
         self.last_press_time = time.time()
         self.long_press_count = 0
-        self.client_data = {}
     def interview_serialize(self) -> str:
         return json.dumps({
             "serial": self.serial,
@@ -986,14 +921,12 @@ class ZenButton:
             self.instance.address.label = self.label
             self.instance.address.serial = cast(str | None, self.serial)
             self.instance.address.ean = self.ean
-            _registered(self.instance.address.controller).buttons.add(self)
             return True
         except Exception: # pylint: disable=broad-exception-caught
             return False
     async def interview(self) -> bool:
         inst = self.instance
         addr = inst.address
-        ctrl = _registered(addr.controller)
         if addr.label is None:
             addr.label = _or_device_label(await self.commands.query_dali_device_label(addr), addr)
         if addr.serial is None:
@@ -1005,7 +938,6 @@ class ZenButton:
         self.ean = addr.ean
         if self.instance_label is None:
             self.instance_label = _or_instance_label(await self.commands.query_dali_instance_label(inst), inst)
-        ctrl.buttons.add(self)
         return True
     async def _event_received(self, held: bool = False) -> None:
         if not held:
@@ -1041,7 +973,6 @@ class ZenAbsoluteInput:
     label: str | None = None
     instance_label: str | None = None
     _value: int | None = None
-    client_data: dict[str, Any]
 
     def __init__(self, ctx: EntityContext, instance: ZenInstance) -> None:
         self.ctx = ctx
@@ -1062,7 +993,6 @@ class ZenAbsoluteInput:
         self.label = None
         self.instance_label = None
         self._value = None
-        self.client_data = {}
 
     def interview_serialize(self) -> str:
         return json.dumps({
@@ -1082,7 +1012,6 @@ class ZenAbsoluteInput:
             self.instance.address.label = self.label
             self.instance.address.serial = cast(str | None, self.serial)
             self.instance.address.ean = self.ean
-            _registered(self.instance.address.controller).absolute_inputs.add(self)
             return True
         except Exception: # pylint: disable=broad-exception-caught
             return False
@@ -1090,7 +1019,6 @@ class ZenAbsoluteInput:
     async def interview(self) -> bool:
         inst = self.instance
         addr = inst.address
-        ctrl = _registered(addr.controller)
         if addr.label is None:
             addr.label = _or_device_label(await self.commands.query_dali_device_label(addr), addr)
         if addr.serial is None:
@@ -1102,7 +1030,6 @@ class ZenAbsoluteInput:
         self.ean = addr.ean
         if self.instance_label is None:
             self.instance_label = _or_instance_label(await self.commands.query_dali_instance_label(inst), inst)
-        ctrl.absolute_inputs.add(self)
         return True
 
     @property
@@ -1133,7 +1060,6 @@ class ZenMotionSensor:
     deadtime: int | None = None
     last_detect: float | None = None
     _occupied: bool | None = None
-    client_data: dict[str, Any]
 
     def __init__(self, ctx: EntityContext, instance: ZenInstance) -> None:
         self.ctx = ctx
@@ -1154,8 +1080,6 @@ class ZenMotionSensor:
         self.deadtime = None
         self.last_detect = None
         self._occupied = None
-        #
-        self.client_data = {}
     def interview_serialize(self) -> str:
         return json.dumps({
             "serial": self.serial,
@@ -1178,14 +1102,12 @@ class ZenMotionSensor:
             self.instance.address.label = self.label
             self.instance.address.serial = cast(str | None, self.serial)
             self.instance.address.ean = self.ean
-            _registered(self.instance.address.controller).motion_sensors.add(self)
             return True
         except Exception: # pylint: disable=broad-exception-caught
             return False
     async def interview(self) -> bool:
         inst = self.instance
         addr = inst.address
-        ctrl = _registered(addr.controller)
         occupancy_timers = await self.commands.query_occupancy_instance_timers(inst)
         if occupancy_timers is not None:
             if addr.serial is None:
@@ -1206,7 +1128,6 @@ class ZenMotionSensor:
         else:
             self._reset()
             return False
-        ctrl.motion_sensors.add(self)
         return True
 
     async def refresh_state_from_controller(self) -> bool:
@@ -1293,7 +1214,6 @@ class ZenSystemVariable:
     label: str | None = None
     _value: int | None = None
     _future_value: int | None = None
-    client_data: dict[str, Any]
 
     def __init__(
         self,
@@ -1317,7 +1237,6 @@ class ZenSystemVariable:
         self.label = None
         self._value = None
         self._future_value = None
-        self.client_data = {}
     def interview_serialize(self) -> str:
         return json.dumps({
             "label": self.label,
@@ -1327,7 +1246,6 @@ class ZenSystemVariable:
             data = _loads_interview_data(data)
             self.label = data.get("label")
             self._future_value = None
-            self.controller.sysvars.add(self)
             return True
         except Exception: # pylint: disable=broad-exception-caught
             return False
@@ -1337,8 +1255,6 @@ class ZenSystemVariable:
             self.label = await self.commands.query_system_variable_name(ctrl, self.id)
         if self._value is None:
             self._value = await self.commands.query_system_variable(ctrl, self.id)
-        # Add to controller's set of system variables
-        ctrl.sysvars.add(self)
         return True
     async def _event_received(self, new_value: int | None) -> None:
         changed = new_value != self._value

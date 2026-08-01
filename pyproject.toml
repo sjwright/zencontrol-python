@@ -34,16 +34,9 @@ dev = [
     "mypy>=0.950",
     "build>=1.0",
 ]
-mqtt = [
-    "aiomqtt>=2.1.0",
-    "PyYAML>=6.0",
-]
 # Simulator integration tests (tests/test_sim_*.py) need zencontrol-simulator
 # (pip install -e ../zencontrol-simulator, or a sibling ../zencontrol-simulator
 # checkout) plus PyYAML.
-
-[project.scripts]
-zencontrol-mqtt = "examples.mqtt_bridge:main"
 
 [project.urls]
 Homepage = "https://github.com/sjwright/zencontrol-python"
@@ -55,7 +48,7 @@ version = {attr = "zencontrol.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["zencontrol*", "examples*"]
+include = ["zencontrol*"]
 
 [tool.setuptools.package-data]
 zencontrol = ["py.typed"]
