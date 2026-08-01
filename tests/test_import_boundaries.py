@@ -2,7 +2,7 @@
 
 These tests are the enforceable forbidden-import rule between the event and
 command planes. If a future change wants to import across the boundary, that
-change belongs in ``ZenEventWiring`` (interface layer).
+change belongs in ZenEventWiring (interface layer).
 """
 
 from __future__ import annotations
@@ -69,4 +69,4 @@ def test_commands_has_no_label_display_fallbacks() -> None:
     # Fallback formulas that used to live next to the query methods.
     assert 'f"Group {address.number}"' not in source
     assert 'f"Scene {scene}"' not in source
-    assert 'f"{address.controller.label} ECD' not in source
+    assert 'f"{address.ctrl.label} ECD' not in source

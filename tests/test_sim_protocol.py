@@ -12,7 +12,7 @@ pytestmark = pytest.mark.simulator
 
 @pytest.mark.asyncio
 async def test_controller_identity_and_readiness(live_sim):
-    p, c = live_sim.commands, live_sim.controller
+    p, c = live_sim.commands, live_sim.ctrl
     version = await p.query_controller_version_number(c)
     assert version is not None
     assert "2" in version
@@ -23,7 +23,7 @@ async def test_controller_identity_and_readiness(live_sim):
 
 @pytest.mark.asyncio
 async def test_discover_gear_groups_and_devices(live_sim):
-    p, c = live_sim.commands, live_sim.controller
+    p, c = live_sim.commands, live_sim.ctrl
 
     gears = await p.query_control_gear_dali_addresses(c)
     assert sorted(a.number for a in gears) == list(range(14))
@@ -149,7 +149,7 @@ async def test_colour_tc_and_rgb(live_sim):
 
 @pytest.mark.asyncio
 async def test_profiles_and_system_variables(live_sim):
-    p, c = live_sim.commands, live_sim.controller
+    p, c = live_sim.commands, live_sim.ctrl
 
     numbers = await p.query_profile_numbers(c)
     assert numbers is not None
@@ -167,7 +167,7 @@ async def test_profiles_and_system_variables(live_sim):
 
 @pytest.mark.asyncio
 async def test_tpi_event_mode_and_filters(live_sim):
-    p, c = live_sim.commands, live_sim.controller
+    p, c = live_sim.commands, live_sim.ctrl
 
     assert await p.tpi_event_emit(c, ZenEventMode(enabled=True, filtering=False, transport=Transport.MULTICAST)) is True
     assert await p.query_tpi_event_emit_state(c) is True
@@ -249,8 +249,8 @@ async def test_query_absolute_input_instance(live_sim):
     from zencontrol import ZenAddress, ZenAddressType, ZenInstanceType
 
     p = live_sim.commands
-    c = live_sim.controller
-    addr = ZenAddress(controller=c, type=ZenAddressType.ECD, number=13)
+    c = live_sim.ctrl
+    addr = ZenAddress(ctrl=c, type=ZenAddressType.ECD, number=13)
     instances = await p.query_instances_by_address(address=addr)
     assert any(inst.number == 0 and inst.type == ZenInstanceType.ABSOLUTE_INPUT for inst in instances)
 
@@ -259,7 +259,7 @@ async def test_query_absolute_input_instance(live_sim):
 async def test_timeout_when_simulator_stopped(live_sim):
     from zencontrol import ZenTimeoutError
 
-    p, c = live_sim.commands, live_sim.controller
+    p, c = live_sim.commands, live_sim.ctrl
     assert await p.query_system_variable(c, 0) is not None
     await live_sim.sim.stop()
     with pytest.raises(ZenTimeoutError):
@@ -371,7 +371,7 @@ async def test_dapc_sequence_is_no_answer(live_sim):
 
 
 # ---------------------------------------------------------------------------
-# Colour XY / scenes 8–11 / dimmer colour membership
+# Colour XY / scenes 8-11 / dimmer colour membership
 # ---------------------------------------------------------------------------
 
 
@@ -497,7 +497,7 @@ async def test_instance_ecd_labels_and_fitting_numbers(live_sim):
     assert ean == 10_000_000_000 + 3
     assert await p.query_dali_fitting_number(addr) == "1.3"
     assert await p.query_dali_fitting_number(live_sim.ecd(0)) == "1.100"
-    assert await p.query_controller_fitting_number(live_sim.controller) == "1"
+    assert await p.query_controller_fitting_number(live_sim.ctrl) == "1"
     assert await p.query_dali_instance_fitting_number(live_sim.instance(4, 2)) == "1.104.2"
     groups = await p.query_group_membership_by_address(addr)
     assert groups == [] or groups is None or list(groups) == []
@@ -516,12 +516,12 @@ async def test_occupancy_timers(live_sim):
 
 @pytest.mark.asyncio
 async def test_readiness_flags_and_unknown_sysvars(live_sim):
-    p, c = live_sim.commands, live_sim.controller
+    p, c = live_sim.commands, live_sim.ctrl
 
     live_sim.world.startup_complete = False
     assert await p.query_controller_startup_complete(c) is not True
     live_sim.world.startup_complete = True
-    live_sim.world.dali_ready = False  # simulator ignores — DALI always ready
+    live_sim.world.dali_ready = False  # simulator ignores - DALI always ready
     assert await p.query_is_dali_ready(c) is True
 
     assert await p.query_system_variable_name(c, 99) is None
@@ -531,7 +531,7 @@ async def test_readiness_flags_and_unknown_sysvars(live_sim):
 
 @pytest.mark.asyncio
 async def test_return_to_scheduled_profile(live_sim):
-    p, c = live_sim.commands, live_sim.controller
+    p, c = live_sim.commands, live_sim.ctrl
     live_sim.world.last_scheduled_profile = 1
     assert await p.change_profile_number(c, 3) is True
     assert await p.return_to_scheduled_profile(c) is True
@@ -576,8 +576,8 @@ async def test_query_instance_groups(live_sim):
 
 @pytest.mark.asyncio
 async def test_query_profile_information(live_sim):
-    """PDF: header + records; bit0=disabled, bits1–2=priority (0 scheduled, 1+, …)."""
-    p, c = live_sim.commands, live_sim.controller
+    """PDF: header + records; bit0=disabled, bits1-2=priority (0 scheduled, 1+, …)."""
+    p, c = live_sim.commands, live_sim.ctrl
     result = await p.query_profile_information(c)
     assert result is not None
     state, profiles = result
@@ -608,7 +608,7 @@ async def test_colour_only_preserves_level(live_sim):
 @pytest.mark.asyncio
 async def test_clear_tpi_event_unicast_address(live_sim):
     """Sim extension: omit IP/port (zeros) clears unicast targeting."""
-    p, c = live_sim.commands, live_sim.controller
+    p, c = live_sim.commands, live_sim.ctrl
     await p.set_tpi_event_unicast_address(c, ipaddr="127.0.0.1", port=6970)
     await p.set_tpi_event_unicast_address(c)
     info = await p.query_tpi_event_unicast_address(c)

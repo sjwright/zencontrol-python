@@ -1,4 +1,4 @@
-"""Phase 4–5: ZenEventWiring attach/detach, re-arm, and MAC promotion persistence."""
+"""Phase 4-5: ZenEventWiring attach/detach, re-arm, and MAC promotion persistence."""
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ async def test_wiring_attach_subscribes_leases_and_programs_emit() -> None:
 
     binding = await wiring.attach(ctrl, mode)
 
-    assert binding.controller is ctrl
+    assert binding.ctrl is ctrl
     assert wiring.get(ctrl) is binding
     assert receiver.lease_count(Transport.MULTICAST) == 1
     commands.tpi_event_emit.assert_awaited_once()
@@ -57,7 +57,7 @@ async def test_wiring_attach_subscribes_leases_and_programs_emit() -> None:
 
 @pytest.mark.asyncio
 async def test_program_unicast_without_advertise_raises() -> None:
-    """UNICAST with no advertise must fail — not clear the address and emit blindly."""
+    """UNICAST with no advertise must fail - not clear the address and emit blindly."""
     receiver = ZenEventReceiver(unicast_listen_ip="127.0.0.1", unicast_port=0)
     receiver._endpoint_factory = fake_endpoint_factory()
     commands = MagicMock()
@@ -132,9 +132,9 @@ async def test_rearm_all_continues_after_one_controller_fails() -> None:
     wiring.on_resync = on_resync
     rearmed: list[str] = []
 
-    async def program(controller, lease, event_mode) -> None:
-        rearmed.append(controller.name)
-        if controller is ctrl_a:
+    async def program(ctrl, lease, event_mode) -> None:
+        rearmed.append(ctrl.name)
+        if ctrl is ctrl_a:
             raise RuntimeError("ctrl-a unavailable")
 
     with patch.object(wiring, "_program", side_effect=program):
@@ -245,8 +245,8 @@ async def test_host_only_binding_learns_mac_and_persists() -> None:
 
     persisted: list[tuple[str, str]] = []
 
-    async def on_identified(controller, mac: str) -> None:
-        persisted.append((controller.name, mac))
+    async def on_identified(ctrl, mac: str) -> None:
+        persisted.append((ctrl.name, mac))
 
     zen.callbacks.controller_identified = on_identified
     await zen.start()
@@ -279,8 +279,8 @@ async def test_promotion_conflict_detaches_zombie_binding() -> None:
 
     status_changes: list[tuple[str, str]] = []
 
-    async def on_status(controller, status: str) -> None:
-        status_changes.append((controller.name, status))
+    async def on_status(ctrl, status: str) -> None:
+        status_changes.append((ctrl.name, status))
 
     zen.callbacks.controller_status_change = on_status
     known = zen.add_controller(

@@ -33,7 +33,7 @@ class ZenResponseError(ZenError):
 
 
 class ZenConnectionError(ZenError):
-    """Raised when connection to controller fails"""
+    """Raised when connection to ctrl fails"""
     pass
 
 

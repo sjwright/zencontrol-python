@@ -29,8 +29,8 @@ def _ensure_simulator_importable() -> None:
     """Make zencontrol_simulator importable via install or sibling checkout.
 
     Prefers an already-installed package. Otherwise, if
-    ``../zencontrol-simulator`` exists beside this repo, adds it to
-    ``sys.path`` so the package can be imported without ``pip install -e``.
+    ../zencontrol-simulator exists beside this repo, adds it to
+    sys.path so the package can be imported without pip install -e.
     """
     try:
         import zencontrol_simulator  # noqa: F401
@@ -55,7 +55,7 @@ def _require_simulator():
         import zencontrol_simulator
     except ImportError:
         pytest.skip(
-            "zencontrol-simulator not available — pip install -e "
+            "zencontrol-simulator not available - pip install -e "
             "../zencontrol-simulator or check it out as a sibling directory"
         )
 
@@ -83,18 +83,18 @@ def _simulator_config_path() -> Path:
 
 @dataclass
 class LiveSimulator:
-    """Running simulator paired with a ``ZenTestClient`` test facade."""
+    """Running simulator paired with a ZenTestClient test facade."""
 
     world: Any
     sim: Any
     commands: Any
-    controller: Any
+    ctrl: Any
 
     def ecg(self, number: int):
         from zencontrol import ZenAddress, ZenAddressType
 
         return ZenAddress(
-            controller=self.controller,
+            ctrl=self.ctrl,
             type=ZenAddressType.ECG,
             number=number,
         )
@@ -103,7 +103,7 @@ class LiveSimulator:
         from zencontrol import ZenAddress, ZenAddressType
 
         return ZenAddress(
-            controller=self.controller,
+            ctrl=self.ctrl,
             type=ZenAddressType.GROUP,
             number=number,
         )
@@ -112,7 +112,7 @@ class LiveSimulator:
         from zencontrol import ZenAddress, ZenAddressType
 
         return ZenAddress(
-            controller=self.controller,
+            ctrl=self.ctrl,
             type=ZenAddressType.ECD,
             number=number,
         )
@@ -120,7 +120,7 @@ class LiveSimulator:
     def broadcast(self):
         from zencontrol import ZenAddress
 
-        return ZenAddress.broadcast(self.controller)
+        return ZenAddress.broadcast(self.ctrl)
 
     def instance(self, ecd: int, number: int, type_code: int = 1):
         from zencontrol import ZenInstance, ZenInstanceType
@@ -161,7 +161,7 @@ async def live_sim() -> LiveSimulator:
     mac = ":".join(f"{b:02x}" for b in world.mac)
 
     protocol = ZenTestClient(unicast=True, listen_ip="127.0.0.1", listen_port=0)
-    controller = protocol.ctx.controller(
+    ctrl = protocol.ctx.ctrl(
         id=1,
         name="sim",
         label="Sim",
@@ -169,9 +169,9 @@ async def live_sim() -> LiveSimulator:
         port=port,
         mac=mac,
     )
-    protocol.set_controllers([controller])
+    protocol.set_controllers([ctrl])
 
-    live = LiveSimulator(world=world, sim=sim, commands=protocol, controller=controller)
+    live = LiveSimulator(world=world, sim=sim, commands=protocol, ctrl=ctrl)
     try:
         yield live
     finally:

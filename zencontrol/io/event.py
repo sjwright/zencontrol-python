@@ -108,9 +108,9 @@ def accept_datagram(
     sink: EventSink,
     logger: logging.Logger | None = None,
 ) -> bool:
-    """Parse a datagram like the live protocol and invoke ``sink`` if valid.
+    """Parse a datagram like the live protocol and invoke sink if valid.
 
-    Returns True when the sink was called. Shared by ``ZenEventProtocol`` and
+    Returns True when the sink was called. Shared by ZenEventProtocol and
     tests that simulate the endpoint handoff without a socket.
     """
     log = logger or logging.getLogger(__name__)

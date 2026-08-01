@@ -205,7 +205,7 @@ async def test_promotion_conflict_fails_provisional() -> None:
 
     receiver.subscribe(mac_handler, mac=MAC_A)
     # Different host so both can exist; promote will conflict if MAC_A arrives
-    # on the provisional's host — but MAC lookup wins first, so use a race via
+    # on the provisional's host - but MAC lookup wins first, so use a race via
     # direct _promote after resolving to provisional with a colliding MAC.
     sub = receiver.subscribe(prov_handler, host="192.168.1.60", on_lost=on_lost)
     ok = await receiver._promote(sub, MAC_A)
@@ -312,7 +312,7 @@ def test_subscribe_host_must_be_ipv4() -> None:
         pass
 
     with pytest.raises(ValueError, match="wire IPv4"):
-        receiver.subscribe(handler, host="controller.local")
+        receiver.subscribe(handler, host="ctrl.local")
     with pytest.raises(ValueError, match="wire IPv4"):
         receiver.subscribe(handler, mac=MAC_A, host="not-an-ip")
 

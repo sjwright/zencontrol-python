@@ -6,8 +6,8 @@ from zencontrol.interface.interface import _assign_light_sub_labels
 
 
 def _light(controller_name: str, number: int, label: str | None):
-    controller = SimpleNamespace(name=controller_name)
-    address = SimpleNamespace(controller=controller, number=number)
+    ctrl = SimpleNamespace(name=controller_name)
+    address = SimpleNamespace(ctrl=ctrl, number=number)
     return SimpleNamespace(address=address, label=label, sub_label="stale")
 
 

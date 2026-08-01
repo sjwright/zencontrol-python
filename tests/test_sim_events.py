@@ -94,14 +94,14 @@ async def test_member_events_on_group_scene(live_sim):
 
 @pytest.mark.asyncio
 async def test_profile_and_sysvar_events_via_protocol(live_sim):
-    p, c = live_sim.commands, live_sim.controller
+    p, c = live_sim.commands, live_sim.ctrl
     profiles: list[int] = []
     sysvars: list[tuple[int, int]] = []
 
-    async def on_profile(*, controller, profile, payload):
+    async def on_profile(*, ctrl, profile, payload):
         profiles.append(profile)
 
-    async def on_sysvar(*, controller, target, value, payload):
+    async def on_sysvar(*, ctrl, target, value, payload):
         sysvars.append((target, value))
 
     p.set_callbacks(
@@ -192,7 +192,7 @@ async def test_inject_level_scene_colour_profile_events(live_sim):
     async def on_colour(*, address, colour, payload):
         colours.append((address.number, colour))
 
-    async def on_profile(*, controller, profile, payload):
+    async def on_profile(*, ctrl, profile, payload):
         profiles.append(profile)
 
     p.set_callbacks(

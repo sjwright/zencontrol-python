@@ -20,7 +20,7 @@ async def main():
     # Create protocol and controller
     async with ZenCommandClient(print_traffic=False) as tpi:
         ctx = EntityContext(commands=tpi)
-        ctrl = ctx.controller(**config.get('zencontrol')[0])
+        ctrl = ctx.ctrl(**config.get('zencontrol')[0])
         
         print("Testing LED control queries...")
         print("=" * 50)

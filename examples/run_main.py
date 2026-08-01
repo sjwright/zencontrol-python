@@ -1,4 +1,4 @@
-"""Shared runner for live examples — not part of the library API."""
+"""Shared runner for live examples - not part of the library API."""
 
 from __future__ import annotations
 

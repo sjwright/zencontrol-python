@@ -102,7 +102,7 @@ class DiscoveryLog:
             last_seen=now,
         )
         self._entries[key] = discovered
-        self.logger.info("Identified controller %s mac=%s", event.host, mac_str)
+        self.logger.info("Identified ctrl %s mac=%s", event.host, mac_str)
         if callable(self.on_discovered):
             try:
                 await self.on_discovered(discovered)

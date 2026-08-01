@@ -1,6 +1,6 @@
 """Test harness combining command and event planes for simulator tests.
 
-Not public API — use ``ZenControl`` in application code.
+Not public API - use ZenControl in application code.
 
 Example::
 
@@ -8,7 +8,7 @@ Example::
     from zencontrol import ZenController
 
     p = ZenTestClient(unicast=True, listen_ip="127.0.0.1", listen_port=0)
-    ctrl = p.ctx.controller(..., ...)
+    ctrl = p.ctx.ctrl(..., ...)
     p.set_controllers([ctrl])
 """
 
@@ -49,7 +49,7 @@ LegacyCallback = Callable[..., Awaitable[None]]
 
 
 class ZenTestClient:
-    """Test harness: ``ZenCommandClient`` commands + legacy callback event monitoring."""
+    """Test harness: ZenCommandClient commands + legacy callback event monitoring."""
 
     def __init__(
         self,
@@ -124,10 +124,10 @@ class ZenTestClient:
         self.system_variable_change_callback = system_variable_change_callback
         self.disconnect_callback = disconnect_callback
 
-    def _event_mode_for(self, controller: ZenController) -> ZenEventMode:
+    def _event_mode_for(self, ctrl: ZenController) -> ZenEventMode:
         return ZenEventMode(
             enabled=True,
-            filtering=controller.filtering,
+            filtering=ctrl.filtering,
             transport=(Transport.UNICAST if self.unicast else Transport.MULTICAST),
         )
 
@@ -141,8 +141,8 @@ class ZenTestClient:
             event_handler=self._on_controller_event,
             logger=self.commands.logger,
         )
-        for controller in self.controllers:
-            ctrl = cast(ZenController, controller)
+        for c in self.controllers:
+            ctrl = cast(ZenController, c)
             await self._wiring.attach(ctrl, self._event_mode_for(ctrl))
 
     async def stop_event_monitoring(self) -> None:
@@ -165,14 +165,14 @@ class ZenTestClient:
         await self.commands.aclose()
         await self.event_receiver.close()
 
-    def _ecd_address(self, controller: ZenController, target: int) -> ZenAddress | None:
-        address = ecd_address_from_target(controller, target)
+    def _ecd_address(self, ctrl: ZenController, target: int) -> ZenAddress | None:
+        address = ecd_address_from_target(ctrl, target)
         if address is None:
             self.commands.logger.error(f"Invalid ECD event target: {target}")
         return address
 
-    def _ecg_or_group(self, controller: ZenController, target: int) -> ZenAddress | None:
-        address = ecg_or_group_address_from_target(controller, target)
+    def _ecg_or_group(self, ctrl: ZenController, target: int) -> ZenAddress | None:
+        address = ecg_or_group_address_from_target(ctrl, target)
         if address is None:
             self.commands.logger.error(f"Invalid gear/group event target: {target}")
         return address
@@ -185,10 +185,10 @@ class ZenTestClient:
         except Exception as err:
             self.commands.logger.error(f"Event callback error: {err}", exc_info=err)
 
-    async def _on_controller_event(self, controller: ZenController, ev: ZenDecodedEvent) -> None:
+    async def _on_controller_event(self, ctrl: ZenController, ev: ZenDecodedEvent) -> None:
         match ev:
             case ButtonPress(target, instance_num):
-                address = self._ecd_address(controller, target)
+                address = self._ecd_address(ctrl, target)
                 if address is None:
                     return
                 instance = ZenInstance(
@@ -203,7 +203,7 @@ class ZenTestClient:
                 )
 
             case ButtonHold(target, instance_num):
-                address = self._ecd_address(controller, target)
+                address = self._ecd_address(ctrl, target)
                 if address is None:
                     return
                 instance = ZenInstance(
@@ -218,7 +218,7 @@ class ZenTestClient:
                 )
 
             case AbsoluteInput(target, instance_num, value):
-                address = self._ecd_address(controller, target)
+                address = self._ecd_address(ctrl, target)
                 if address is None:
                     return
                 instance = ZenInstance(
@@ -235,7 +235,7 @@ class ZenTestClient:
             case LevelChangeV2(target, current, level):
                 if not self.level_change_callback:
                     return
-                address = self._ecg_or_group(controller, target)
+                address = self._ecg_or_group(ctrl, target)
                 if address is None:
                     return
                 payload = bytes([current, level])
@@ -255,7 +255,7 @@ class ZenTestClient:
                     )
 
             case SceneChange(target, scene, active):
-                address = self._ecg_or_group(controller, target)
+                address = self._ecg_or_group(ctrl, target)
                 if address is None:
                     return
                 await self._call(
@@ -267,7 +267,7 @@ class ZenTestClient:
                 )
 
             case IsOccupied(target, instance_num):
-                address = self._ecd_address(controller, target)
+                address = self._ecd_address(ctrl, target)
                 if address is None:
                     return
                 instance = ZenInstance(
@@ -283,7 +283,7 @@ class ZenTestClient:
                 )
 
             case ColourChange(target, colour_bytes):
-                address = self._ecg_or_group(controller, target)
+                address = self._ecg_or_group(ctrl, target)
                 if address is None:
                     return
                 colour = colour_from_bytes(colour_bytes)
@@ -299,7 +299,7 @@ class ZenTestClient:
             case ProfileChange(profile):
                 await self._call(
                     self.profile_change_callback,
-                    controller=controller,
+                    ctrl=ctrl,
                     profile=profile,
                     payload=bytes([profile & 0xFF]),
                 )
@@ -307,7 +307,7 @@ class ZenTestClient:
             case SystemVariableChange(target, value):
                 await self._call(
                     self.system_variable_change_callback,
-                    controller=controller,
+                    ctrl=ctrl,
                     target=target,
                     value=value,
                     payload=b"",

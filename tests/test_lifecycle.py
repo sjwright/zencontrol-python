@@ -28,7 +28,7 @@ async def test_remove_controller_closes_client_and_purges_cache() -> None:
     fake_client = MagicMock()
     fake_client.close = AsyncMock()
     zen.commands.set_client(ctrl_a, fake_client)
-    address = ZenAddress(controller=ctrl_a, type=ZenAddressType.ECG, number=1)
+    address = ZenAddress(ctrl=ctrl_a, type=ZenAddressType.ECG, number=1)
     zen.ctx.light(address)
     assert ("ctrl-a", 1) in zen.ctx.registry.lights
 
@@ -69,7 +69,7 @@ async def test_aclose_closes_clients_and_clears_instances() -> None:
     fake_client.close = AsyncMock()
     zen.commands.set_client(ctrl, fake_client)
 
-    address = ZenAddress(controller=ctrl, type=ZenAddressType.ECG, number=1)
+    address = ZenAddress(ctrl=ctrl, type=ZenAddressType.ECG, number=1)
     zen.ctx.light(address)
     assert ("ctrl-a", 1) in zen.ctx.registry.lights
     assert "ctrl-a" in zen.ctx.registry.controllers
@@ -117,7 +117,7 @@ async def test_stop_does_not_clear_entity_caches() -> None:
         host="127.0.0.1",
         port=5108,
     )
-    address = ZenAddress(controller=ctrl, type=ZenAddressType.ECG, number=2)
+    address = ZenAddress(ctrl=ctrl, type=ZenAddressType.ECG, number=2)
     zen.ctx.light(address)
 
     # stop without ever starting should be a no-op for disconnect

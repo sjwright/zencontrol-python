@@ -42,26 +42,26 @@ class EventDispatcher:
 
     def _ecd_instance(
         self,
-        controller: ZenController,
+        ctrl: ZenController,
         target: int,
         instance_type: ZenInstanceType,
         number: int,
     ) -> ZenInstance | None:
-        address = ecd_address_from_target(controller, target)
+        address = ecd_address_from_target(ctrl, target)
         if address is None:
             self.logger.error(f"Invalid ECD event target: {target}")
             return None
         return ZenInstance(address=address, type=instance_type, number=number)
 
-    def _ecg_or_group(self, controller: ZenController, target: int) -> ZenAddress | None:
-        address = ecg_or_group_address_from_target(controller, target)
+    def _ecg_or_group(self, ctrl: ZenController, target: int) -> ZenAddress | None:
+        address = ecg_or_group_address_from_target(ctrl, target)
         if address is None:
             self.logger.error(f"Invalid gear/group event target: {target}")
         return address
 
-    async def handle(self, controller: SuperZenController, ev: ZenDecodedEvent) -> None:
-        """Subscription handler entry — returns immediately (I8)."""
-        ctrl = cast(ZenController, controller)
+    async def handle(self, ctrl: SuperZenController, ev: ZenDecodedEvent) -> None:
+        """Subscription handler entry - returns immediately (I8)."""
+        ctrl = cast(ZenController, ctrl)
         name = ctrl.name
         previous = self.tail.get(name)
 

@@ -1,7 +1,7 @@
 # Overview
 
 `zencontrol-python` talks to Zencontrol controllers over **TPI Advanced** (UDP).
-The library is stacked in three layers — pick the highest one that fits your job.
+The library is stacked in three layers - pick the highest one that fits your job.
 
 | Layer | Description | Docs |
 | --- | --- | --- |

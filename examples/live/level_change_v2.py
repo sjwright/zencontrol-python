@@ -28,7 +28,7 @@ async def test_level_change_v2():
 
     async with ZenCommandClient(print_traffic=True) as tpi:
         ctx = EntityContext(commands=tpi)
-        ctrl = ctx.controller(**config["zencontrol"][0])
+        ctrl = ctx.ctrl(**config["zencontrol"][0])
 
         original_process = tpi._process_zen_event
 

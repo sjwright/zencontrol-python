@@ -19,7 +19,7 @@ async def wait_until(
     interval: float = 0.05,
     message: str = "condition not met",
 ) -> None:
-    """Poll until ``predicate()`` is true or raise AssertionError."""
+    """Poll until predicate() is true or raise AssertionError."""
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
     while loop.time() < deadline:

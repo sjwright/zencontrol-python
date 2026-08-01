@@ -84,11 +84,11 @@ class ControllerDiscoveredHandler(Protocol):
 
 
 class ControllerIdentifiedHandler(Protocol):
-    def __call__(self, controller: ZenController, mac: str) -> Awaitable[None]: ...
+    def __call__(self, ctrl: ZenController, mac: str) -> Awaitable[None]: ...
 
 
 class ControllerStatusChangeHandler(Protocol):
-    def __call__(self, controller: ZenController, status: ControllerRuntimeStatus) -> Awaitable[None]: ...
+    def __call__(self, ctrl: ZenController, status: ControllerRuntimeStatus) -> Awaitable[None]: ...
 
 
 class ZenCallbacks:
@@ -179,7 +179,7 @@ class EntityContext:
     """Owns entity callbacks, identity registry, and deferred interface tasks.
 
     Advanced/command-only surface. Prefer ZenControl for applications that
-    need event monitoring, discovery, or session lifecycle — it creates and
+    need event monitoring, discovery, or session lifecycle - it creates and
     owns an EntityContext. Use this directly only when you drive
     ZenCommandClient yourself without the event session.
 
@@ -204,7 +204,7 @@ class EntityContext:
 
     # ----- identity factories (hit-path: A1/B1/C1/D1) -----
 
-    def controller(
+    def ctrl(
         self,
         id: int,
         name: str,
@@ -242,19 +242,19 @@ class EntityContext:
         mac_to_bytes(mac)  # eager validate on config refresh
         return ctrl
 
-    def profile(self, controller: ZenController, number: int) -> ZenProfile:
+    def profile(self, ctrl: ZenController, number: int) -> ZenProfile:
         from .entities import ZenProfile
 
-        key = (controller.name, number)
+        key = (ctrl.name, number)
         store = self.registry.profiles
         if key not in store:
-            store[key] = ZenProfile(self, controller, number)
+            store[key] = ZenProfile(self, ctrl, number)
         return store[key]
 
     def light(self, address: ZenAddress) -> ZenLight:
         from .entities import ZenLight
 
-        key = (address.controller.name, address.number)
+        key = (address.ctrl.name, address.number)
         self.registry.fans.pop(key, None)
         self.registry.blinds.pop(key, None)
         store = self.registry.lights
@@ -265,7 +265,7 @@ class EntityContext:
     def fan(self, address: ZenAddress) -> ZenFan:
         from .entities import ZenFan
 
-        key = (address.controller.name, address.number)
+        key = (address.ctrl.name, address.number)
         self.registry.lights.pop(key, None)
         self.registry.blinds.pop(key, None)
         store = self.registry.fans
@@ -276,7 +276,7 @@ class EntityContext:
     def blind(self, address: ZenAddress) -> ZenBlind:
         from .entities import ZenBlind
 
-        key = (address.controller.name, address.number)
+        key = (address.ctrl.name, address.number)
         self.registry.lights.pop(key, None)
         self.registry.fans.pop(key, None)
         store = self.registry.blinds
@@ -286,7 +286,7 @@ class EntityContext:
 
     def ecg_lookup(self, address: ZenAddress) -> ZenLight | ZenFan | ZenBlind | None:
         """Lookup-only across light/fan/blind registries (no lazy create)."""
-        key = (address.controller.name, address.number)
+        key = (address.ctrl.name, address.number)
         if key in self.registry.lights:
             return self.registry.lights[key]
         if key in self.registry.fans:
@@ -298,7 +298,7 @@ class EntityContext:
     def group(self, address: ZenAddress) -> ZenGroup:
         from .entities import ZenGroup
 
-        key = (address.controller.name, address.number)
+        key = (address.ctrl.name, address.number)
         store = self.registry.groups
         if key not in store:
             store[key] = ZenGroup(self, address)
@@ -307,7 +307,7 @@ class EntityContext:
     def button(self, instance: ZenInstance) -> ZenButton:
         from .entities import ZenButton
 
-        key = (instance.address.controller.name, instance.address.number, instance.number)
+        key = (instance.address.ctrl.name, instance.address.number, instance.number)
         store = self.registry.buttons
         if key not in store:
             store[key] = ZenButton(self, instance)
@@ -316,7 +316,7 @@ class EntityContext:
     def absolute_input(self, instance: ZenInstance) -> ZenAbsoluteInput:
         from .entities import ZenAbsoluteInput
 
-        key = (instance.address.controller.name, instance.address.number, instance.number)
+        key = (instance.address.ctrl.name, instance.address.number, instance.number)
         store = self.registry.absolute_inputs
         if key not in store:
             store[key] = ZenAbsoluteInput(self, instance)
@@ -325,7 +325,7 @@ class EntityContext:
     def motion_sensor(self, instance: ZenInstance) -> ZenMotionSensor:
         from .entities import ZenMotionSensor
 
-        key = (instance.address.controller.name, instance.address.number, instance.number)
+        key = (instance.address.ctrl.name, instance.address.number, instance.number)
         store = self.registry.motion_sensors
         if key not in store:
             store[key] = ZenMotionSensor(self, instance)
@@ -333,17 +333,17 @@ class EntityContext:
 
     def system_variable(
         self,
-        controller: ZenController,
+        ctrl: ZenController,
         id: int,
         value: int | None = None,
         label: str | None = None,
     ) -> ZenSystemVariable:
         from .entities import ZenSystemVariable
 
-        key = (controller.name, id)
+        key = (ctrl.name, id)
         store = self.registry.system_variables
         if key not in store:
-            store[key] = ZenSystemVariable(self, controller, id, value, label)
+            store[key] = ZenSystemVariable(self, ctrl, id, value, label)
             return store[key]
 
         sv = store[key]
@@ -365,14 +365,14 @@ class EntityContext:
         mac: str | None = None,
         filtering: bool = False,
     ) -> ZenController:
-        ctrl = self.controller(
+        ctrl = self.ctrl(
             id=id, name=name, label=label, host=host, port=port, mac=mac, filtering=filtering
         )
         await ctrl.interview()
         return ctrl
 
-    async def create_profile(self, controller: ZenController, number: int) -> ZenProfile:
-        profile = self.profile(controller, number)
+    async def create_profile(self, ctrl: ZenController, number: int) -> ZenProfile:
+        profile = self.profile(ctrl, number)
         await profile.interview()
         return profile
 
@@ -419,12 +419,12 @@ class EntityContext:
 
     async def create_system_variable(
         self,
-        controller: ZenController,
+        ctrl: ZenController,
         id: int,
         value: int | None = None,
         label: str | None = None,
     ) -> ZenSystemVariable:
-        sysvar = self.system_variable(controller, id, value, label)
+        sysvar = self.system_variable(ctrl, id, value, label)
         await sysvar.interview()
         return sysvar
 

@@ -71,7 +71,7 @@ def _assign_light_sub_labels(lights: list[ZenLight] | set[ZenLight]) -> None:
         label = light.label
         if not label or "," not in label:
             continue
-        key = (light.address.controller.name, label)
+        key = (light.address.ctrl.name, label)
         clusters.setdefault(key, []).append(light)
 
     for cluster in clusters.values():
@@ -279,10 +279,10 @@ class ZenControl:
     async def _attach_bindings(self) -> None:
         assert self._wiring is not None
         self._disconnect_notified = False
-        for controller in self.controllers:
-            if self._wiring.get(controller) is not None:
+        for ctrl in self.controllers:
+            if self._wiring.get(ctrl) is not None:
                 continue
-            await self._wiring.attach(controller, self._event_mode_for(controller))
+            await self._wiring.attach(ctrl, self._event_mode_for(ctrl))
         if not self.controllers and self._discovery_lease is None:
             self._discovery_lease = await self.event_receiver.acquire(Transport.MULTICAST)
 
@@ -295,14 +295,14 @@ class ZenControl:
         finally:
             self._session_restored.set()
 
-    async def _on_binding_lost(self, controller: ZenController, reason: str) -> None:
+    async def _on_binding_lost(self, ctrl: ZenController, reason: str) -> None:
         self.logger.error(
             "Event binding lost for %s (%s)",
-            controller.name,
+            ctrl.name,
             reason,
         )
-        self._forget_event_dispatch(controller.name)
-        await self._notify_controller_status(controller, "unreachable")
+        self._forget_event_dispatch(ctrl.name)
+        await self._notify_controller_status(ctrl, "unreachable")
 
     async def _event_monitor_supervisor(self) -> None:
         delay = self.reconnect_min_delay
@@ -408,22 +408,22 @@ class ZenControl:
                 raise
             if self._stopping or not self.is_event_monitoring_active():
                 continue
-            for controller in list(self.controllers):
+            for ctrl in list(self.controllers):
                 if self._stopping:
                     return
                 try:
-                    await self.assert_controller_events(controller)
+                    await self.assert_controller_events(ctrl)
                 except asyncio.CancelledError:
                     raise
                 except Exception as err:
                     self.logger.debug(
                         "Event keepalive failed for %s: %s",
-                        controller.name,
+                        ctrl.name,
                         err,
                     )
 
-    async def _on_controller_event(self, controller: ZenController, ev: ZenDecodedEvent) -> None:
-        await self._dispatcher.handle(controller, ev)
+    async def _on_controller_event(self, ctrl: ZenController, ev: ZenDecodedEvent) -> None:
+        await self._dispatcher.handle(ctrl, ev)
 
     def _forget_event_dispatch(self, name: str) -> None:
         self._dispatcher.forget(name)
@@ -449,7 +449,7 @@ class ZenControl:
 
     @property
     def callbacks(self) -> ZenCallbacks:
-        """Application callback registry (same object as context.callbacks)."""
+        """Application callback registry (same object as ctx.callbacks)."""
         return self.ctx.callbacks
 
     @property
@@ -457,11 +457,11 @@ class ZenControl:
         """Controllers identified from multicast but not yet registered."""
         return list(self.identities.discovered)
 
-    def event_health_for(self, controller: ZenController | str) -> EventHealth | None:
+    def event_health_for(self, ctrl: ZenController | str) -> EventHealth | None:
         """Per-binding event-plane health, or None if the controller is not attached."""
         if self._wiring is None:
             return None
-        binding = self._wiring.get(controller)
+        binding = self._wiring.get(ctrl)
         return None if binding is None else binding.event_health
 
     async def _forward_discovered(self, discovered: DiscoveredController) -> None:
@@ -472,10 +472,10 @@ class ZenControl:
             exc_info=True,
         )
 
-    async def _notify_controller_identified(self, controller: ZenController, mac: str) -> None:
+    async def _notify_controller_identified(self, ctrl: ZenController, mac: str) -> None:
         await self._await_callback(
             self.ctx.callbacks.controller_identified,
-            controller,
+            ctrl,
             mac,
             what="controller_identified",
             exc_info=True,
@@ -484,20 +484,20 @@ class ZenControl:
     def add_controller(
         self, id: int, name: str, label: str, host: str, port: int = 5108, mac: str | None = None, filtering: bool = False
     ) -> ZenController:
-        controller = self.ctx.controller(
+        ctrl = self.ctx.ctrl(
             id=id, name=name, label=label, host=host, port=port, mac=mac, filtering=filtering
         )
-        self.controllers.append(controller)
+        self.controllers.append(ctrl)
         self.identities.forget(host=host, mac=mac)
-        return controller
+        return ctrl
 
-    async def remove_controller(self, controller: ZenController | str) -> None:
+    async def remove_controller(self, ctrl: ZenController | str) -> None:
         """Detach a controller and close its command client.
 
         Safe to call while event monitoring is running. Does not stop the shared
         listener; callers that own the last controller should aclose().
         """
-        name = controller if isinstance(controller, str) else controller.name
+        name = ctrl if isinstance(ctrl, str) else ctrl.name
         removed = [c for c in self.controllers if c.name == name]
         self.controllers = [c for c in self.controllers if c.name != name]
         if self._wiring is not None:
@@ -507,14 +507,14 @@ class ZenControl:
         for ctrl in removed:
             await self.commands._invalidate_client(ctrl)
 
-    def _event_mode_for(self, controller: ZenController) -> ZenEventMode:
+    def _event_mode_for(self, ctrl: ZenController) -> ZenEventMode:
         return ZenEventMode(
             enabled=True,
-            filtering=controller.filtering,
+            filtering=ctrl.filtering,
             transport=(Transport.UNICAST if self.unicast else Transport.MULTICAST),
         )
 
-    async def configure_controller_events(self, controller: ZenController) -> bool:
+    async def configure_controller_events(self, ctrl: ZenController) -> bool:
         """Enable TPI event emit for one controller using this client's listen mode.
 
         Call after add_controller when event monitoring is already running so a
@@ -523,22 +523,22 @@ class ZenControl:
         """
         if self._wiring is None:
             return False
-        mode = self._event_mode_for(controller)
+        mode = self._event_mode_for(ctrl)
         try:
-            if self._wiring.get(controller) is not None:
-                await self._wiring.rearm(controller)
+            if self._wiring.get(ctrl) is not None:
+                await self._wiring.rearm(ctrl)
             else:
-                await self._wiring.attach(controller, mode)
+                await self._wiring.attach(ctrl, mode)
             return True
         except Exception as err:
             self.logger.debug(
                 "configure_controller_events failed for %s: %s",
-                controller.name,
+                ctrl.name,
                 err,
             )
             return False
 
-    async def assert_controller_events(self, controller: ZenController) -> bool:
+    async def assert_controller_events(self, ctrl: ZenController) -> bool:
         """Ping event emit state and re-assert config if the controller lost it.
 
         Controllers that reboot while our listener stays up typically come back
@@ -546,102 +546,102 @@ class ZenControl:
         the controller is reachable and events are confirmed/enabled, False when
         the ping timed out / failed or re-assert could not enable emit.
 
-        Never re-asserts while query_controller_startup_complete() is false — the startup
+        Never re-asserts while query_controller_startup_complete() is false - the startup
         sequence can take several minutes after a reboot.
         """
         if not self.is_event_monitoring_active():
             return False
-        if self._wiring is not None and self._wiring.get(controller) is None:
-            # Binding was dropped (e.g. MAC promotion conflict) — do not keep
+        if self._wiring is not None and self._wiring.get(ctrl) is None:
+            # Binding was dropped (e.g. MAC promotion conflict) - do not keep
             # confirming emit into a route that no longer exists.
             self.logger.debug(
-                "No event binding for %s — skipping emit keepalive",
-                controller.name,
+                "No event binding for %s - skipping emit keepalive",
+                ctrl.name,
             )
             return False
 
-        ready = await self.commands.query_controller_startup_complete(controller)
+        ready = await self.commands.query_controller_startup_complete(ctrl)
         if ready is None:
             self.logger.debug(
                 "No response from %s during event keepalive ping",
-                controller.name,
+                ctrl.name,
             )
-            await self._notify_controller_status(controller, "unreachable")
+            await self._notify_controller_status(ctrl, "unreachable")
             return False
         if ready is not True:
             self.logger.debug(
-                "Controller %s still starting — deferring event re-assert",
-                controller.name,
+                "Controller %s still starting - deferring event re-assert",
+                ctrl.name,
             )
-            await self._notify_controller_status(controller, "starting")
+            await self._notify_controller_status(ctrl, "starting")
             return True
 
         unicast = self.unicast
         needs_reassert = False
-        info = await self.commands.query_tpi_event_unicast_address(controller)
+        info = await self.commands.query_tpi_event_unicast_address(ctrl)
         if info is not None:
             mode = info.mode
             if not mode.enabled or bool(mode.unicast) != unicast:
                 needs_reassert = True
-            elif unicast and self._unicast_target_mismatch(controller, info):
+            elif unicast and self._unicast_target_mismatch(ctrl, info):
                 needs_reassert = True
         else:
-            enabled = await self.commands.query_tpi_event_emit_state(controller)
+            enabled = await self.commands.query_tpi_event_emit_state(ctrl)
             if enabled is None:
                 self.logger.debug(
                     "No response from %s during event keepalive ping",
-                    controller.name,
+                    ctrl.name,
                 )
-                await self._notify_controller_status(controller, "unreachable")
+                await self._notify_controller_status(ctrl, "unreachable")
                 return False
             needs_reassert = not enabled
 
         if needs_reassert:
             self.logger.info(
-                "Controller %s TPI events not correctly enabled — re-asserting",
-                controller.name,
+                "Controller %s TPI events not correctly enabled - re-asserting",
+                ctrl.name,
             )
-            if not await self.configure_controller_events(controller):
+            if not await self.configure_controller_events(ctrl):
                 self.logger.warning(
                     "Failed to re-assert TPI events for %s",
-                    controller.name,
+                    ctrl.name,
                 )
-                await self._notify_controller_status(controller, "unreachable")
+                await self._notify_controller_status(ctrl, "unreachable")
                 return False
-        await self._notify_controller_status(controller, "online")
+        await self._notify_controller_status(ctrl, "online")
         return True
 
-    def _unicast_target_mismatch(self, controller: ZenController, info: TpiEventUnicastAddress) -> bool:
+    def _unicast_target_mismatch(self, ctrl: ZenController, info: TpiEventUnicastAddress) -> bool:
         """True when the controller's programmed unicast target is wrong for it.
 
         Compares against that controller's binding advertise (per-toward).
-        Without a live advertise there is nothing to compare — return False.
+        Without a live advertise there is nothing to compare - return False.
         """
         if self._wiring is None:
             return False
-        binding = self._wiring.get(controller)
+        binding = self._wiring.get(ctrl)
         advertise = None if binding is None else binding.lease.advertise
         if advertise is None:
             return False
         expected_ip, expected_port = advertise
         return info.port != expected_port or info.ip != expected_ip
 
-    async def _notify_controller_status(self, controller: ZenController, status: ControllerRuntimeStatus) -> None:
+    async def _notify_controller_status(self, ctrl: ZenController, status: ControllerRuntimeStatus) -> None:
         """Notify listeners of online / starting / unreachable."""
         await self._await_callback(
             self.callbacks.controller_status_change,
-            controller,
+            ctrl,
             status,
-            what=f"controller_status_change for {controller.name}",
+            what=f"controller_status_change for {ctrl.name}",
             debug=True,
         )
 
-    async def get_profiles(self, controller: ZenController | None = None) -> set[ZenProfile]:
+    async def get_profiles(self, ctrl: ZenController | None = None) -> set[ZenProfile]:
         """Return a set of all profiles."""
         profiles: set[ZenProfile] = set()
-        controllers = [controller] if controller else self.controllers
+        controllers = [ctrl] if ctrl else self.controllers
         for ctrl in controllers:
-            numbers = await self.commands.query_profile_numbers(controller=ctrl)
+            numbers = await self.commands.query_profile_numbers(ctrl=ctrl)
             if numbers is None:
                 continue
             for number in numbers:
@@ -651,7 +651,7 @@ class ZenControl:
 
     async def switch_to_profile(
         self,
-        controller: ZenController,
+        ctrl: ZenController,
         profile: ZenProfile | int | str,
     ) -> bool:
         """Switch controller to a profile by object, number, or label."""
@@ -660,29 +660,29 @@ class ZenControl:
             zp = profile
         elif isinstance(profile, str):
             for key, p in self.ctx.registry.profiles.items():
-                if key[0] == controller.name and p.label == profile:
+                if key[0] == ctrl.name and p.label == profile:
                     zp = p
                     break
         elif isinstance(profile, int):
-            zp = self.ctx.registry.profiles.get((controller.name, profile))
+            zp = self.ctx.registry.profiles.get((ctrl.name, profile))
         if zp is None:
             return False
         self.commands.logger.debug("Switching to profile %s", zp)
-        return bool(await self.commands.change_profile_number(controller, zp.number))
+        return bool(await self.commands.change_profile_number(ctrl, zp.number))
 
-    async def get_groups(self, controller: ZenController | None = None) -> set[ZenGroup]:
+    async def get_groups(self, ctrl: ZenController | None = None) -> set[ZenGroup]:
         """Return a set of all groups (optionally for one controller)."""
         groups: set[ZenGroup] = set()
-        controllers = [controller] if controller else self.controllers
+        controllers = [ctrl] if ctrl else self.controllers
         for ctrl in controllers:
-            addresses = await self.commands.query_group_numbers(controller=ctrl)
+            addresses = await self.commands.query_group_numbers(ctrl=ctrl)
             for address in addresses:
                 group = await self.ctx.create_group(address)
                 groups.add(group)
         return groups
 
     async def get_control_gear(
-        self, controller: ZenController | None = None
+        self, ctrl: ZenController | None = None
     ) -> set[ZenControlGear]:
         """Interview all control gear, discriminating light / fan / blind."""
         # (ean, bus_unit) → kind. Dummy placeholders until field/support seeds real GTINs.
@@ -692,9 +692,9 @@ class ZenControl:
             (9990000000002, None): "blind", # dummy placeholder for blind
         }
         gear: set[ZenControlGear] = set()
-        controllers = [controller] if controller else self.controllers
+        controllers = [ctrl] if ctrl else self.controllers
         for ctrl in controllers:
-            addresses = await self.commands.query_control_gear_dali_addresses(controller=ctrl)
+            addresses = await self.commands.query_control_gear_dali_addresses(ctrl=ctrl)
             for address in addresses:
                 label = await self.commands.query_dali_device_label(address)
                 ean = await self.commands.query_dali_ean(address)
@@ -722,41 +722,41 @@ class ZenControl:
         _assign_light_sub_labels(lights)
         return gear
 
-    async def get_lights(self, controller: ZenController | None = None) -> set[ZenLight]:
+    async def get_lights(self, ctrl: ZenController | None = None) -> set[ZenLight]:
         """Return lights among discovered control gear (prefer get_control_gear)."""
-        return {g for g in await self.get_control_gear(controller) if isinstance(g, ZenLight)}
+        return {g for g in await self.get_control_gear(ctrl) if isinstance(g, ZenLight)}
 
-    async def get_fans(self, controller: ZenController | None = None) -> set[ZenFan]:
+    async def get_fans(self, ctrl: ZenController | None = None) -> set[ZenFan]:
         """Return fans among discovered control gear (prefer get_control_gear)."""
-        return {g for g in await self.get_control_gear(controller) if isinstance(g, ZenFan)}
+        return {g for g in await self.get_control_gear(ctrl) if isinstance(g, ZenFan)}
 
-    async def get_blinds(self, controller: ZenController | None = None) -> set[ZenBlind]:
+    async def get_blinds(self, ctrl: ZenController | None = None) -> set[ZenBlind]:
         """Return blinds among discovered control gear (prefer get_control_gear)."""
-        return {g for g in await self.get_control_gear(controller) if isinstance(g, ZenBlind)}
+        return {g for g in await self.get_control_gear(ctrl) if isinstance(g, ZenBlind)}
 
-    async def _get_addresses_with_instances(self, controller: ZenController) -> list[ZenAddress]:
+    async def _get_addresses_with_instances(self, ctrl: ZenController) -> list[ZenAddress]:
         """Return all DALI addresses that have instances (full address-space scan)."""
-        return await self.commands.query_dali_addresses_with_instances(controller)
+        return await self.commands.query_dali_addresses_with_instances(ctrl)
 
-    async def _scan_ecd_instances(self, controller: ZenController) -> list[ZenInstance]:
-        """Return every ECD instance on controller (one query per address).
+    async def _scan_ecd_instances(self, ctrl: ZenController) -> list[ZenInstance]:
+        """Return every ECD instance on the controller (one query per address).
 
         Results are cached until clear_entity_caches() so repeated
         get_instances calls share a single address-space scan.
         """
-        cached = self._ecd_instances_by_controller.get(controller.name)
+        cached = self._ecd_instances_by_controller.get(ctrl.name)
         if cached is not None:
             return cached
         instances: list[ZenInstance] = []
-        for address in await self._get_addresses_with_instances(controller):
+        for address in await self._get_addresses_with_instances(ctrl):
             instances.extend(await self.commands.query_instances_by_address(address=address))
-        self._ecd_instances_by_controller[controller.name] = instances
+        self._ecd_instances_by_controller[ctrl.name] = instances
         return instances
 
-    async def get_instances(self, controller: ZenController | None = None) -> set[ZenEcdEntity]:
+    async def get_instances(self, ctrl: ZenController | None = None) -> set[ZenEcdEntity]:
         """Interview all ECD instances (buttons, motion sensors, absolute inputs)."""
         entities: set[ZenEcdEntity] = set()
-        controllers = [controller] if controller else self.controllers
+        controllers = [ctrl] if ctrl else self.controllers
         for ctrl in controllers:
             for instance in await self._scan_ecd_instances(ctrl):
                 match instance.type:
@@ -770,30 +770,30 @@ class ZenControl:
                         continue
         return entities
 
-    async def get_buttons(self, controller: ZenController | None = None) -> set[ZenButton]:
+    async def get_buttons(self, ctrl: ZenController | None = None) -> set[ZenButton]:
         """Return push-button instances (prefer get_instances)."""
-        return {e for e in await self.get_instances(controller) if isinstance(e, ZenButton)}
+        return {e for e in await self.get_instances(ctrl) if isinstance(e, ZenButton)}
 
-    async def get_motion_sensors(self, controller: ZenController | None = None) -> set[ZenMotionSensor]:
+    async def get_motion_sensors(self, ctrl: ZenController | None = None) -> set[ZenMotionSensor]:
         """Return occupancy-sensor instances (prefer get_instances)."""
-        return {e for e in await self.get_instances(controller) if isinstance(e, ZenMotionSensor)}
+        return {e for e in await self.get_instances(ctrl) if isinstance(e, ZenMotionSensor)}
 
-    async def get_absolute_inputs(self, controller: ZenController | None = None) -> set[ZenAbsoluteInput]:
+    async def get_absolute_inputs(self, ctrl: ZenController | None = None) -> set[ZenAbsoluteInput]:
         """Return absolute-input instances (prefer get_instances)."""
-        return {e for e in await self.get_instances(controller) if isinstance(e, ZenAbsoluteInput)}
+        return {e for e in await self.get_instances(ctrl) if isinstance(e, ZenAbsoluteInput)}
 
     async def get_system_variables(
         self,
         give_up_after: int = 10,
-        controller: ZenController | None = None,
+        ctrl: ZenController | None = None,
     ) -> set[ZenSystemVariable]:
         """Return labelled system variables (optionally for one controller)."""
         sysvars: set[ZenSystemVariable] = set()
-        controllers = [controller] if controller else self.controllers
+        controllers = [ctrl] if ctrl else self.controllers
         for ctrl in controllers:
             failed_attempts = 0
             for variable in range(Const.MAX_SYSVAR):
-                label = await self.commands.query_system_variable_name(controller=ctrl, variable=variable)
+                label = await self.commands.query_system_variable_name(ctrl=ctrl, variable=variable)
                 if label:
                     failed_attempts = 0
                     sysvar = await self.ctx.create_system_variable(ctrl, variable, label=label)

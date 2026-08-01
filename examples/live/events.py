@@ -51,7 +51,7 @@ async def on_group_change(*, group: ZenGroup, discoordinated: bool = False) -> N
 
 
 def check_event_listener(zen: ZenControl) -> None:
-    """Print listener health — call periodically to detect silent task death."""
+    """Print listener health - call periodically to detect silent task death."""
     task = zen.event_task
 
     if task is None:

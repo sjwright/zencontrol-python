@@ -13,7 +13,7 @@ from zencontrol.interface.interface import ZenAbsoluteInput, ZenControl, ZenCont
 
 def _ecd_instance(zen: ZenControl, *, number: int = 0, inst: int = 1) -> tuple[ZenController, ZenInstance]:
     ctrl = zen.add_controller(id=1, name="house", label="House", host="127.0.0.1", port=5108)
-    addr = ZenAddress(controller=ctrl, type=ZenAddressType.ECD, number=number)
+    addr = ZenAddress(ctrl=ctrl, type=ZenAddressType.ECD, number=number)
     return ctrl, ZenInstance(address=addr, type=ZenInstanceType.ABSOLUTE_INPUT, number=inst)
 
 
@@ -61,7 +61,7 @@ async def test_absolute_input_event_ignores_short_payload() -> None:
 async def test_get_absolute_inputs_filters_instance_type() -> None:
     zen = ZenControl()
     ctrl = zen.add_controller(id=1, name="house", label="House", host="127.0.0.1", port=5108)
-    addr = ZenAddress(controller=ctrl, type=ZenAddressType.ECD, number=2)
+    addr = ZenAddress(ctrl=ctrl, type=ZenAddressType.ECD, number=2)
     abs_inst = ZenInstance(address=addr, type=ZenInstanceType.ABSOLUTE_INPUT, number=0)
     btn_inst = ZenInstance(address=addr, type=ZenInstanceType.PUSH_BUTTON, number=1)
 
@@ -72,7 +72,7 @@ async def test_get_absolute_inputs_filters_instance_type() -> None:
     zen.commands.query_dali_ean = AsyncMock(return_value=1234567890123)
     zen.commands.query_dali_instance_label = AsyncMock(return_value="Slider")
 
-    found = await zen.get_absolute_inputs(controller=ctrl)
+    found = await zen.get_absolute_inputs(ctrl=ctrl)
     assert len(found) == 1
     item = next(iter(found))
     assert item.instance.type == ZenInstanceType.ABSOLUTE_INPUT
@@ -85,7 +85,7 @@ async def test_get_absolute_inputs_filters_instance_type() -> None:
 async def test_ecd_getters_share_instance_scan() -> None:
     zen = ZenControl()
     ctrl = zen.add_controller(id=1, name="house", label="House", host="127.0.0.1", port=5108)
-    addr = ZenAddress(controller=ctrl, type=ZenAddressType.ECD, number=2)
+    addr = ZenAddress(ctrl=ctrl, type=ZenAddressType.ECD, number=2)
     abs_inst = ZenInstance(address=addr, type=ZenInstanceType.ABSOLUTE_INPUT, number=0)
     btn_inst = ZenInstance(address=addr, type=ZenInstanceType.PUSH_BUTTON, number=1)
     motion_inst = ZenInstance(address=addr, type=ZenInstanceType.OCCUPANCY_SENSOR, number=2)
@@ -101,9 +101,9 @@ async def test_ecd_getters_share_instance_scan() -> None:
         return_value=OccupancyInstanceTimers(deadtime=0, hold=60, report=0, last_detect=0)
     )
 
-    buttons = await zen.get_buttons(controller=ctrl)
-    absolute_inputs = await zen.get_absolute_inputs(controller=ctrl)
-    sensors = await zen.get_motion_sensors(controller=ctrl)
+    buttons = await zen.get_buttons(ctrl=ctrl)
+    absolute_inputs = await zen.get_absolute_inputs(ctrl=ctrl)
+    sensors = await zen.get_motion_sensors(ctrl=ctrl)
 
     assert len(buttons) == 1
     assert len(absolute_inputs) == 1
@@ -112,7 +112,7 @@ async def test_ecd_getters_share_instance_scan() -> None:
     assert zen._get_addresses_with_instances.await_count == 1  # noqa: SLF001
 
     zen.clear_entity_caches()
-    await zen.get_buttons(controller=ctrl)
+    await zen.get_buttons(ctrl=ctrl)
     assert query_instances.await_count == 2
 
 

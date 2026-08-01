@@ -19,7 +19,7 @@ async def main():
     # Create protocol and controller
     async with ZenCommandClient(print_traffic=False) as tpi:
         ctx = EntityContext(commands=tpi)
-        ctrl = ctx.controller(**config.get('zencontrol')[0])
+        ctrl = ctx.ctrl(**config.get('zencontrol')[0])
         
         print("Testing DALI device queries...")
         print("=" * 50)
@@ -33,7 +33,7 @@ async def main():
 
                 label = await tpi.query_dali_device_label(address)
                 if label is None:
-                    label = f"{address.controller.label} ECD {address.number}"
+                    label = f"{address.ctrl.label} ECD {address.number}"
                 print(f"    label: {label}")
 
                 operating_mode = await tpi.query_operating_mode_by_address(address)

@@ -1,6 +1,6 @@
 """Compose event-plane subscribe/lease with command-plane emit programming.
 
-``ZenEventWiring`` is the only object that holds both a receiver and a command
+ZenEventWiring is the only object that holds both a receiver and a command
 client. Attach failure is contained to one controller; session restart replays
 each binding's stored mode without the caller re-attaching.
 """
@@ -31,19 +31,19 @@ class CommandPlane(Protocol):
 
     async def set_tpi_event_unicast_address(
         self,
-        controller: ZenController,
+        ctrl: ZenController,
         ipaddr: str | None = None,
         port: int | None = None,
     ) -> bytes | None: ...
 
-    async def tpi_event_emit(self, controller: ZenController, mode: ZenEventMode | None = None) -> bool: ...
+    async def tpi_event_emit(self, ctrl: ZenController, mode: ZenEventMode | None = None) -> bool: ...
 
 
 @dataclass
 class ZenBinding:
     """One controller's subscription + lease + stored emit mode."""
 
-    controller: ZenController
+    ctrl: ZenController
     subscription: Subscription
     lease: Lease
     mode: ZenEventMode
@@ -90,44 +90,44 @@ class ZenEventWiring:
     def bindings(self) -> dict[str, ZenBinding]:
         return self._bindings
 
-    def get(self, controller: ZenController | str) -> ZenBinding | None:
-        name = controller if isinstance(controller, str) else controller.name
+    def get(self, ctrl: ZenController | str) -> ZenBinding | None:
+        name = ctrl if isinstance(ctrl, str) else ctrl.name
         return self._bindings.get(name)
 
-    async def attach(self, controller: ZenController, mode: ZenEventMode) -> ZenBinding:
-        name = controller.name
+    async def attach(self, ctrl: ZenController, mode: ZenEventMode) -> ZenBinding:
+        name = ctrl.name
         if name in self._bindings:
             raise ValueError(f"controller already attached: {name}")
 
         async def handler(decoded: ZenDecodedEvent) -> None:
-            await self._event_handler(controller, decoded)
+            await self._event_handler(ctrl, decoded)
 
         async def on_identified(mac: bytes) -> None:
             mac_str = mac_bytes_to_str(mac)
-            was_unknown = controller.mac is None
-            controller.mac = mac_str
+            was_unknown = ctrl.mac is None
+            ctrl.mac = mac_str
             if was_unknown and callable(self.on_identified):
-                await self.on_identified(controller, mac_str)
+                await self.on_identified(ctrl, mac_str)
 
         async def on_lost(reason: str) -> None:
             # Receiver dropped routing; tear down off the consumer path so we
             # do not await command-plane work inside handle().
             self.logger.error(
                 "Event subscription for %s lost (%s); detaching binding",
-                controller.name,
+                ctrl.name,
                 reason,
             )
-            task = asyncio.create_task(self._handle_subscription_lost(controller, reason))
+            task = asyncio.create_task(self._handle_subscription_lost(ctrl, reason))
             self._lost_tasks.add(task)
             task.add_done_callback(self._lost_tasks.discard)
 
-        # Resolve off the loop — never controller.ip / gethostbyname here (HA).
-        ip = await resolve_host(controller.host)
-        controller.set_resolved_ip(ip)
+        # Resolve off the loop - never ctrl.ip / gethostbyname here (HA).
+        ip = await resolve_host(ctrl.host)
+        ctrl.set_resolved_ip(ip)
 
         sub = self._receiver.subscribe(
             handler,
-            mac=controller.mac_bytes,
+            mac=ctrl.mac_bytes,
             host=ip,
             on_identified=on_identified,
             on_lost=on_lost,
@@ -135,7 +135,7 @@ class ZenEventWiring:
         try:
             lease = await self._receiver.acquire(mode.transport, toward=ip)
             try:
-                await self._program(controller, lease, mode)
+                await self._program(ctrl, lease, mode)
             except Exception:
                 await lease.release()
                 raise
@@ -144,7 +144,7 @@ class ZenEventWiring:
             raise
 
         binding = ZenBinding(
-            controller=controller,
+            ctrl=ctrl,
             subscription=sub,
             lease=lease,
             mode=mode,
@@ -153,12 +153,12 @@ class ZenEventWiring:
         self._bindings[name] = binding
         return binding
 
-    async def detach(self, controller: ZenController | str | ZenBinding) -> None:
-        if isinstance(controller, ZenBinding):
-            binding: ZenBinding | None = controller
-            name = controller.controller.name
+    async def detach(self, ctrl: ZenController | str | ZenBinding) -> None:
+        if isinstance(ctrl, ZenBinding):
+            binding: ZenBinding | None = ctrl
+            name = ctrl.ctrl.name
         else:
-            name = controller if isinstance(controller, str) else controller.name
+            name = ctrl if isinstance(ctrl, str) else ctrl.name
             binding = self._bindings.get(name)
         if binding is None:
             return
@@ -166,7 +166,7 @@ class ZenEventWiring:
         self._bindings.pop(name, None)
         try:
             await self._commands.tpi_event_emit(
-                binding.controller,
+                binding.ctrl,
                 ZenEventMode(
                     enabled=False,
                     filtering=binding.mode.filtering,
@@ -178,17 +178,17 @@ class ZenEventWiring:
         await binding.lease.release()
         binding.subscription.close()
 
-    async def _handle_subscription_lost(self, controller: ZenController, reason: str) -> None:
+    async def _handle_subscription_lost(self, ctrl: ZenController, reason: str) -> None:
         """Release lease/binding after the receiver drops a subscription."""
-        await self.detach(controller)
+        await self.detach(ctrl)
         if not callable(self.on_lost):
             return
         try:
-            await self.on_lost(controller, reason)
+            await self.on_lost(ctrl, reason)
         except Exception as err:
             self.logger.error(
                 "on_lost handler error for %s (%s): %s",
-                controller.name,
+                ctrl.name,
                 reason,
                 err,
                 exc_info=True,
@@ -198,21 +198,21 @@ class ZenEventWiring:
         for name in list(self._bindings):
             await self.detach(name)
 
-    async def rearm(self, controller: ZenController | str) -> None:
-        binding = self.get(controller)
+    async def rearm(self, ctrl: ZenController | str) -> None:
+        binding = self.get(ctrl)
         if binding is None:
             return
-        await self._program(binding.controller, binding.lease, binding.mode)
+        await self._program(binding.ctrl, binding.lease, binding.mode)
 
     async def rearm_all(self) -> None:
         """Replay stored modes after the receiver restores leased endpoints."""
         for binding in list(self._bindings.values()):
             try:
-                await self._program(binding.controller, binding.lease, binding.mode)
+                await self._program(binding.ctrl, binding.lease, binding.mode)
             except Exception as err:
                 self.logger.error(
                     "Failed to re-arm events for %s: %s",
-                    binding.controller.name,
+                    binding.ctrl.name,
                     err,
                     exc_info=True,
                 )
@@ -222,15 +222,15 @@ class ZenEventWiring:
             except Exception as err:
                 self.logger.error(f"on_resync error: {err}", exc_info=True)
 
-    async def _program(self, controller: ZenController, lease: Lease, mode: ZenEventMode) -> None:
+    async def _program(self, ctrl: ZenController, lease: Lease, mode: ZenEventMode) -> None:
         if mode.transport is Transport.UNICAST:
             advertise = lease.advertise
             if advertise is None:
                 raise RuntimeError(
-                    f"Cannot program unicast events for {controller.name}: no advertise address (unicast endpoint not open)"
+                    f"Cannot program unicast events for {ctrl.name}: no advertise address (unicast endpoint not open)"
                 )
             ip, port = advertise
-            await self._commands.set_tpi_event_unicast_address(controller, ipaddr=ip, port=port)
+            await self._commands.set_tpi_event_unicast_address(ctrl, ipaddr=ip, port=port)
         else:
-            await self._commands.set_tpi_event_unicast_address(controller, ipaddr=None, port=None)
-        await self._commands.tpi_event_emit(controller, mode)
+            await self._commands.set_tpi_event_unicast_address(ctrl, ipaddr=None, port=None)
+        await self._commands.tpi_event_emit(ctrl, mode)

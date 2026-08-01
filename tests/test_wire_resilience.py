@@ -87,7 +87,7 @@ async def test_receiver_unexpected_exit_invokes_hook() -> None:
     # Let _consume reach funnel.get(); cancel-before-start skips its finally.
     await asyncio.sleep(0)
 
-    # Cancel without intentional stop — mimics consumer death
+    # Cancel without intentional stop - mimics consumer death
     task.cancel()
     try:
         await asyncio.wait_for(task, timeout=1.0)
@@ -169,8 +169,8 @@ async def test_resolve_host_runs_dns_in_executor() -> None:
     from zencontrol.utils import resolve_host
 
     with patch("zencontrol.utils.socket.gethostbyname", return_value="10.0.0.1") as dns:
-        assert await resolve_host("controller.local") == "10.0.0.1"
-        dns.assert_called_once_with("controller.local")
+        assert await resolve_host("ctrl.local") == "10.0.0.1"
+        dns.assert_called_once_with("ctrl.local")
 
 
 def test_subscribe_does_not_call_gethostbyname() -> None:
@@ -221,7 +221,7 @@ def test_mark_disconnected_unblocks_pending_with_timeout() -> None:
 @pytest.mark.asyncio
 async def test_send_packet_timeout_invalidates_client_and_refreshes_ip() -> None:
     protocol = ZenCommandClient()
-    controller = EntityContext(commands=protocol).controller(
+    ctrl = EntityContext(commands=protocol).ctrl(
         id=1,
         name="ctrl",
         label="Ctrl",
@@ -233,25 +233,25 @@ async def test_send_packet_timeout_invalidates_client_and_refreshes_ip() -> None
     fake_client.is_connected.return_value = True
     fake_client.send_request_with_retries = AsyncMock(return_value=ZenResponse(ZenResponseType.TIMEOUT))
     fake_client.close = AsyncMock()
-    protocol.set_client(controller, fake_client)
-    controller.set_resolved_ip("192.0.2.10")
+    protocol.set_client(ctrl, fake_client)
+    ctrl.set_resolved_ip("192.0.2.10")
 
-    with patch.object(controller, "refresh_ip", wraps=controller.refresh_ip) as refresh:
+    with patch.object(ctrl, "refresh_ip", wraps=ctrl.refresh_ip) as refresh:
         with pytest.raises(ZenTimeoutError):
             await protocol._send_packet(
-                controller,
+                ctrl,
                 ZenRequest(command=0x10, data=[0x00, 0x00, 0x00, 0x00]),
             )
 
     refresh.assert_called_once()
     fake_client.close.assert_awaited()
-    assert protocol.client_for(controller) is None
+    assert protocol.client_for(ctrl) is None
 
 
 @pytest.mark.asyncio
 async def test_ensure_client_recreates_when_disconnected() -> None:
     protocol = ZenCommandClient()
-    controller = EntityContext(commands=protocol).controller(
+    ctrl = EntityContext(commands=protocol).ctrl(
         id=1,
         name="ctrl",
         label="Ctrl",
@@ -261,7 +261,7 @@ async def test_ensure_client_recreates_when_disconnected() -> None:
     stale = MagicMock()
     stale.is_connected.return_value = False
     stale.close = AsyncMock()
-    protocol.set_client(controller, stale)
+    protocol.set_client(ctrl, stale)
 
     new_client = MagicMock()
     new_client.is_connected.return_value = True
@@ -269,11 +269,11 @@ async def test_ensure_client_recreates_when_disconnected() -> None:
         "zencontrol.api.commands.ZenClient.create",
         new=AsyncMock(return_value=new_client),
     ) as create:
-        await protocol._ensure_client(controller)
+        await protocol._ensure_client(ctrl)
 
     stale.close.assert_awaited()
     create.assert_awaited_once()
-    assert protocol.client_for(controller) is new_client
+    assert protocol.client_for(ctrl) is new_client
 
 
 def test_default_retries_constant() -> None:
@@ -299,7 +299,7 @@ async def test_send_request_timeout_with_retries_returns_timeout() -> None:
 
 @pytest.mark.asyncio
 async def test_send_request_allows_concurrent_awaits() -> None:
-    """Lock must not cover RTT — two in-flight requests with different seqs."""
+    """Lock must not cover RTT - two in-flight requests with different seqs."""
     client = ZenClient(("127.0.0.1", 5108))
     client._closed = False
     transport = MagicMock()
@@ -346,7 +346,7 @@ async def test_send_packet_error_returns_without_raising() -> None:
     from zencontrol.api.types import ZenErrorCode
 
     protocol = ZenCommandClient()
-    controller = EntityContext(commands=protocol).controller(
+    ctrl = EntityContext(commands=protocol).ctrl(
         id=1,
         name="ctrl",
         label="Ctrl",
@@ -361,10 +361,10 @@ async def test_send_packet_error_returns_without_raising() -> None:
             data=bytes([ZenErrorCode.PAID_FEATURE]),
         )
     )
-    protocol.set_client(controller, fake_client)
+    protocol.set_client(ctrl, fake_client)
 
     response = await protocol._send_packet(
-        controller,
+        ctrl,
         ZenRequest(command=0x10, data=[0x00, 0x00, 0x00, 0x00]),
     )
     assert response.response_type == ZenResponseType.ERROR
@@ -374,7 +374,7 @@ async def test_send_packet_error_returns_without_raising() -> None:
 def test_mac_requires_six_bytes() -> None:
     protocol = ZenCommandClient()
     with pytest.raises(ValueError, match="6 bytes"):
-        EntityContext(commands=protocol).controller(
+        EntityContext(commands=protocol).ctrl(
             id=1,
             name="ctrl",
             label="Ctrl",
@@ -383,7 +383,7 @@ def test_mac_requires_six_bytes() -> None:
             mac="aa:bb",
         )
 
-    ctrl = EntityContext(commands=protocol).controller(
+    ctrl = EntityContext(commands=protocol).ctrl(
         id=1,
         name="ctrl2",
         label="Ctrl",

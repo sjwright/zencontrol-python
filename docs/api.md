@@ -1,4 +1,4 @@
-# API layer — get started
+# API layer - get started
 
 `zencontrol.api` maps TPI Advanced to typed Python: a **command client** and a separate **event receiver**.
 Import from `zencontrol.api` (not the top-level package for the command client).
@@ -30,7 +30,7 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-`ZenController` here is the API dataclass (identity + host). It does not own sockets — `ZenCommandClient` opens a `ZenClient` per controller as needed.
+`ZenController` here is the API dataclass (identity + host). It does not own sockets - `ZenCommandClient` opens a `ZenClient` per controller as needed.
 
 Useful families on `ZenCommandClient`:
 
@@ -49,7 +49,7 @@ from zencontrol.api import Transport, ZenEventReceiver
 from zencontrol.api.event_decode import ZenDecodedEvent
 
 async def on_event(ev: ZenDecodedEvent) -> None:
-    # Do not await command I/O here — it stalls the shared funnel.
+    # Do not await command I/O here - it stalls the shared funnel.
     print(type(ev).__name__, ev)
 
 async def main() -> None:
@@ -70,7 +70,7 @@ asyncio.run(main())
 
 Notes:
 
-- `subscribe(host=...)` must be a resolved IPv4 string — call `await resolve_host(...)` first.
+- `subscribe(host=...)` must be a resolved IPv4 string - call `await resolve_host(...)` first.
 - Enable emit / set unicast target on the **command** plane (`tpi_event_emit`, `set_tpi_event_unicast_address`).
 - `ZenEventMask.all_events()` skips deprecated level-change codes; prefer `LEVEL_CHANGE_V2` / `IS_OCCUPIED`.
 

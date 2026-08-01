@@ -165,14 +165,14 @@ async def test_discover_started_here_returns_results_after_teardown() -> None:
     assert len(found) == 1
     assert found[0].mac == "02:00:00:00:00:01"
     assert found[0].label == "Kitchen"
-    # Teardown cleared the receiver cache — return value must not depend on it.
+    # Teardown cleared the receiver cache - return value must not depend on it.
     assert zen.discovered_controllers == []
 
 
 @pytest.mark.asyncio
 async def test_registered_controller_is_not_discovered() -> None:
     commands, receiver = _receiver_with_discovered_callback()
-    ctrl = EntityContext(commands=commands).controller(
+    ctrl = EntityContext(commands=commands).ctrl(
         id=1,
         name="known",
         label="Known",
@@ -199,7 +199,7 @@ async def test_registering_controller_forgets_identified() -> None:
     await receiver.handle(_event())
     assert len(receiver.identities.discovered) == 1
 
-    ctrl = EntityContext(commands=commands).controller(
+    ctrl = EntityContext(commands=commands).ctrl(
         id=1,
         name="kitchen",
         label="Kitchen",
@@ -230,7 +230,7 @@ async def test_discovery_never_awaits_label_query() -> None:
 @pytest.mark.asyncio
 async def test_new_controller_discovered_while_one_is_registered() -> None:
     commands, receiver = _receiver_with_discovered_callback()
-    known = EntityContext(commands=commands).controller(
+    known = EntityContext(commands=commands).ctrl(
         id=1,
         name="known",
         label="Known",
@@ -310,7 +310,7 @@ async def test_enrich_discovered_keeps_identity_on_timeout() -> None:
 @pytest.mark.asyncio
 async def test_provisional_subscription_learns_mac() -> None:
     commands, receiver = _receiver_with_discovered_callback()
-    ctrl = EntityContext(commands=commands).controller(
+    ctrl = EntityContext(commands=commands).ctrl(
         id=1,
         name="pending",
         label="Pending",

@@ -138,8 +138,8 @@ async def test_assert_compares_per_binding_advertise() -> None:
 
     zen.configure_controller_events = AsyncMock(return_value=True)
 
-    async def query(controller):
-        if controller.name == "ctrl-a":
+    async def query(ctrl):
+        if ctrl.name == "ctrl-a":
             return TpiEventUnicastAddress(
                 mode=ZenEventMode(enabled=True, transport=Transport.UNICAST),
                 port=6970,

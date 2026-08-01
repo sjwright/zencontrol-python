@@ -51,7 +51,7 @@ def _or_group_label(label: str | None, number: int) -> str:
 
 
 def _or_device_label(label: str | None, address: ZenAddress) -> str:
-    return label if label is not None else f"{address.controller.label} ECD {address.number}"
+    return label if label is not None else f"{address.ctrl.label} ECD {address.number}"
 
 
 def _or_instance_label(label: str | None, instance: ZenInstance) -> str:
@@ -77,7 +77,7 @@ async def _group_scene_labels(commands: ZenCommandClient, address: ZenAddress) -
 # ============================ 
 
 class ZenController(SuperZenController):
-    # Interface-owned references — not part of the API model (I9).
+    # Interface-owned references - not part of the API model (I9).
     ctx: EntityContext
     profile: ZenProfile | None = None
 
@@ -128,19 +128,19 @@ class ZenController(SuperZenController):
 class ZenProfile:
     ctx: EntityContext
     commands: ZenCommandClient
-    controller: ZenController
+    ctrl: ZenController
     number: int
     label: str | None = None
 
-    def __init__(self, ctx: EntityContext, controller: ZenController, number: int) -> None:
+    def __init__(self, ctx: EntityContext, ctrl: ZenController, number: int) -> None:
         self.ctx = ctx
         self.commands = ctx.commands
-        self.controller = controller
+        self.ctrl = ctrl
         self.number = number
         self._reset()
 
     def __repr__(self) -> str:
-        return f"ZenProfile<{self.controller.name} profile {self.number}: {self.label}>"
+        return f"ZenProfile<{self.ctrl.name} profile {self.number}: {self.label}>"
     def _reset(self) -> None:
         self.label = None
     def interview_serialize(self) -> str:
@@ -157,10 +157,10 @@ class ZenProfile:
             return False
     async def interview(self) -> bool:
         if self.label is None:
-            self.label = await self.commands.query_profile_label(self.controller, self.number)
+            self.label = await self.commands.query_profile_label(self.ctrl, self.number)
         return True
     async def select(self) -> bool:
-        result = await self.commands.change_profile_number(self.controller, self.number)
+        result = await self.commands.change_profile_number(self.ctrl, self.number)
         return bool(result)
 
 
@@ -330,7 +330,7 @@ class ZenLight(ZenControlGear):
         self._reset()
 
     def __repr__(self) -> str:
-        return f"ZenLight<{self.address.controller.name} ecg {self.address.number}: {self.label}>"
+        return f"ZenLight<{self.address.ctrl.name} ecg {self.address.number}: {self.label}>"
     def _reset(self) -> None:
         self._reset_gear_state()
         self.sub_label = None
@@ -393,7 +393,7 @@ class ZenLight(ZenControlGear):
                 for raw in data.get("scene_colours", [])
             ]
             membership = [
-                ZenAddress(controller=self.address.controller, type=ZenAddressType.GROUP, number=group["number"])
+                ZenAddress(ctrl=self.address.ctrl, type=ZenAddressType.GROUP, number=group["number"])
                 for group in data.get("group_membership", [])
             ]
             self._apply_group_membership(membership)
@@ -513,7 +513,7 @@ class ZenFan(ZenControlGear):
         self._reset()
 
     def __repr__(self) -> str:
-        return f"ZenFan<{self.address.controller.name} ecg {self.address.number}: {self.label}>"
+        return f"ZenFan<{self.address.ctrl.name} ecg {self.address.number}: {self.label}>"
 
     def _reset(self) -> None:
         self._reset_gear_state()
@@ -561,7 +561,7 @@ class ZenFan(ZenControlGear):
             if len(self._scene_levels) < Const.MAX_SCENE:
                 self._scene_levels.extend([None] * (Const.MAX_SCENE - len(self._scene_levels)))
             membership = [
-                ZenAddress(controller=self.address.controller, type=ZenAddressType.GROUP, number=group["number"])
+                ZenAddress(ctrl=self.address.ctrl, type=ZenAddressType.GROUP, number=group["number"])
                 for group in data.get("group_membership", [])
             ]
             self._apply_group_membership(membership)
@@ -637,7 +637,7 @@ class ZenBlind(ZenControlGear):
         self._reset()
 
     def __repr__(self) -> str:
-        return f"ZenBlind<{self.address.controller.name} ecg {self.address.number}: {self.label}>"
+        return f"ZenBlind<{self.address.ctrl.name} ecg {self.address.number}: {self.label}>"
 
     def _reset(self) -> None:
         self._reset_gear_state()
@@ -685,7 +685,7 @@ class ZenBlind(ZenControlGear):
             if len(self._scene_levels) < Const.MAX_SCENE:
                 self._scene_levels.extend([None] * (Const.MAX_SCENE - len(self._scene_levels)))
             membership = [
-                ZenAddress(controller=self.address.controller, type=ZenAddressType.GROUP, number=group["number"])
+                ZenAddress(ctrl=self.address.ctrl, type=ZenAddressType.GROUP, number=group["number"])
                 for group in data.get("group_membership", [])
             ]
             self._apply_group_membership(membership)
@@ -751,7 +751,7 @@ class ZenBlind(ZenControlGear):
         return await self.dali_stop_fade()
 
     async def _event_received_level(self, level: int, cascaded_from: ZenGroup | None = None) -> None:
-        # MASK 255 = unknown / mid-travel — still notify (lights ignore 255).
+        # MASK 255 = unknown / mid-travel - still notify (lights ignore 255).
         if level == self.level:
             return
         self.level = level
@@ -765,7 +765,7 @@ class ZenBlind(ZenControlGear):
         refreshed_scene = None
         if await self.commands.dali_query_last_scene_is_current(self.address):
             refreshed_scene = await self.commands.dali_query_last_scene(self.address)
-        # None from query is failure/MASK collapse — do not clear a known position.
+        # None from query is failure/MASK collapse - do not clear a known position.
         if refreshed_level is not None:
             await self._event_received_level(refreshed_level)
         if refreshed_scene is not None:
@@ -791,7 +791,7 @@ class ZenGroup(ZenControlGear):
         self._reset()
 
     def __repr__(self) -> str:
-        return f"ZenGroup<{self.address.controller.name} group {self.address.number}: {self.label}>"
+        return f"ZenGroup<{self.address.ctrl.name} group {self.address.number}: {self.label}>"
 
     def _reset(self) -> None:
         self._reset_gear_state()
@@ -862,7 +862,7 @@ class ZenButton:
         self._reset()
 
     def __repr__(self) -> str:
-        return f"ZenButton<{self.instance.address.controller.name} ecd {self.instance.address.number} inst {self.instance.number}: {self.label} / {self.instance_label}>"
+        return f"ZenButton<{self.instance.address.ctrl.name} ecd {self.instance.address.number} inst {self.instance.number}: {self.label} / {self.instance_label}>"
     def _reset(self) -> None:
         self.serial = None
         self.ean = None
@@ -924,7 +924,7 @@ class ZenButton:
 
 
 class ZenAbsoluteInput:
-    """DALI ECD absolute (numerical) input instance — dials, sliders, etc.
+    """DALI ECD absolute (numerical) input instance - dials, sliders, etc.
 
     Controllers emit value-change events only; TPI has no query/set command for
     the current value, so value stays None until the first event.
@@ -948,7 +948,7 @@ class ZenAbsoluteInput:
 
     def __repr__(self) -> str:
         return (
-            f"ZenAbsoluteInput<{self.instance.address.controller.name} "
+            f"ZenAbsoluteInput<{self.instance.address.ctrl.name} "
             f"ecd {self.instance.address.number} inst {self.instance.number}: "
             f"{self.label} / {self.instance_label}>"
         )
@@ -1034,7 +1034,7 @@ class ZenMotionSensor:
         self._reset()
 
     def __repr__(self) -> str:
-        return f"ZenMotionSensor<{self.instance.address.controller.name} ecd {self.instance.address.number} inst {self.instance.number}: {self.label} / {self.instance_label}>"
+        return f"ZenMotionSensor<{self.instance.address.ctrl.name} ecd {self.instance.address.number} inst {self.instance.number}: {self.label} / {self.instance_label}>"
     def _reset(self) -> None:
         self.hold_time = Const.DEFAULT_HOLD_TIME
         self.hold_expiry_task = None
@@ -1108,7 +1108,7 @@ class ZenMotionSensor:
             self.hold_time = Const.DEFAULT_HOLD_TIME
             return False
 
-        # `last_detect` is stored as "time when last motion happened"
+        # last_detect is stored as "time when last motion happened"
         # converted into a duration since last motion (same as interview()).
         self.deadtime = occupancy_timers.deadtime
         self.hold_time = occupancy_timers.hold
@@ -1175,7 +1175,7 @@ class ZenMotionSensor:
 class ZenSystemVariable:
     ctx: EntityContext
     commands: ZenCommandClient
-    controller: ZenController
+    ctrl: ZenController
     id: int
     label: str | None = None
     _value: int | None = None
@@ -1184,21 +1184,21 @@ class ZenSystemVariable:
     def __init__(
         self,
         ctx: EntityContext,
-        controller: ZenController,
+        ctrl: ZenController,
         id: int,
         value: int | None = None,
         label: str | None = None,
     ) -> None:
         self.ctx = ctx
         self.commands = ctx.commands
-        self.controller = controller
+        self.ctrl = ctrl
         self.id = id
         self._reset()
         self._value = value
         self.label = label
 
     def __repr__(self) -> str:
-        return f"ZenSystemVariable<{self.controller.name} sv {self.id}: {self.label}>"
+        return f"ZenSystemVariable<{self.ctrl.name} sv {self.id}: {self.label}>"
     def _reset(self) -> None:
         self.label = None
         self._value = None
@@ -1216,7 +1216,7 @@ class ZenSystemVariable:
         except Exception: # pylint: disable=broad-exception-caught
             return False
     async def interview(self) -> bool:
-        ctrl = self.controller
+        ctrl = self.ctrl
         if self.label is None:
             self.label = await self.commands.query_system_variable_name(ctrl, self.id)
         if self._value is None:
@@ -1246,16 +1246,16 @@ class ZenSystemVariable:
     async def get_value(self) -> int | None:
         """Get the current value of the system variable, querying the controller if unknown."""
         if self._value is None:
-            self._value = await self.commands.query_system_variable(self.controller, self.id)
+            self._value = await self.commands.query_system_variable(self.ctrl, self.id)
         return self._value
 
     async def refresh_state_from_controller(self) -> None:
         """Query the controller and update this system variable's runtime value."""
-        new_value = await self.commands.query_system_variable(self.controller, self.id)
+        new_value = await self.commands.query_system_variable(self.ctrl, self.id)
         await self._event_received(new_value)
     
     async def set_value(self, new_value: int) -> None:
         """Set the value of the system variable"""
         self._future_value = new_value # If we get this value back as an event, we'll know it's from us
-        await self.commands.set_system_variable(self.controller, self.id, new_value)
+        await self.commands.set_system_variable(self.ctrl, self.id, new_value)
 

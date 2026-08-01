@@ -67,7 +67,7 @@ async def test_consumer_crash_fires_on_disconnect_once() -> None:
     zen.event_receiver.inject(require_event(body + bytes([_xor(body)]), ("127.0.0.1", 1)))
     await asyncio.wait_for(task, timeout=1.0)
 
-    # Recoverable gap: no disconnect — session restores and re-arms (I10).
+    # Recoverable gap: no disconnect - session restores and re-arms (I10).
     on_disconnect.assert_not_awaited()
     for _ in range(40):
         live = zen.event_receiver.consumer_task
@@ -141,9 +141,9 @@ async def test_partial_attach_leaves_no_binding_when_emit_fails() -> None:
     zen.event_receiver._endpoint_factory = fake_endpoint_factory()
     zen.commands.set_tpi_event_unicast_address = AsyncMock(return_value=None)
 
-    async def emit(controller: MagicMock, mode: ZenEventMode | None = None) -> bool:
+    async def emit(ctrl: MagicMock, mode: ZenEventMode | None = None) -> bool:
         assert mode is not None
-        if controller.name == "ctrl-b" and mode.enabled:
+        if ctrl.name == "ctrl-b" and mode.enabled:
             raise RuntimeError("config failed")
         return True
 

@@ -5,13 +5,13 @@ A Python library for interfacing with ZenControl DALI lighting controllers.
 
 Layers:
 
-1. **io** — wire-level UDP framing (``ZenClient``, request/response envelopes)
-2. **api** — TPI command client + event receiver (``ZenCommandClient``, ``ZenEventReceiver``)
-3. **interface** — high-level entities and session orchestration (``ZenControl``)
+1. **io** - wire-level UDP framing (ZenClient, request/response envelopes)
+2. **api** - TPI command client + event receiver (ZenCommandClient, ZenEventReceiver)
+3. **interface** - high-level entities and session orchestration (ZenControl)
 
-Recommended entry point is ``ZenControl`` (commands + events + discovery).
-``EntityContext`` is advanced/command-only: entity identity and callbacks without
-an event session — prefer ``ZenControl`` unless you intentionally drive the
+Recommended entry point is ZenControl (commands + events + discovery).
+EntityContext is advanced/command-only: entity identity and callbacks without
+an event session - prefer ZenControl unless you intentionally drive the
 command plane yourself.
 
 Example::

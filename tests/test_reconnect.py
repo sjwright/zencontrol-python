@@ -131,7 +131,7 @@ async def test_recover_does_not_flap_open_transport_on_retry() -> None:
             pass
 
     assert receiver.is_transport_open(Transport.MULTICAST)
-    # One close at recover start, then multicast stays up — not re-opened each retry.
+    # One close at recover start, then multicast stays up - not re-opened each retry.
     assert mcast_closes == 1
     assert mcast_opens == 2  # initial acquire + one recover reopen
     assert ucast_opens >= 3
@@ -187,7 +187,7 @@ async def test_recover_skips_zombie_consumer_until_bind_succeeds() -> None:
     assert open_count >= 2
     assert not zen.event_receiver.leased_transports_open()
     live = zen.event_receiver.consumer_task
-    # Either still the dead task, or None — never a new consumer without sockets.
+    # Either still the dead task, or None - never a new consumer without sockets.
     if live is not None and live is not dead:
         assert live.done()
     assert not zen.is_event_monitoring_active()
@@ -241,7 +241,7 @@ async def test_wait_for_session_restore_requires_open_transport() -> None:
 
 @pytest.mark.asyncio
 async def test_wait_for_session_restore_awaits_event_not_poll() -> None:
-    """Restore wait is signaled — no 50ms polling during an outage."""
+    """Restore wait is signaled - no 50ms polling during an outage."""
     zen = ZenControl()
     zen.event_receiver._endpoint_factory = fake_endpoint_factory()
     zen.commands.set_tpi_event_unicast_address = AsyncMock()
@@ -292,7 +292,7 @@ async def test_wait_for_session_restore_awaits_event_not_poll() -> None:
 
 @pytest.mark.asyncio
 async def test_supervisor_waits_without_stalled_backoff_while_receiver_recovers() -> None:
-    """Receiver owns retry — supervisor must not spam restore-stalled warnings."""
+    """Receiver owns retry - supervisor must not spam restore-stalled warnings."""
     zen = ZenControl()
     zen.reconnect_min_delay = 0.05
     zen.reconnect_max_delay = 0.05
@@ -354,7 +354,7 @@ async def test_supervisor_waits_without_stalled_backoff_while_receiver_recovers(
 
 @pytest.mark.asyncio
 async def test_supervisor_exits_when_unexpected_death_has_no_leases() -> None:
-    """Zero leases after consumer death is terminal — no busy-spin / log flood."""
+    """Zero leases after consumer death is terminal - no busy-spin / log flood."""
     zen = ZenControl()
     zen.event_receiver._endpoint_factory = fake_endpoint_factory()
     zen.commands.set_tpi_event_unicast_address = AsyncMock()
@@ -437,7 +437,7 @@ async def test_stop_does_not_reconnect() -> None:
 
 @pytest.mark.asyncio
 async def test_supervisor_cancel_does_not_reconnect() -> None:
-    """HA cancels tasks on shutdown before unload sets _stopping — no reconnect."""
+    """HA cancels tasks on shutdown before unload sets _stopping - no reconnect."""
     zen = ZenControl()
     zen.reconnect_min_delay = 0.01
     open_count = 0

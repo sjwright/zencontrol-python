@@ -12,14 +12,14 @@ from zencontrol import ZenCommandClient
 from zencontrol.interface import EntityContext
 
 async def main():
-    """Test the async ZenCommandClient with controller queries"""
+    """Test the async ZenCommandClient with ctrl queries"""
     # Load configuration
     config = yaml.safe_load(open(Path(__file__).resolve().parents[2] / "tests" / "config.yaml"))
     
     # Create protocol and controller
     async with ZenCommandClient(print_traffic=True) as tpi:
         ctx = EntityContext(commands=tpi)
-        ctrl = ctx.controller(**config.get('zencontrol')[0])
+        ctrl = ctx.ctrl(**config.get('zencontrol')[0])
         
         print("Testing ZenController queries...")
         print("=" * 50)

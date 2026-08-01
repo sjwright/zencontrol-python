@@ -91,7 +91,7 @@ async def test_unicast_only_never_opens_multicast() -> None:
     assert lease.advertise is not None
     assert lease.advertise[1] == 5555
     await lease.release()
-    # Advertise is live — gone once the endpoint closes.
+    # Advertise is live - gone once the endpoint closes.
     assert lease.advertise is None
 
 
@@ -186,7 +186,7 @@ async def test_both_transports_feed_one_funnel() -> None:
     ulease = await receiver.acquire(Transport.UNICAST, toward="127.0.0.1")
     assert len(sinks) == 2
 
-    # Push via each transport's sink — same path as ZenEventProtocol
+    # Push via each transport's sink - same path as ZenEventProtocol
     assert accept_datagram(_frame(), ("192.168.1.1", 1), sinks[0])
     assert accept_datagram(_frame(payload=b"\x02"), ("192.168.1.2", 1), sinks[1])
 
@@ -219,7 +219,7 @@ async def test_inject_takes_validated_events_only() -> None:
     event = parse_frame(_frame(), ("10.0.0.1", 6969))
     assert event is not None
     receiver.inject(event)
-    # Framing rejection stays in io — malformed never becomes a ZenEvent
+    # Framing rejection stays in io - malformed never becomes a ZenEvent
     assert parse_frame(b"\x00\x01\x02", ("10.0.0.1", 6969)) is None
 
     for _ in range(50):

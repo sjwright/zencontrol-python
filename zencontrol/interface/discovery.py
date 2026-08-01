@@ -17,7 +17,7 @@ from ..exceptions import ZenTimeoutError
 
 
 class DiscoveryHost(Protocol):
-    """Minimal surface ``ControllerDiscovery`` needs from ``ZenControl``."""
+    """Minimal surface ControllerDiscovery needs from ZenControl."""
 
     logger: logging.Logger
     commands: ZenCommandClient
@@ -37,10 +37,10 @@ class ControllerDiscovery:
         self._host = host
 
     async def enrich_discovered(self, discovered: DiscoveredController) -> DiscoveredController:
-        """Probe ``QUERY_CONTROLLER_LABEL`` over the command plane and store the result.
+        """Probe QUERY_CONTROLLER_LABEL over the command plane and store the result.
 
         Discovery on the identity log is host/mac only. Call this (or
-        ``discover()``, which enriches its return value) when a distinct label
+        discover(), which enriches its return value) when a distinct label
         is needed for UI listing. Uses a temporary controller name for the UDP
         client; does not register the controller.
         """
@@ -104,12 +104,12 @@ class ControllerDiscovery:
             return enriched
 
     async def discover(self, timeout: float = 5.0) -> list[DiscoveredController]:
-        """Listen for multicast and return controllers heard within ``timeout`` seconds.
+        """Listen for multicast and return controllers heard within timeout seconds.
 
         Starts event monitoring if needed. Works with zero registered controllers
         and also reports unregistered controllers while already running. Returns
-        identities with a packet in this window (``last_seen``), so a second call
-        on a long-lived instance still surfaces controllers that emit again —
+        identities with a packet in this window (last_seen), so a second call
+        on a long-lived instance still surfaces controllers that emit again -
         required for HA "add another" / "try discovery again".
 
         Opens a temporary multicast lease when multicast is not already up

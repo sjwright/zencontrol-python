@@ -57,7 +57,7 @@ async def test_subscription_handler_returns_before_callback_runs() -> None:
     from zencontrol import ZenAddress, ZenAddressType
 
     light = zen.ctx.light(
-        ZenAddress(controller=ctrl, type=ZenAddressType.ECG, number=0),
+        ZenAddress(ctrl=ctrl, type=ZenAddressType.ECG, number=0),
     )
     light.features = {"brightness": True}
 
@@ -128,7 +128,7 @@ async def test_dispatch_chain_ignores_predecessor_cancel_but_honours_own() -> No
         chain = zen._dispatcher.tail[ctrl.name]
         assert chain is not prev
 
-        # Cancel predecessor — chain should continue and dispatch.
+        # Cancel predecessor - chain should continue and dispatch.
         prev.cancel()
         await asyncio.wait_for(chain, timeout=1.0)
         assert dispatched == [1]
@@ -163,7 +163,7 @@ async def test_dispatch_drops_unused_and_deprecated_event_kinds() -> None:
     zen = ZenControl()
     ctrl = zen.add_controller(id=1, name="house", label="House", host="127.0.0.1", mac="02:00:00:00:00:01")
     light = zen.ctx.light(
-        ZenAddress(controller=ctrl, type=ZenAddressType.ECG, number=5),
+        ZenAddress(ctrl=ctrl, type=ZenAddressType.ECG, number=5),
     )
     light.features = {"brightness": True}
     light.level = 10

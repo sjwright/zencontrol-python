@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Standalone TPI event listener — one funnel via ZenEventReceiver.
+Standalone TPI event listener - one funnel via ZenEventReceiver.
 
 Demonstrates multicast / unicast leases and event delivery without the
-high-level entity layer. Prefer ``examples/live/events.py`` + ``ZenControl``
+high-level entity layer. Prefer examples/live/events.py + ZenControl
 for application code.
 """
 
@@ -95,10 +95,10 @@ async def _listen(*, unicast: bool, listen_port: int = 6969) -> None:
     lease = await receiver.acquire(transport)
     kind = "UNICAST" if unicast else "MULTICAST"
     if unicast:
-        logger.info("Listening %s on 0.0.0.0:%s — Ctrl+C to stop", kind, listen_port)
+        logger.info("Listening %s on 0.0.0.0:%s - Ctrl+C to stop", kind, listen_port)
     else:
         logger.info(
-            "Listening %s on %s:%s — Ctrl+C to stop",
+            "Listening %s on %s:%s - Ctrl+C to stop",
             kind,
             EventConst.MULTICAST_GROUP,
             EventConst.MULTICAST_PORT,

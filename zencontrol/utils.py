@@ -10,7 +10,7 @@ from typing import Any
 
 
 def is_ipv4_address(host: str) -> bool:
-    """True when ``host`` is already a dotted-quad IPv4 literal (no DNS)."""
+    """True when host is already a dotted-quad IPv4 literal (no DNS)."""
     try:
         ipaddress.IPv4Address(host)
         return True
@@ -19,9 +19,9 @@ def is_ipv4_address(host: str) -> bool:
 
 
 def resolve_host_sync(host: str) -> str:
-    """Resolve ``host`` to an IPv4 address. Safe to call from an executor.
+    """Resolve host to an IPv4 address. Safe to call from an executor.
 
-    IPv4 literals are returned unchanged — never passed to ``gethostbyname``,
+    IPv4 literals are returned unchanged - never passed to gethostbyname,
     which Home Assistant flags as blocking even for literals.
     """
     if is_ipv4_address(host):
@@ -33,7 +33,7 @@ def resolve_host_sync(host: str) -> str:
 
 
 async def resolve_host(host: str) -> str:
-    """Async-safe IPv4 resolve — DNS runs in the default executor."""
+    """Async-safe IPv4 resolve - DNS runs in the default executor."""
     if is_ipv4_address(host):
         return host
     loop = asyncio.get_running_loop()
@@ -44,11 +44,11 @@ async def resolve_host(host: str) -> str:
 
 
 def local_ip_for_remote(remote_host: str) -> str:
-    """Return the local IPv4 address used to reach ``remote_host``.
+    """Return the local IPv4 address used to reach remote_host.
 
-    Uses a UDP ``connect`` (no packets sent) so the OS picks the correct
-    interface on multi-homed hosts, Docker, and macOS — unlike
-    ``socket.gethostname()``.
+    Uses a UDP connect (no packets sent) so the OS picks the correct
+    interface on multi-homed hosts, Docker, and macOS - unlike
+    socket.gethostname().
     """
     remote_ip = resolve_host_sync(remote_host)
 

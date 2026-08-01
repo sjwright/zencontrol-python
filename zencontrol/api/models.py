@@ -157,7 +157,7 @@ class ZenController:
 @dataclass(slots=True)
 class ZenAddress:
     """Represents a DALI address"""
-    controller: ControllerRef
+    ctrl: ControllerRef
     type: ZenAddressType
     number: int
     label: str | None = field(default=None, init=False)
@@ -165,8 +165,8 @@ class ZenAddress:
     ean: int | None = field(default=None, init=False)
 
     @classmethod
-    def broadcast(cls, controller: ControllerRef) -> Self:
-        return cls(controller=controller, type=ZenAddressType.BROADCAST, number=255)
+    def broadcast(cls, ctrl: ControllerRef) -> Self:
+        return cls(ctrl=ctrl, type=ZenAddressType.BROADCAST, number=255)
     
     def ecg(self) -> int:
         if self.type == ZenAddressType.ECG: return self.number
@@ -237,20 +237,20 @@ class ZenAddress:
                     raise ValueError(f"Group address must be 0-15, got {self.number}")
 
 
-def ecd_address_from_target(controller: ControllerRef, target: int) -> ZenAddress | None:
-    """Decode an ECD event target (64–127) to a ZenAddress, or None if out of range."""
+def ecd_address_from_target(ctrl: ControllerRef, target: int) -> ZenAddress | None:
+    """Decode an ECD event target (64-127) to a ZenAddress, or None if out of range."""
     number = target - 64
     if not 0 <= number <= 63:
         return None
-    return ZenAddress(controller=controller, type=ZenAddressType.ECD, number=number)
+    return ZenAddress(ctrl=ctrl, type=ZenAddressType.ECD, number=number)
 
 
-def ecg_or_group_address_from_target(controller: ControllerRef, target: int) -> ZenAddress | None:
-    """Decode an ECG (0–63) or group (64–79) event target to a ZenAddress."""
+def ecg_or_group_address_from_target(ctrl: ControllerRef, target: int) -> ZenAddress | None:
+    """Decode an ECG (0-63) or group (64-79) event target to a ZenAddress."""
     if target <= 63:
-        return ZenAddress(controller=controller, type=ZenAddressType.ECG, number=target)
+        return ZenAddress(ctrl=ctrl, type=ZenAddressType.ECG, number=target)
     if 64 <= target <= 79:
-        return ZenAddress(controller=controller, type=ZenAddressType.GROUP, number=target - 64)
+        return ZenAddress(ctrl=ctrl, type=ZenAddressType.GROUP, number=target - 64)
     return None
 
 
@@ -299,7 +299,7 @@ class ZenTcColour:
 
 @dataclass(frozen=True, slots=True)
 class ZenXyColour:
-    """CIE XY chromaticity (0–65535 wire units)."""
+    """CIE XY chromaticity (0-65535 wire units)."""
 
     x: int
     y: int

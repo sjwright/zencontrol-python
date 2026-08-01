@@ -1,7 +1,7 @@
-# IO layer — get started
+# IO layer - get started
 
 `zencontrol.io` is the wire stack: UDP in and out, framing, checksums, sequence numbers.
-It does **not** know TPI command names or event-code vocabulary — those live in `zencontrol.api`.
+It does **not** know TPI command names or event-code vocabulary - those live in `zencontrol.api`.
 
 | Plane | Shape |
 | --- | --- |
@@ -51,7 +51,7 @@ import asyncio
 from zencontrol.io import EventConst, ZenEndpoint, ZenEvent
 
 def on_event(event: ZenEvent) -> None:
-    # code is opaque here — decode in zencontrol.api.event_decode
+    # code is opaque here - decode in zencontrol.api.event_decode
     print(event.mac.hex(":"), event.code, event.target, event.payload.hex())
 
 async def main() -> None:
@@ -68,8 +68,8 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-- **Multicast** — joins `EventConst.MULTICAST_GROUP`:`MULTICAST_PORT` (not configurable on the controller).
-- **Unicast** — binds `listen_ip` / `listen_port` (`0` = ephemeral; then read `endpoint.bound_port`). Program that address into the controller via the command plane (`SET_TPI_EVENT_UNICAST_ADDRESS`).
+- **Multicast** - joins `EventConst.MULTICAST_GROUP`:`MULTICAST_PORT` (not configurable on the controller).
+- **Unicast** - binds `listen_ip` / `listen_port` (`0` = ephemeral; then read `endpoint.bound_port`). Program that address into the controller via the command plane (`SET_TPI_EVENT_UNICAST_ADDRESS`).
 
 Use `accept_datagram(data, addr, sink)` when simulating the endpoint handoff without a socket (same parse-then-sink path as `ZenEventProtocol`).
 

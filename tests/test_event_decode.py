@@ -1,7 +1,7 @@
 """Byte-literal tests for parse_frame and decode_zen_event (phase 1).
 
 No sockets, no controllers, no event loop. Frames are built as literals with
-an XOR checksum — never via a shared encoder that could agree with itself.
+an XOR checksum - never via a shared encoder that could agree with itself.
 """
 
 from __future__ import annotations
@@ -61,7 +61,7 @@ def _frame(
 
 
 # ---------------------------------------------------------------------------
-# parse_frame — envelope rejection paths
+# parse_frame - envelope rejection paths
 # ---------------------------------------------------------------------------
 
 
@@ -108,7 +108,7 @@ def test_parse_frame_extracts_two_byte_target() -> None:
 
 
 # ---------------------------------------------------------------------------
-# decode_zen_event — one typed dataclass per code
+# decode_zen_event - one typed dataclass per code
 # ---------------------------------------------------------------------------
 
 
@@ -173,7 +173,7 @@ def test_decode_rejects_unknown_code() -> None:
         (0x06, b"\x00"),  # occupancy needs exactly 2
         (0x07, b"\x00\x00\x00\x01"),  # need 5
         (0x08, b""),
-        (0x08, b"\x20"),  # colour needs 3–7
+        (0x08, b"\x20"),  # colour needs 3-7
         (0x08, b"\x20" + bytes(7)),  # too long
         (0x09, b""),
         (0x09, b"\x0f"),  # profile needs exactly 2

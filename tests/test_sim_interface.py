@@ -376,7 +376,7 @@ async def test_light_fade_step_and_refresh_via_interface(live_zen):
     assert await light.dali_off() is LEGACY_ACK
     assert live_sim.world.lights[1].level == 0
 
-    # Mutate controller under the entity, then refresh entity state.
+    # Mutate the controller under the entity, then refresh entity state.
     assert await zen.commands.dali_arc_level(light.address, 123) is LEGACY_ACK
     light.level = None
     await light.refresh_state_from_controller()
