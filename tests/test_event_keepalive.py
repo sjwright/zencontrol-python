@@ -22,7 +22,7 @@ async def test_assert_reconfigures_when_emit_disabled() -> None:
     zen = ZenControl()
     zen.is_event_monitoring_active = lambda: True  # type: ignore[method-assign]
     ctrl = _controller()
-    ctrl.is_controller_ready = AsyncMock(return_value=True)
+    zen.commands.query_controller_startup_complete = AsyncMock(return_value=True)
     zen.controllers = [ctrl]  # type: ignore[list-item]
 
     zen.commands.query_tpi_event_unicast_address = AsyncMock(return_value=None)
@@ -38,7 +38,7 @@ async def test_assert_marks_unreachable_when_reassert_fails() -> None:
     zen = ZenControl()
     zen.is_event_monitoring_active = lambda: True  # type: ignore[method-assign]
     ctrl = _controller()
-    ctrl.is_controller_ready = AsyncMock(return_value=True)
+    zen.commands.query_controller_startup_complete = AsyncMock(return_value=True)
     zen.commands.query_tpi_event_unicast_address = AsyncMock(return_value=None)
     zen.commands.query_tpi_event_emit_state = AsyncMock(return_value=False)
     zen.configure_controller_events = AsyncMock(return_value=False)
@@ -54,7 +54,7 @@ async def test_assert_defers_while_controller_not_ready() -> None:
     zen = ZenControl()
     zen.is_event_monitoring_active = lambda: True  # type: ignore[method-assign]
     ctrl = _controller()
-    ctrl.is_controller_ready = AsyncMock(return_value=False)
+    zen.commands.query_controller_startup_complete = AsyncMock(return_value=False)
     zen.configure_controller_events = AsyncMock()
     zen.commands.query_tpi_event_unicast_address = AsyncMock()
     status_cb = AsyncMock()
@@ -71,7 +71,7 @@ async def test_assert_noop_when_emit_enabled() -> None:
     zen = ZenControl()
     zen.is_event_monitoring_active = lambda: True  # type: ignore[method-assign]
     ctrl = _controller()
-    ctrl.is_controller_ready = AsyncMock(return_value=True)
+    zen.commands.query_controller_startup_complete = AsyncMock(return_value=True)
 
     zen.commands.query_tpi_event_unicast_address = AsyncMock(
         return_value=TpiEventUnicastAddress(
@@ -93,7 +93,7 @@ async def test_assert_reconfigures_on_unicast_target_mismatch() -> None:
     zen = ZenControl(unicast=True)
     zen.is_event_monitoring_active = lambda: True  # type: ignore[method-assign]
     ctrl = _controller()
-    ctrl.is_controller_ready = AsyncMock(return_value=True)
+    zen.commands.query_controller_startup_complete = AsyncMock(return_value=True)
 
     lease = SimpleNamespace(advertise=("192.168.1.10", 6970))
     wiring = MagicMock()
@@ -122,10 +122,9 @@ async def test_assert_compares_per_binding_advertise() -> None:
     zen.is_event_monitoring_active = lambda: True  # type: ignore[method-assign]
 
     ctrl_a = _controller("ctrl-a")
-    ctrl_a.is_controller_ready = AsyncMock(return_value=True)
+    zen.commands.query_controller_startup_complete = AsyncMock(return_value=True)
     ctrl_b = _controller("ctrl-b")
-    ctrl_b.is_controller_ready = AsyncMock(return_value=True)
-
+    
     lease_a = SimpleNamespace(advertise=("10.0.0.1", 6970))
     lease_b = SimpleNamespace(advertise=("192.168.1.10", 6970))
     binding_a = SimpleNamespace(lease=lease_a)
@@ -175,7 +174,7 @@ async def test_assert_returns_false_when_ping_fails() -> None:
     zen = ZenControl()
     zen.is_event_monitoring_active = lambda: True  # type: ignore[method-assign]
     ctrl = _controller()
-    ctrl.is_controller_ready = AsyncMock(return_value=None)
+    zen.commands.query_controller_startup_complete = AsyncMock(return_value=None)
     zen.configure_controller_events = AsyncMock()
 
     assert await zen.assert_controller_events(ctrl) is False  # type: ignore[arg-type]

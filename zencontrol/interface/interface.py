@@ -546,7 +546,7 @@ class ZenControl:
         the controller is reachable and events are confirmed/enabled, False when
         the ping timed out / failed or re-assert could not enable emit.
 
-        Never re-asserts while is_controller_ready() is false — the startup
+        Never re-asserts while query_controller_startup_complete() is false — the startup
         sequence can take several minutes after a reboot.
         """
         if not self.is_event_monitoring_active():
@@ -560,7 +560,7 @@ class ZenControl:
             )
             return False
 
-        ready = await controller.is_controller_ready()
+        ready = await self.commands.query_controller_startup_complete(controller)
         if ready is None:
             self.logger.debug(
                 "No response from %s during event keepalive ping",
@@ -648,6 +648,27 @@ class ZenControl:
                 profile = await self.context.create_profile(ctrl, number)
                 profiles.add(profile)
         return profiles
+
+    async def switch_to_profile(
+        self,
+        controller: ZenController,
+        profile: ZenProfile | int | str,
+    ) -> bool:
+        """Switch controller to a profile by object, number, or label."""
+        zp: ZenProfile | None = None
+        if isinstance(profile, ZenProfile):
+            zp = profile
+        elif isinstance(profile, str):
+            for key, p in self.context.registry.profiles.items():
+                if key[0] == controller.name and p.label == profile:
+                    zp = p
+                    break
+        elif isinstance(profile, int):
+            zp = self.context.registry.profiles.get((controller.name, profile))
+        if zp is None:
+            return False
+        self.commands.logger.debug("Switching to profile %s", zp)
+        return bool(await self.commands.change_profile_number(controller, zp.number))
 
     async def get_groups(self, controller: ZenController | None = None) -> set[ZenGroup]:
         """Return a set of all groups (optionally for one controller)."""

@@ -80,9 +80,6 @@ class ZenController(SuperZenController):
     # Interface-owned references — not part of the API model (I9).
     ctx: EntityContext
     commands: ZenCommandClient
-    version: str | None = None
-
-    connected: bool = False
     profile: ZenProfile | None = None
 
     def __init__(
@@ -107,15 +104,10 @@ class ZenController(SuperZenController):
         )
         self.ctx = ctx
         self.commands = ctx.commands
-        self.connected = False
-        self._reset()
+        self.profile = None
 
     def __repr__(self) -> str:
         return f"ZenController<{self.name}>"
-    def _reset(self) -> None:
-        # label is set from config via EntityContext.controller() or interview()
-        self.version = None
-        self.profile = None
     async def interview(self) -> bool:
         commands = self.commands
         if self.label is None or self.label == "":
@@ -126,7 +118,6 @@ class ZenController(SuperZenController):
         current_profile = await commands.query_current_profile_number(self)
         if current_profile is not None:
             self.profile = self.ctx.profile(self, current_profile)
-        self.connected = True
         return True
     async def _event_received(self, profile: int | None = None) -> None:
         if profile is not None:
@@ -134,29 +125,6 @@ class ZenController(SuperZenController):
             cb = self.ctx.callbacks.profile_change
             if callable(cb):
                 await cb(profile=self.profile)
-    async def is_controller_ready(self) -> bool | None:
-        return await self.commands.query_controller_startup_complete(self)
-    async def is_dali_ready(self) -> bool | None:
-        return await self.commands.query_is_dali_ready(self)
-    async def switch_to_profile(self, profile: ZenProfile|int|str) -> bool:
-        zp = None
-        if isinstance(profile, ZenProfile):
-            zp = profile
-        elif isinstance(profile, str):
-            for key, p in self.ctx.registry.profiles.items():
-                if key[0] == self.name and p.label == profile:
-                    zp = p
-                    break
-        elif isinstance(profile, int):
-            zp = self.ctx.registry.profiles.get((self.name, profile))
-        if isinstance(zp, ZenProfile):
-            self.commands.logger.debug("Switching to profile %s", zp)
-            result = await self.commands.change_profile_number(self, zp.number)
-            return bool(result)
-        else:
-            return False
-    async def return_to_scheduled_profile(self) -> bool | None:
-        return await self.commands.return_to_scheduled_profile(self)
 
 
 class ZenProfile:

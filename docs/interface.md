@@ -69,8 +69,9 @@ Hot-plug: `await zen.remove_controller(...)` is safe while monitoring is running
 
 Useful methods:
 
-- `await ctrl.interview()` — version / ready flags
-- `await ctrl.switch_to_profile(...)` / `return_to_scheduled_profile()`
+- `await ctrl.interview()` — label / version / current profile
+- `await zen.switch_to_profile(ctrl, …)` / `await zen.commands.return_to_scheduled_profile(ctrl)`
+- `await zen.commands.query_controller_startup_complete(ctrl)` / `query_is_dali_ready(ctrl)`
 
 Health while monitoring:
 

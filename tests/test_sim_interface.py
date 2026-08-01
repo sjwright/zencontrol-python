@@ -15,7 +15,7 @@ async def test_interview_discovers_entities(live_zen):
     zen, live_sim = live_zen
     ctrl = zen.controllers[0]
 
-    assert await ctrl.is_controller_ready()
+    assert await zen.commands.query_controller_startup_complete(ctrl)
     await ctrl.interview()
 
     lights = await zen.get_lights()
@@ -103,7 +103,7 @@ async def test_group_scene_and_profile_switch(live_zen):
     assert live_sim.world.lights[0].level == 80
     assert live_sim.world.lights[1].level == 100
 
-    assert await ctrl.switch_to_profile(2) is True
+    assert await zen.switch_to_profile(ctrl, 2) is True
     assert live_sim.world.current_profile == 2
 
 
@@ -195,7 +195,7 @@ async def test_start_receives_injected_and_control_events(live_zen):
         message="expected group_change for group 0 → 55",
     )
 
-    assert await ctrl.switch_to_profile(3) is True
+    assert await zen.switch_to_profile(ctrl, 3) is True
     await wait_until(
         lambda: len(profile_events) >= 1,
         message="expected profile_change callback",
@@ -297,7 +297,7 @@ async def test_profile_select_and_return_scheduled(live_zen):
 
     assert await profiles[2].select() is True
     assert live_sim.world.current_profile == 2
-    assert await ctrl.return_to_scheduled_profile() is True
+    assert await zen.commands.return_to_scheduled_profile(ctrl) is True
     assert live_sim.world.current_profile == 1
 
 
@@ -388,7 +388,7 @@ async def test_sysvar_get_value_and_refresh(live_zen):
     zen, live_sim = live_zen
     ctrl = zen.controllers[0]
     await ctrl.interview()
-    assert await ctrl.is_dali_ready() is True
+    assert await zen.commands.query_is_dali_ready(ctrl) is True
 
     sysvars = await zen.get_system_variables(give_up_after=5)
     svar = next(v for v in sysvars if v.id == 0)
