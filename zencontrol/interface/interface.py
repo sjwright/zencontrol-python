@@ -22,7 +22,6 @@ import time
 from typing import Any, Self
 
 from ..api import (
-    ZenAddress,
     ZenInstance,
     ZenInstanceType,
 )
@@ -649,11 +648,7 @@ class ZenControl:
                 profiles.add(profile)
         return profiles
 
-    async def switch_to_profile(
-        self,
-        ctrl: ZenController,
-        profile: ZenProfile | int | str,
-    ) -> bool:
+    async def switch_to_profile(self, ctrl: ZenController, profile: ZenProfile | int | str) -> bool:
         """Switch controller to a profile by object, number, or label."""
         zp: ZenProfile | None = None
         if isinstance(profile, ZenProfile):
@@ -681,9 +676,7 @@ class ZenControl:
                 groups.add(group)
         return groups
 
-    async def get_control_gear(
-        self, ctrl: ZenController | None = None
-    ) -> set[ZenControlGear]:
+    async def get_control_gear(self, ctrl: ZenController | None = None) -> set[ZenControlGear]:
         """Interview all control gear, discriminating light / fan / blind."""
         # (ean, bus_unit) → kind. Dummy placeholders until field/support seeds real GTINs.
         # bus_unit None matches any bus unit for that EAN.
@@ -734,31 +727,22 @@ class ZenControl:
         """Return blinds among discovered control gear (prefer get_control_gear)."""
         return {g for g in await self.get_control_gear(ctrl) if isinstance(g, ZenBlind)}
 
-    async def _get_addresses_with_instances(self, ctrl: ZenController) -> list[ZenAddress]:
-        """Return all DALI addresses that have instances (full address-space scan)."""
-        return await self.commands.query_dali_addresses_with_instances(ctrl)
-
-    async def _scan_ecd_instances(self, ctrl: ZenController) -> list[ZenInstance]:
-        """Return every ECD instance on the controller (one query per address).
-
-        Results are cached until clear_entity_caches() so repeated
-        get_instances calls share a single address-space scan.
-        """
-        cached = self._ecd_instances_by_controller.get(ctrl.name)
-        if cached is not None:
-            return cached
-        instances: list[ZenInstance] = []
-        for address in await self._get_addresses_with_instances(ctrl):
-            instances.extend(await self.commands.query_instances_by_address(address=address))
-        self._ecd_instances_by_controller[ctrl.name] = instances
-        return instances
-
     async def get_instances(self, ctrl: ZenController | None = None) -> set[ZenEcdEntity]:
-        """Interview all ECD instances (buttons, motion sensors, absolute inputs)."""
+        """Interview all ECD instances (buttons, motion sensors, absolute inputs).
+
+        Address-space scan results are cached per controller until clear_entity_caches()
+        so repeated get_instances / filter calls share one scan.
+        """
         entities: set[ZenEcdEntity] = set()
         controllers = [ctrl] if ctrl else self.controllers
         for ctrl in controllers:
-            for instance in await self._scan_ecd_instances(ctrl):
+            instances = self._ecd_instances_by_controller.get(ctrl.name)
+            if instances is None:
+                instances = []
+                for address in await self.commands.query_dali_addresses_with_instances(ctrl):
+                    instances.extend(await self.commands.query_instances_by_address(address=address))
+                self._ecd_instances_by_controller[ctrl.name] = instances
+            for instance in instances:
                 match instance.type:
                     case ZenInstanceType.PUSH_BUTTON:
                         entities.add(await self.ctx.create_button(instance))
@@ -782,11 +766,7 @@ class ZenControl:
         """Return absolute-input instances (prefer get_instances)."""
         return {e for e in await self.get_instances(ctrl) if isinstance(e, ZenAbsoluteInput)}
 
-    async def get_system_variables(
-        self,
-        give_up_after: int = 10,
-        ctrl: ZenController | None = None,
-    ) -> set[ZenSystemVariable]:
+    async def get_system_variables(self, give_up_after: int = 10, ctrl: ZenController | None = None) -> set[ZenSystemVariable]:
         """Return labelled system variables (optionally for one controller)."""
         sysvars: set[ZenSystemVariable] = set()
         controllers = [ctrl] if ctrl else self.controllers

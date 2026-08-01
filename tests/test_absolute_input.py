@@ -65,7 +65,7 @@ async def test_get_absolute_inputs_filters_instance_type() -> None:
     abs_inst = ZenInstance(address=addr, type=ZenInstanceType.ABSOLUTE_INPUT, number=0)
     btn_inst = ZenInstance(address=addr, type=ZenInstanceType.PUSH_BUTTON, number=1)
 
-    zen._get_addresses_with_instances = AsyncMock(return_value=[addr])  # noqa: SLF001
+    zen.commands.query_dali_addresses_with_instances = AsyncMock(return_value=[addr])
     zen.commands.query_instances_by_address = AsyncMock(return_value=[abs_inst, btn_inst])
     zen.commands.query_dali_device_label = AsyncMock(return_value="Wall")
     zen.commands.query_dali_serial = AsyncMock(return_value="ABC")
@@ -90,7 +90,8 @@ async def test_ecd_getters_share_instance_scan() -> None:
     btn_inst = ZenInstance(address=addr, type=ZenInstanceType.PUSH_BUTTON, number=1)
     motion_inst = ZenInstance(address=addr, type=ZenInstanceType.OCCUPANCY_SENSOR, number=2)
 
-    zen._get_addresses_with_instances = AsyncMock(return_value=[addr])  # noqa: SLF001
+    query_addresses = AsyncMock(return_value=[addr])
+    zen.commands.query_dali_addresses_with_instances = query_addresses
     query_instances = AsyncMock(return_value=[abs_inst, btn_inst, motion_inst])
     zen.commands.query_instances_by_address = query_instances
     zen.commands.query_dali_device_label = AsyncMock(return_value="Panel")
@@ -109,7 +110,7 @@ async def test_ecd_getters_share_instance_scan() -> None:
     assert len(absolute_inputs) == 1
     assert len(sensors) == 1
     assert query_instances.await_count == 1
-    assert zen._get_addresses_with_instances.await_count == 1  # noqa: SLF001
+    assert query_addresses.await_count == 1
 
     zen.clear_entity_caches()
     await zen.get_buttons(ctrl=ctrl)

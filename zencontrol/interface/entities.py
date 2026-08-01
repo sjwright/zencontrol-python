@@ -51,13 +51,23 @@ def _or_group_label(label: str | None, number: int) -> str:
 
 
 def _or_device_label(label: str | None, address: ZenAddress) -> str:
-    return label if label is not None else f"{address.ctrl.label} ECD {address.number}"
+    if label is not None:
+        return label
+    match address.type:
+        case ZenAddressType.ECG:
+            kind = "ECG"
+        case ZenAddressType.ECD:
+            kind = "ECD"
+        case _:
+            kind = "Address"
+    return f"{address.ctrl.label} {kind} {address.number}"
 
 
 def _or_instance_label(label: str | None, instance: ZenInstance) -> str:
     if label is not None:
         return label
-    return instance.type.name.title().replace("_", " ") + " " + str(instance.number)
+    device = instance.address.label or _or_device_label(None, instance.address)
+    return f"{device} {instance.number}"
 
 
 def _or_scene_label(label: str | None, scene: int) -> str:
@@ -428,8 +438,8 @@ class ZenLight(ZenControlGear):
                     self.features["temperature"] = True
                     colour_temp_limits = await self.commands.query_dali_colour_temp_limits(self.address)
                     if colour_temp_limits:
-                        self.properties["min_kelvin"] = colour_temp_limits.get("soft_warmest", Const.DEFAULT_WARMEST_TEMP)
-                        self.properties["max_kelvin"] = colour_temp_limits.get("soft_coolest", Const.DEFAULT_COOLEST_TEMP)
+                        self.properties["min_kelvin"] = colour_temp_limits.soft_warmest
+                        self.properties["max_kelvin"] = colour_temp_limits.soft_coolest
                 elif cgtype and cgtype.rgbwaf_channels == Const.RGB_CHANNELS:
                     self.features["brightness"] = True
                     self.features["RGB"] = True

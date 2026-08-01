@@ -98,7 +98,7 @@ Each `create` / first fetch runs `interview()` (labels, features, membership, ti
 | `ZenControlGear` | Shared base for all control gear (ECG) and groups: `level`/`colour`/`scene` |
 | `ZenLight` | Lighting ECG gear: group membership, membership-driven discoordination |
 | `ZenFan` | Ceiling fan speeds via discrete ARC levels (`set_speed` / `speed`) |
-| `ZenBlind` | Position 0-100%; `stop()` sends DAPC MASK (255) |
+| `ZenBlind` | Position 0-100% |
 | `ZenGroup` | Group gear: mostly the same as lights, plus scene label helpers and group state assertions |
 | `ZenButton` | Press / long-press via callbacks |
 | `ZenMotionSensor` | `occupied`; occupancy events |

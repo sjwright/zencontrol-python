@@ -167,6 +167,39 @@ class OccupancyInstanceTimers:
 
 
 @dataclass(frozen=True, slots=True)
+class DaliColourTempLimits:
+    """Result of QUERY_DALI_COLOUR_TEMP_LIMITS (kelvin)."""
+
+    physical_warmest: int
+    physical_coolest: int
+    soft_warmest: int
+    soft_coolest: int
+    step_value: int
+
+
+@dataclass(frozen=True, slots=True)
+class GroupStatus:
+    """Result of QUERY_GROUP_BY_NUMBER."""
+
+    number: int
+    occupied: bool
+    level: int
+
+
+@dataclass(frozen=True, slots=True)
+class InstanceGroups:
+    """Result of QUERY_INSTANCE_GROUPS.
+
+    Each field is a DALI group 0-15, or None when unconfigured (wire 0xFF).
+    primary is typically where the physical device resides.
+    """
+
+    primary: int | None
+    first: int | None
+    second: int | None
+
+
+@dataclass(frozen=True, slots=True)
 class ProfileBehaviour:
     """One profile record from QUERY_PROFILE_INFORMATION."""
 

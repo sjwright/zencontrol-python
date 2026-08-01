@@ -61,7 +61,7 @@ async def test_light_identity_features_and_membership(live_sim):
 
     limits = await p.query_dali_colour_temp_limits(ecg0)
     assert limits is not None
-    assert limits.get("soft_warmest") == 2700 or limits.get("physical_warmest") == 2700
+    assert limits.soft_warmest == 2700 or limits.physical_warmest == 2700
 
     groups = await p.query_group_membership_by_address(ecg1)
     assert {g.number for g in groups} == {0, 1}
@@ -474,7 +474,8 @@ async def test_group_by_number_and_scenes_list(live_sim):
     live_sim.world.lights[0].set_level(10)
     live_sim.world.lights[1].set_level(77)
     info = await p.query_group_by_number(live_sim.group(0))
-    assert info == (0, True, 77)
+    assert info is not None
+    assert info.number == 0 and info.occupied is True and info.level == 77
     assert await p.query_group_by_number(live_sim.group(15)) is None
 
     scenes = await p.query_scenes_for_group(live_sim.group(0))
@@ -566,12 +567,15 @@ async def test_operating_mode_and_button_led_stubs(live_sim):
 async def test_query_instance_groups(live_sim):
     p = live_sim.commands
     groups = await p.query_instance_groups(live_sim.instance(0, 0))
-    assert groups == (0, 1, None)
+    assert groups is not None
+    assert groups.primary == 0 and groups.first == 1 and groups.second is None
     motion = await p.query_instance_groups(live_sim.instance(0, 2, type_code=3))
-    assert motion == (0, None, None)
+    assert motion is not None
+    assert motion.primary == 0 and motion.first is None and motion.second is None
     # Unconfigured instance → all None
     unset = await p.query_instance_groups(live_sim.instance(1, 0))
-    assert unset == (None, None, None)
+    assert unset is not None
+    assert unset.primary is None and unset.first is None and unset.second is None
 
 
 @pytest.mark.asyncio

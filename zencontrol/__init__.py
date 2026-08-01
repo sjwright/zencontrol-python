@@ -60,10 +60,10 @@ from .exceptions import (
     ZenConfigurationError,
     ZenConnectionError,
     ZenError,
-    ZenResponseError,
     ZenTimeoutError,
 )
 from .interface import (
+    ControllerRuntimeStatus,
     EntityContext,
     ZenAbsoluteInput,
     ZenBlind,
@@ -98,6 +98,7 @@ __all__ = [
     # High-level interface (recommended)
     "ZenControl",
     "ZenCallbacks",
+    "ControllerRuntimeStatus",
     # Advanced: command-only entity context (no event session)
     "EntityContext",
 
@@ -135,7 +136,6 @@ __all__ = [
     # Exceptions
     "ZenError",
     "ZenTimeoutError",
-    "ZenResponseError",
     "ZenConnectionError",
     "ZenConfigurationError",
 

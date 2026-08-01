@@ -61,6 +61,9 @@ from .types import (
     Const,
     ControlGearStatus,
     DaliColourFeatures,
+    DaliColourTempLimits,
+    GroupStatus,
+    InstanceGroups,
     OccupancyInstanceTimers,
     ProfileBehaviour,
     ProfileState,
@@ -710,14 +713,11 @@ class ZenCommandClient:
             case _:
                 return None
 
-    async def query_group_by_number(self, address: ZenAddress) -> tuple[int, bool, int] | None: # TODO: change to a dict or special class?
-        """Query a DALI group for its occupancy status and level. Returns a tuple containing group number, occupancy status, and actual level."""
+    async def query_group_by_number(self, address: ZenAddress) -> GroupStatus | None:
+        """Query a DALI group for occupancy and level."""
         response = self._response_to_bytes_or_none(await self._send_basic(address.ctrl, CMD.QUERY_GROUP_BY_NUMBER, address.group()))
         if response and len(response) == 3:
-            group_num = response[0]
-            occupancy = bool(response[1])
-            level = response[2]
-            return (group_num, occupancy, level)
+            return GroupStatus(number=response[0], occupied=bool(response[1]), level=response[2])
         return None
 
     async def query_scene_numbers_by_address(self, address: ZenAddress) -> list[int] | None:
@@ -1064,31 +1064,23 @@ class ZenCommandClient:
         """Return to the scheduled profile. Returns True if successful, else False."""
         return await self.change_profile_number(ctrl, 0xFFFF) # See docs page 91, 0xFFFF returns to scheduled profile
 
-    async def query_instance_groups(self, instance: ZenInstance) -> tuple[int | None, int | None, int | None] | None: # TODO: replace Tuple with dict
-        """Query the group targets associated with a DALI instance.
-            
-        Returns:
-            Optional tuple containing:
-            - int: Primary group number (0-15, or 255 if not configured)
-            - int: First group number (0-15, or 255 if not configured) 
-            - int: Second group number (0-15, or 255 if not configured)
-            
-            Returns None if query fails
-            
-        The Primary group typically represents where the physical device resides.
-        A group number of 255 (0xFF) indicates that no group has been configured.
+    async def query_instance_groups(self, instance: ZenInstance) -> InstanceGroups | None:
+        """Query group targets associated with a DALI instance.
+
+        Returns primary / first / second group numbers (0-15), or None for any
+        slot that is unconfigured (wire 0xFF). Returns None if the query fails.
         """
         response = self._response_to_list_or_none(await self._send_basic(
             instance.address.ctrl,
-            CMD.QUERY_INSTANCE_GROUPS, 
+            CMD.QUERY_INSTANCE_GROUPS,
             instance.address.ecd(),
             [0x00, 0x00, instance.number]
         ))
         if response and len(response) == 3:
-            return (
-                response[0] if response[0] != 0xFF else None,
-                response[1] if response[1] != 0xFF else None,
-                response[2] if response[2] != 0xFF else None
+            return InstanceGroups(
+                primary=response[0] if response[0] != 0xFF else None,
+                first=response[1] if response[1] != 0xFF else None,
+                second=response[2] if response[2] != 0xFF else None,
             )
         return None
     
@@ -1183,32 +1175,17 @@ class ZenCommandClient:
             )
         return None
     
-    async def query_dali_colour_temp_limits(self, address: ZenAddress) -> dict[str, Any] | None:
-        """Query the colour temperature limits of a DALI device.
-        
-        Args:
-            ctrl: ZenController instance
-            gear: DALI address (0-63)
-            
-        Returns:
-            Dictionary containing colour temperature limits in Kelvin, or None if query failed:
-            {
-                'physical_warmest': int,  # Physical warmest temp limit (K)
-                'physical_coolest': int,  # Physical coolest temp limit (K) 
-                'soft_warmest': int,      # Configured warmest temp limit (K)
-                'soft_coolest': int,      # Configured coolest temp limit (K)
-                'step_value': int         # Step value (K)
-            }
-        """
+    async def query_dali_colour_temp_limits(self, address: ZenAddress) -> DaliColourTempLimits | None:
+        """Query colour temperature limits (kelvin) for a DALI address (ECG)."""
         response = self._response_to_bytes_or_none(await self._send_basic(address.ctrl, CMD.QUERY_DALI_COLOUR_TEMP_LIMITS, address.ecg()))
         if response and len(response) == 10:
-            return {
-                'physical_warmest': (response[0] << 8) | response[1],
-                'physical_coolest': (response[2] << 8) | response[3],
-                'soft_warmest': (response[4] << 8) | response[5],
-                'soft_coolest': (response[6] << 8) | response[7],
-                'step_value': (response[8] << 8) | response[9]
-            }
+            return DaliColourTempLimits(
+                physical_warmest=(response[0] << 8) | response[1],
+                physical_coolest=(response[2] << 8) | response[3],
+                soft_warmest=(response[4] << 8) | response[5],
+                soft_coolest=(response[6] << 8) | response[7],
+                step_value=(response[8] << 8) | response[9],
+            )
         return None
     
     async def set_system_variable(self, ctrl: ControllerRef, variable: int, value: int) -> bool | None:
