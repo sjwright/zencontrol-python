@@ -79,7 +79,6 @@ async def _group_scene_labels(commands: ZenCommandClient, address: ZenAddress) -
 class ZenController(SuperZenController):
     # Interface-owned references — not part of the API model (I9).
     ctx: EntityContext
-    commands: ZenCommandClient
     profile: ZenProfile | None = None
 
     def __init__(
@@ -103,13 +102,12 @@ class ZenController(SuperZenController):
             filtering=filtering,
         )
         self.ctx = ctx
-        self.commands = ctx.commands
         self.profile = None
 
     def __repr__(self) -> str:
         return f"ZenController<{self.name}>"
     async def interview(self) -> bool:
-        commands = self.commands
+        commands = self.ctx.commands
         if self.label is None or self.label == "":
             queried = await commands.query_controller_label(self)
             if queried is not None:

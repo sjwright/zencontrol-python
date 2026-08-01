@@ -27,7 +27,7 @@ async def test_absolute_input_event_parses_16bit_value() -> None:
         changes.append((absolute_input, absolute_input.value))
 
     zen.callbacks.absolute_input_change = on_change
-    absolute = zen.context.absolute_input(instance)
+    absolute = zen.ctx.absolute_input(instance)
     assert absolute.interview_hydrate({"serial": "1", "label": "Panel", "instance_label": "Dial"})
 
     async def _dispatch(ev: AbsoluteInput) -> None:
@@ -52,7 +52,7 @@ async def test_absolute_input_event_parses_16bit_value() -> None:
 async def test_absolute_input_event_ignores_short_payload() -> None:
     zen = ZenControl()
     _ctrl, instance = _ecd_instance(zen)
-    absolute = zen.context.absolute_input(instance)
+    absolute = zen.ctx.absolute_input(instance)
     await absolute._event_received(bytes([1]))
     assert absolute.value is None
 
@@ -78,7 +78,7 @@ async def test_get_absolute_inputs_filters_instance_type() -> None:
     assert item.instance.type == ZenInstanceType.ABSOLUTE_INPUT
     assert item.label == "Wall"
     assert item.instance_label == "Slider"
-    assert zen.context.absolute_input(abs_inst) is item
+    assert zen.ctx.absolute_input(abs_inst) is item
 
 
 @pytest.mark.asyncio
@@ -120,7 +120,7 @@ async def test_ecd_getters_share_instance_scan() -> None:
 async def test_absolute_input_singleton_per_protocol() -> None:
     zen = ZenControl()
     _ctrl, instance = _ecd_instance(zen)
-    a = zen.context.absolute_input(instance)
-    b = zen.context.absolute_input(instance)
+    a = zen.ctx.absolute_input(instance)
+    b = zen.ctx.absolute_input(instance)
     assert a is b
-    assert ("house", 0, 1) in zen.context.registry.absolute_inputs
+    assert ("house", 0, 1) in zen.ctx.registry.absolute_inputs

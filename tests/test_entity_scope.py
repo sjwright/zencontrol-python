@@ -20,27 +20,27 @@ async def test_two_zencontrol_instances_isolate_entities() -> None:
     assert ctrl_a is not ctrl_b
     assert ctrl_a.label == "A"
     assert ctrl_b.label == "B"
-    assert "shared" in zen_a.context.registry.controllers
-    assert "shared" in zen_b.context.registry.controllers
-    assert zen_a.context.registry.controllers["shared"] is ctrl_a
-    assert zen_b.context.registry.controllers["shared"] is ctrl_b
+    assert "shared" in zen_a.ctx.registry.controllers
+    assert "shared" in zen_b.ctx.registry.controllers
+    assert zen_a.ctx.registry.controllers["shared"] is ctrl_a
+    assert zen_b.ctx.registry.controllers["shared"] is ctrl_b
 
     addr_a = ZenAddress(controller=ctrl_a, type=ZenAddressType.ECG, number=5)
     addr_b = ZenAddress(controller=ctrl_b, type=ZenAddressType.ECG, number=5)
-    light_a = zen_a.context.light(addr_a)
-    light_b = zen_b.context.light(addr_b)
+    light_a = zen_a.ctx.light(addr_a)
+    light_b = zen_b.ctx.light(addr_b)
 
     assert light_a is not light_b
     light_a.label = "topic-a"
     assert light_b.label is None
 
     await zen_a.aclose()
-    assert zen_a.context.registry.lights == {}
-    assert ("shared", 5) in zen_b.context.registry.lights
-    assert zen_b.context.registry.lights[("shared", 5)] is light_b
+    assert zen_a.ctx.registry.lights == {}
+    assert ("shared", 5) in zen_b.ctx.registry.lights
+    assert zen_b.ctx.registry.lights[("shared", 5)] is light_b
 
     await zen_b.aclose()
-    assert zen_b.context.registry.lights == {}
+    assert zen_b.ctx.registry.lights == {}
 
 
 @pytest.mark.asyncio
@@ -48,13 +48,13 @@ async def test_same_protocol_reuses_entity_identity() -> None:
     zen = ZenControl()
     ctrl = zen.add_controller(id=1, name="ctrl", label="Ctrl", host="127.0.0.1", port=5108)
     addr = ZenAddress(controller=ctrl, type=ZenAddressType.ECG, number=3)
-    light1 = zen.context.light(addr)
-    light2 = zen.context.light(addr)
+    light1 = zen.ctx.light(addr)
+    light2 = zen.ctx.light(addr)
     assert light1 is light2
 
     group_addr = ZenAddress(controller=ctrl, type=ZenAddressType.GROUP, number=1)
-    group1 = zen.context.group(group_addr)
-    group2 = zen.context.group(group_addr)
+    group1 = zen.ctx.group(group_addr)
+    group2 = zen.ctx.group(group_addr)
     assert group1 is group2
     assert group1 is not light1
 
@@ -74,7 +74,7 @@ def test_cached_addressed_entity_keeps_interviewed_address_metadata(
     interviewed = ZenAddress(controller=ctrl, type=address_type, number=3)
     interviewed.label = "Interviewed entity"
     interviewed.serial = "serial-3"
-    factory = getattr(zen.context, factory_name)
+    factory = getattr(zen.ctx, factory_name)
     entity = factory(interviewed)
 
     event_address = ZenAddress(controller=ctrl, type=address_type, number=3)
@@ -95,7 +95,7 @@ def test_cached_instance_entity_keeps_interviewed_instance(factory_name: str) ->
     interviewed_address.label = "Interviewed device"
     interviewed_address.serial = "serial-4"
     interviewed = ZenInstance(address=interviewed_address, type=ZenInstanceType.PUSH_BUTTON, number=2)
-    factory = getattr(zen.context, factory_name)
+    factory = getattr(zen.ctx, factory_name)
     entity = factory(interviewed)
 
     event_address = ZenAddress(controller=ctrl, type=ZenAddressType.ECD, number=4)
@@ -112,9 +112,9 @@ def test_cached_instance_entity_keeps_interviewed_instance(factory_name: str) ->
 def test_cached_system_variable_accepts_explicit_value_and_label_updates() -> None:
     zen = ZenControl()
     ctrl = zen.add_controller(id=1, name="ctrl", label="Ctrl", host="127.0.0.1")
-    variable = zen.context.system_variable(ctrl, 2, value=10, label="Original")
+    variable = zen.ctx.system_variable(ctrl, 2, value=10, label="Original")
 
-    same_variable = zen.context.system_variable(ctrl, 2, value=20, label="Updated")
+    same_variable = zen.ctx.system_variable(ctrl, 2, value=20, label="Updated")
 
     assert same_variable is variable
     assert same_variable.value == 20
@@ -124,7 +124,7 @@ def test_cached_system_variable_accepts_explicit_value_and_label_updates() -> No
 
 def test_controller_same_name_same_protocol_is_singleton() -> None:
     zen = ZenControl()
-    a = zen.context.controller(
+    a = zen.ctx.controller(
         id=1,
         name="one",
         label="First",
@@ -134,7 +134,7 @@ def test_controller_same_name_same_protocol_is_singleton() -> None:
     zen.commands.set_client(a, object())  # type: ignore[arg-type]
     a.version = "1.2.3"
     a.startup_complete = True
-    b = zen.context.controller(
+    b = zen.ctx.controller(
         id=2,
         name="one",
         label="Second",

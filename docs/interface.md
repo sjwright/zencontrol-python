@@ -89,7 +89,7 @@ health = zen.event_health_for(ctrl)  # RECEIVING / SILENT / …
 
 Fans and blinds are classified by label suffix (`… Fan` / `… Blind`) or a GTIN+bus-unit allowlist when seeded; they are **not** returned from `get_lights()`.
 
-Identity is owned by `zen.context` factories (`ctx.light(address)`, `ctx.fan(address)`, `ctx.blind(address)`, `ctx.group(address)`, …). Prefer those (or the async `ctx.create_*` interview wrappers) over constructing entity classes directly.
+Identity is owned by `zen.ctx` factories (`ctx.light(address)`, `ctx.fan(address)`, `ctx.blind(address)`, `ctx.group(address)`, …). Prefer those (or the async `ctx.create_*` interview wrappers) over constructing entity classes directly.
 
 Each `create` / first fetch runs `interview()` (labels, features, membership, timers, …). Cached state (`light.level`, `sensor.occupied`, …) then updates from events and occasional refresh.
 

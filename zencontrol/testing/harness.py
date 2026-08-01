@@ -8,7 +8,7 @@ Example::
     from zencontrol import ZenController
 
     p = ZenTestClient(unicast=True, listen_ip="127.0.0.1", listen_port=0)
-    ctrl = p.context.controller(..., ...)
+    ctrl = p.ctx.controller(..., ...)
     p.set_controllers([ctrl])
 """
 
@@ -65,7 +65,7 @@ class ZenTestClient:
             logger=logger,
             print_traffic=print_traffic,
         )
-        self.context = EntityContext(commands=self.commands, logger=self.commands.logger)
+        self.ctx = EntityContext(commands=self.commands, logger=self.commands.logger)
         self.event_receiver = ZenEventReceiver(
             logger=self.commands.logger,
             unicast_listen_ip=(listen_ip if listen_ip else "0.0.0.0") if unicast else "0.0.0.0",
@@ -160,8 +160,8 @@ class ZenTestClient:
 
     async def aclose(self) -> None:
         await self.stop_event_monitoring()
-        await self.context.cancel_background_tasks()
-        self.context.clear_entity_caches()
+        await self.ctx.cancel_background_tasks()
+        self.ctx.clear_entity_caches()
         await self.commands.aclose()
         await self.event_receiver.close()
 

@@ -14,8 +14,8 @@ import time
 
 async def main():
     config = yaml.safe_load(open(Path(__file__).resolve().parents[2] / "tests" / "config.yaml"))
-    zi = ZenControl(print_traffic=False)
-    zi.add_controller(**config.get('zencontrol')[0])
+    zen = ZenControl(print_traffic=False)
+    zen.add_controller(**config.get('zencontrol')[0])
 
     # Handlers
     async def _zen_on_connect() -> None:
@@ -61,18 +61,18 @@ async def main():
         print(f"{msecs:.1f} ms")
 
     # Set up event callbacks
-    # zi.callbacks.on_connect = _zen_on_connect
-    # zi.callbacks.on_disconnect = _zen_on_disconnect
-    # zi.callbacks.profile_change = _zen_profile_change
-    zi.callbacks.group_change = _zen_group_change
-    zi.callbacks.light_change = _zen_light_change
-    zi.callbacks.button_press = _zen_button_press
-    # zi.callbacks.button_long_press = _zen_button_long_press
-    # zi.callbacks.motion_event = _zen_motion_event
-    # zi.callbacks.system_variable_change = _zen_system_variable_change
+    # zen.callbacks.on_connect = _zen_on_connect
+    # zen.callbacks.on_disconnect = _zen_on_disconnect
+    # zen.callbacks.profile_change = _zen_profile_change
+    zen.callbacks.group_change = _zen_group_change
+    zen.callbacks.light_change = _zen_light_change
+    zen.callbacks.button_press = _zen_button_press
+    # zen.callbacks.button_long_press = _zen_button_long_press
+    # zen.callbacks.motion_event = _zen_motion_event
+    # zen.callbacks.system_variable_change = _zen_system_variable_change
 
     # Start event monitoring
-    await zi.start()
+    await zen.start()
 
     print("Event monitoring started. Press Ctrl+C to stop.")
     
@@ -82,7 +82,7 @@ async def main():
             await asyncio.sleep(1)
     except KeyboardInterrupt:
         print("\nStopping event monitoring...")
-        await zi.stop()
+        await zen.stop()
 
 if __name__ == "__main__":
     run_with_keyboard_interrupt(main)

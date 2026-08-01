@@ -56,7 +56,7 @@ async def test_subscription_handler_returns_before_callback_runs() -> None:
     # Ensure a light singleton exists for address 0.
     from zencontrol import ZenAddress, ZenAddressType
 
-    light = zen.context.light(
+    light = zen.ctx.light(
         ZenAddress(controller=ctrl, type=ZenAddressType.ECG, number=0),
     )
     light.features = {"brightness": True}
@@ -162,7 +162,7 @@ async def test_dispatch_drops_unused_and_deprecated_event_kinds() -> None:
 
     zen = ZenControl()
     ctrl = zen.add_controller(id=1, name="house", label="House", host="127.0.0.1", mac="02:00:00:00:00:01")
-    light = zen.context.light(
+    light = zen.ctx.light(
         ZenAddress(controller=ctrl, type=ZenAddressType.ECG, number=5),
     )
     light.features = {"brightness": True}

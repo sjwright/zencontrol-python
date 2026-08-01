@@ -232,7 +232,6 @@ class EntityContext:
 
         ctrl = store[name]
         ctrl.ctx = self
-        ctrl.commands = self.commands
         ctrl.id = str(id)
         ctrl.name = name
         ctrl.label = label

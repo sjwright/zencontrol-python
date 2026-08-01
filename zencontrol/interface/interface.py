@@ -103,7 +103,7 @@ class ZenControl:
             logger=self.logger,
             print_traffic=print_traffic,
         )
-        self.context = EntityContext(commands=self.commands, logger=self.logger)
+        self.ctx = EntityContext(commands=self.commands, logger=self.logger)
         self.controllers: list[ZenController] = []
         listen_ip_val = listen_ip if listen_ip else "0.0.0.0"
         self.event_receiver = ZenEventReceiver(
@@ -119,7 +119,7 @@ class ZenControl:
         self.reconnect_healthy_seconds = Const.RECONNECT_HEALTHY_SECONDS
         self.event_keepalive_interval = Const.EVENT_KEEPALIVE_INTERVAL
 
-        self._dispatcher = EventDispatcher(self.context, self.logger)
+        self._dispatcher = EventDispatcher(self.ctx, self.logger)
         self._discovery = ControllerDiscovery(self)
 
         # Event-plane session state (wiring, supervisor, keepalive).
@@ -185,7 +185,7 @@ class ZenControl:
         if self._disconnect_notified:
             return
         self._disconnect_notified = True
-        await self._await_callback(self.context.callbacks.on_disconnect, what="on_disconnect")
+        await self._await_callback(self.ctx.callbacks.on_disconnect, what="on_disconnect")
 
     async def _on_listener_unexpected_exit(self) -> None:
         """Handle funnel consumer death. Recoverable gaps do not disconnect (I10)."""
@@ -245,7 +245,7 @@ class ZenControl:
             self._discovery_lease = None
         await self.event_receiver.close()
         if close_clients:
-            await self.context.cancel_background_tasks()
+            await self.ctx.cancel_background_tasks()
             await self.commands.close_all_clients()
         if was_running:
             await self.notify_disconnect()
@@ -324,7 +324,7 @@ class ZenControl:
                 continue
 
             if not connect_notified:
-                await self._await_callback(self.context.callbacks.on_connect, what="on_connect")
+                await self._await_callback(self.ctx.callbacks.on_connect, what="on_connect")
                 connect_notified = True
             self._first_connected.set()
             delay = self.reconnect_min_delay
@@ -444,13 +444,13 @@ class ZenControl:
 
     def clear_entity_caches(self) -> None:
         """Clear entity singleton registries for this ZenControl instance."""
-        self.context.clear_entity_caches()
+        self.ctx.clear_entity_caches()
         self._ecd_instances_by_controller.clear()
 
     @property
     def callbacks(self) -> ZenCallbacks:
         """Application callback registry (same object as context.callbacks)."""
-        return self.context.callbacks
+        return self.ctx.callbacks
 
     @property
     def discovered_controllers(self) -> list[DiscoveredController]:
@@ -466,7 +466,7 @@ class ZenControl:
 
     async def _forward_discovered(self, discovered: DiscoveredController) -> None:
         await self._await_callback(
-            self.context.callbacks.controller_discovered,
+            self.ctx.callbacks.controller_discovered,
             discovered,
             what="controller_discovered",
             exc_info=True,
@@ -474,7 +474,7 @@ class ZenControl:
 
     async def _notify_controller_identified(self, controller: ZenController, mac: str) -> None:
         await self._await_callback(
-            self.context.callbacks.controller_identified,
+            self.ctx.callbacks.controller_identified,
             controller,
             mac,
             what="controller_identified",
@@ -484,7 +484,7 @@ class ZenControl:
     def add_controller(
         self, id: int, name: str, label: str, host: str, port: int = 5108, mac: str | None = None, filtering: bool = False
     ) -> ZenController:
-        controller = self.context.controller(
+        controller = self.ctx.controller(
             id=id, name=name, label=label, host=host, port=port, mac=mac, filtering=filtering
         )
         self.controllers.append(controller)
@@ -503,7 +503,7 @@ class ZenControl:
         if self._wiring is not None:
             await self._wiring.detach(name)
         self._forget_event_dispatch(name)
-        self.context.purge_controller_entities(name)
+        self.ctx.purge_controller_entities(name)
         for ctrl in removed:
             await self.commands._invalidate_client(ctrl)
 
@@ -645,7 +645,7 @@ class ZenControl:
             if numbers is None:
                 continue
             for number in numbers:
-                profile = await self.context.create_profile(ctrl, number)
+                profile = await self.ctx.create_profile(ctrl, number)
                 profiles.add(profile)
         return profiles
 
@@ -659,12 +659,12 @@ class ZenControl:
         if isinstance(profile, ZenProfile):
             zp = profile
         elif isinstance(profile, str):
-            for key, p in self.context.registry.profiles.items():
+            for key, p in self.ctx.registry.profiles.items():
                 if key[0] == controller.name and p.label == profile:
                     zp = p
                     break
         elif isinstance(profile, int):
-            zp = self.context.registry.profiles.get((controller.name, profile))
+            zp = self.ctx.registry.profiles.get((controller.name, profile))
         if zp is None:
             return False
         self.commands.logger.debug("Switching to profile %s", zp)
@@ -677,7 +677,7 @@ class ZenControl:
         for ctrl in controllers:
             addresses = await self.commands.query_group_numbers(controller=ctrl)
             for address in addresses:
-                group = await self.context.create_group(address)
+                group = await self.ctx.create_group(address)
                 groups.add(group)
         return groups
 
@@ -713,11 +713,11 @@ class ZenControl:
                         kind = "light"
                 match kind:
                     case "fan":
-                        gear.add(await self.context.create_fan(address, label=label, ean=ean))
+                        gear.add(await self.ctx.create_fan(address, label=label, ean=ean))
                     case "blind":
-                        gear.add(await self.context.create_blind(address, label=label, ean=ean))
+                        gear.add(await self.ctx.create_blind(address, label=label, ean=ean))
                     case _:
-                        gear.add(await self.context.create_light(address, label=label, ean=ean))
+                        gear.add(await self.ctx.create_light(address, label=label, ean=ean))
         lights = {g for g in gear if isinstance(g, ZenLight)}
         _assign_light_sub_labels(lights)
         return gear
@@ -761,11 +761,11 @@ class ZenControl:
             for instance in await self._scan_ecd_instances(ctrl):
                 match instance.type:
                     case ZenInstanceType.PUSH_BUTTON:
-                        entities.add(await self.context.create_button(instance))
+                        entities.add(await self.ctx.create_button(instance))
                     case ZenInstanceType.OCCUPANCY_SENSOR:
-                        entities.add(await self.context.create_motion_sensor(instance))
+                        entities.add(await self.ctx.create_motion_sensor(instance))
                     case ZenInstanceType.ABSOLUTE_INPUT:
-                        entities.add(await self.context.create_absolute_input(instance))
+                        entities.add(await self.ctx.create_absolute_input(instance))
                     case _:
                         continue
         return entities
@@ -796,7 +796,7 @@ class ZenControl:
                 label = await self.commands.query_system_variable_name(controller=ctrl, variable=variable)
                 if label:
                     failed_attempts = 0
-                    sysvar = await self.context.create_system_variable(ctrl, variable, label=label)
+                    sysvar = await self.ctx.create_system_variable(ctrl, variable, label=label)
                     sysvars.add(sysvar)
                 else:
                     failed_attempts += 1
