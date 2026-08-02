@@ -98,13 +98,13 @@ async def test_aclose_cancels_tracked_background_tasks() -> None:
 
     task = zen.ctx.track_task(long_running())
     await asyncio.wait_for(started.wait(), timeout=1.0)
-    assert task in zen.ctx._bg_tasks
+    assert task in zen.ctx._background_tasks
 
     await zen.aclose()
 
     assert task.cancelled() or task.done()
     await asyncio.wait_for(cancelled.wait(), timeout=1.0)
-    assert zen.ctx._bg_tasks == set()
+    assert zen.ctx._background_tasks == set()
 
 
 @pytest.mark.asyncio

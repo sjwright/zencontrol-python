@@ -53,7 +53,7 @@ async def test_absolute_input_event_ignores_short_payload() -> None:
     zen = ZenControl()
     _ctrl, instance = _ecd_instance(zen)
     absolute = zen.ctx.absolute_input(instance)
-    await absolute._event_received(bytes([1]))
+    await absolute._handle_event(bytes([1]))
     assert absolute.value is None
 
 

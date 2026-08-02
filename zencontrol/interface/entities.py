@@ -129,7 +129,7 @@ class ZenController(SuperZenController):
         if current_profile is not None:
             self.profile = self.ctx.profile(self, current_profile)
         return True
-    async def _event_received(self, profile: int | None = None) -> None:
+    async def _handle_event(self, profile: int | None = None) -> None:
         if profile is not None:
             self.profile = self.ctx.profile(self, profile)
             cb = self.ctx.callbacks.profile_change
@@ -236,31 +236,31 @@ class ZenControlGear:
 
         # Mimic incoming events when the controller reports last scene / level / colour.
         if refreshed_level is not None:
-            await self._event_received_level(refreshed_level)
+            await self._handle_level_changed(refreshed_level)
         if refreshed_colour is not None:
-            await self._event_received_colour(refreshed_colour)
+            await self._handle_colour_changed(refreshed_colour)
         if refreshed_scene is not None:
-            await self._event_received_scene(refreshed_scene, active=True)
+            await self._handle_scene_changed(refreshed_scene, active=True)
 
-    async def _event_received_level(self, level: int, cascaded_from: ZenGroup | None = None) -> None:
+    async def _handle_level_changed(self, level: int, cascaded_from: ZenGroup | None = None) -> None:
         if level == 255 or level == self.level:
             return
         self.level = level
         if self.scene is not None:
             self.scene = None
         await self._after_direct_change(level_changed=True, colour_changed=False, cascaded_from=cascaded_from)
-        await self._notify_change()
+        await self._notify_state_changed()
 
-    async def _event_received_colour(self, colour: ZenColour, cascaded_from: ZenGroup | None = None) -> None:
+    async def _handle_colour_changed(self, colour: ZenColour, cascaded_from: ZenGroup | None = None) -> None:
         if colour == self.colour:
             return
         self.colour = colour
         if self.scene is not None:
             self.scene = None
         await self._after_direct_change(level_changed=False, colour_changed=True, cascaded_from=cascaded_from)
-        await self._notify_change()
+        await self._notify_state_changed()
 
-    async def _event_received_scene(self, scene: int, active: bool, cascaded_from: ZenGroup | None = None) -> None:
+    async def _handle_scene_changed(self, scene: int, active: bool, cascaded_from: ZenGroup | None = None) -> None:
         if active:
             self.scene = scene
             scene_level = self._scene_levels[scene]
@@ -270,11 +270,11 @@ class ZenControlGear:
             if scene_colour is not None and scene_colour != self.colour:
                 self.colour = scene_colour
             await self._after_scene_activated(cascaded_from=cascaded_from)
-            await self._notify_change()
+            await self._notify_state_changed()
             return
         if self.scene is not None:
             self.scene = None
-            await self._notify_change()
+            await self._notify_state_changed()
 
     async def _after_scene_activated(self, cascaded_from: ZenGroup | None = None) -> None:
         """Hook: light membership may discoordinate groups after a scene event."""
@@ -282,7 +282,7 @@ class ZenControlGear:
     async def _after_direct_change(self, *, level_changed: bool, colour_changed: bool, cascaded_from: ZenGroup | None = None) -> None:
         """Hook: light membership may discoordinate groups after level/colour events."""
 
-    async def _notify_change(self) -> None:
+    async def _notify_state_changed(self) -> None:
         """Hook: subclass fires light_change / group_change."""
 
     # -----------------------------------------------------------------------------------------
@@ -516,7 +516,7 @@ class ZenLight(ZenControlGear):
             ):
                 await group.declare_discoordination()
 
-    async def _notify_change(self) -> None:
+    async def _notify_state_changed(self) -> None:
         if callable(self.ctx.callbacks.light_change):
             await self.ctx.callbacks.light_change(light=self)
 
@@ -639,7 +639,7 @@ class ZenFan(ZenControlGear):
     async def set_speed(self, speed: int, fade: bool = True) -> bool | None:
         return await self.set(level=self.arc_for_speed(speed), fade=fade)
 
-    async def _notify_change(self) -> None:
+    async def _notify_state_changed(self) -> None:
         if callable(self.ctx.callbacks.fan_change):
             await self.ctx.callbacks.fan_change(fan=self)
 
@@ -771,7 +771,7 @@ class ZenBlind(ZenControlGear):
     async def stop(self) -> bool | None:
         return await self.dali_stop_fade()
 
-    async def _event_received_level(self, level: int, cascaded_from: ZenGroup | None = None) -> None:
+    async def _handle_level_changed(self, level: int, cascaded_from: ZenGroup | None = None) -> None:
         # MASK 255 = unknown / mid-travel - still notify (lights ignore 255).
         if level == self.level:
             return
@@ -779,7 +779,7 @@ class ZenBlind(ZenControlGear):
         if self.scene is not None:
             self.scene = None
         await self._after_direct_change(level_changed=True, colour_changed=False, cascaded_from=cascaded_from)
-        await self._notify_change()
+        await self._notify_state_changed()
 
     async def refresh_state_from_controller(self) -> None:
         refreshed_level = await self.commands.dali_query_level(self.address)
@@ -788,11 +788,11 @@ class ZenBlind(ZenControlGear):
             refreshed_scene = await self.commands.dali_query_last_scene(self.address)
         # None from query is failure/MASK collapse - do not clear a known position.
         if refreshed_level is not None:
-            await self._event_received_level(refreshed_level)
+            await self._handle_level_changed(refreshed_level)
         if refreshed_scene is not None:
-            await self._event_received_scene(refreshed_scene, active=True)
+            await self._handle_scene_changed(refreshed_scene, active=True)
 
-    async def _notify_change(self) -> None:
+    async def _notify_state_changed(self) -> None:
         if callable(self.ctx.callbacks.blind_change):
             await self.ctx.callbacks.blind_change(blind=self)
 
@@ -851,7 +851,7 @@ class ZenGroup(ZenControlGear):
             return [label for label in self._scene_labels if label is not None]
         return self._scene_labels
 
-    async def _notify_change(self) -> None:
+    async def _notify_state_changed(self) -> None:
         if callable(self.ctx.callbacks.group_change):
             await self.ctx.callbacks.group_change(group=self)
 
@@ -960,7 +960,7 @@ class ZenButton(ZenControlDeviceInstance):
         await self._interview_parent()
         return True
 
-    async def _event_received(self, held: bool = False) -> None:
+    async def _handle_event(self, held: bool = False) -> None:
         if not held:
             if callable(self.ctx.callbacks.button_press):
                 await self.ctx.callbacks.button_press(button=self)
@@ -1011,7 +1011,7 @@ class ZenAbsoluteInput(ZenControlDeviceInstance):
         """Last-known 16-bit value from an absolute-input event, or None."""
         return self._value
 
-    async def _event_received(self, payload: bytes) -> None:
+    async def _handle_event(self, payload: bytes) -> None:
         if len(payload) < 3:
             return
         new_value = (payload[1] << 8) | payload[2]
@@ -1106,7 +1106,7 @@ class ZenMotionSensor(ZenControlDeviceInstance):
         # Start a new task
         if new_value:
             # Update last detect time, begin a task, and set occupied to True.
-            # The occupied=True callback is fired by _event_received (which is
+            # The occupied=True callback is fired by _handle_event (which is
             # async and can await it properly).
             self.last_detect = time.time()
             self.hold_expiry_task = self.ctx.track_task(self._timeout_after_delay(self.hold_time))
@@ -1132,7 +1132,7 @@ class ZenMotionSensor(ZenControlDeviceInstance):
         if callable(self.ctx.callbacks.motion_event):
             await self.ctx.callbacks.motion_event(sensor=self)
 
-    async def _event_received(self) -> None:
+    async def _handle_event(self) -> None:
         # Capture old state before the setter updates it so we can fire the
         # callback with await instead of asyncio.create_task (fire-and-forget).
         was_occupied = self._occupied or False
@@ -1148,7 +1148,7 @@ class ZenSystemVariable:
     id: int
     label: str | None = None
     _value: int | None = None
-    _future_value: int | None = None
+    _anticipated_value: int | None = None
 
     def __init__(
         self,
@@ -1171,7 +1171,7 @@ class ZenSystemVariable:
     def _reset(self) -> None:
         self.label = None
         self._value = None
-        self._future_value = None
+        self._anticipated_value = None
     def interview_serialize(self) -> str:
         return json.dumps({
             "label": self.label,
@@ -1180,7 +1180,6 @@ class ZenSystemVariable:
         try:
             data = _loads_interview_data(data)
             self.label = data.get("label")
-            self._future_value = None
             return True
         except Exception: # pylint: disable=broad-exception-caught
             return False
@@ -1191,11 +1190,11 @@ class ZenSystemVariable:
         if self._value is None:
             self._value = await self.commands.query_system_variable(ctrl, self.id)
         return True
-    async def _event_received(self, new_value: int | None) -> None:
+    async def _handle_event(self, new_value: int | None) -> None:
         changed = new_value != self._value
-        by_me = new_value == self._future_value
+        by_me = new_value == self._anticipated_value
         self._value = new_value
-        self._future_value = None
+        self._anticipated_value = None
         if changed:
             if callable(self.ctx.callbacks.system_variable_change):
                 await self.ctx.callbacks.system_variable_change(
@@ -1221,10 +1220,10 @@ class ZenSystemVariable:
     async def refresh_state_from_controller(self) -> None:
         """Query the controller and update this system variable's runtime value."""
         new_value = await self.commands.query_system_variable(self.ctrl, self.id)
-        await self._event_received(new_value)
+        await self._handle_event(new_value)
     
     async def set_value(self, new_value: int) -> None:
         """Set the value of the system variable"""
-        self._future_value = new_value # If we get this value back as an event, we'll know it's from us
+        self._anticipated_value = new_value # If we get this value back as an event, we'll know it's from us
         await self.commands.set_system_variable(self.ctrl, self.id, new_value)
 

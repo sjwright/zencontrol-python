@@ -26,7 +26,7 @@ def _controller(name: str = "ctrl-a", host: str = "127.0.0.1") -> MagicMock:
 
 
 @pytest.mark.asyncio
-async def test_wiring_attach_subscribes_leases_and_programs_emit() -> None:
+async def test_wiring_attach_subscribes_leases_and_configures_event_delivery() -> None:
     receiver = ZenEventReceiver()
     receiver._endpoint_factory = fake_endpoint_factory()
     commands = MagicMock()
@@ -56,7 +56,7 @@ async def test_wiring_attach_subscribes_leases_and_programs_emit() -> None:
 
 
 @pytest.mark.asyncio
-async def test_program_unicast_without_advertise_raises() -> None:
+async def test_configure_event_delivery_unicast_without_advertise_raises() -> None:
     """UNICAST with no advertise must fail - not clear the address and emit blindly."""
     receiver = ZenEventReceiver(unicast_listen_ip="127.0.0.1", unicast_port=0)
     receiver._endpoint_factory = fake_endpoint_factory()
@@ -70,7 +70,7 @@ async def test_program_unicast_without_advertise_raises() -> None:
     assert lease.advertise is None
 
     with pytest.raises(RuntimeError, match="no advertise address"):
-        await wiring._program(
+        await wiring._configure_event_delivery(
             _controller(),
             lease,
             ZenEventMode(enabled=True, transport=Transport.UNICAST),
@@ -137,7 +137,7 @@ async def test_rearm_all_continues_after_one_controller_fails() -> None:
         if ctrl is ctrl_a:
             raise RuntimeError("ctrl-a unavailable")
 
-    with patch.object(wiring, "_program", side_effect=program):
+    with patch.object(wiring, "_configure_event_delivery", side_effect=program):
         await wiring.rearm_all()
 
     assert rearmed == ["ctrl-a", "ctrl-b"]

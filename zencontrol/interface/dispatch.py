@@ -91,26 +91,26 @@ class EventDispatcher:
                 instance = self._ecd_instance(ctrl, target, ZenInstanceType.PUSH_BUTTON, instance_num)
                 if instance is None:
                     return
-                await self.ctx.button(instance)._event_received()
+                await self.ctx.button(instance)._handle_event()
 
             case ButtonHold(target, instance_num):
                 instance = self._ecd_instance(ctrl, target, ZenInstanceType.PUSH_BUTTON, instance_num)
                 if instance is None:
                     return
-                await self.ctx.button(instance)._event_received(held=True)
+                await self.ctx.button(instance)._handle_event(held=True)
 
             case AbsoluteInput(target, instance_num, value):
                 instance = self._ecd_instance(ctrl, target, ZenInstanceType.ABSOLUTE_INPUT, instance_num)
                 if instance is None:
                     return
                 payload = bytes([instance_num, (value >> 8) & 0xFF, value & 0xFF])
-                await self.ctx.absolute_input(instance)._event_received(payload)
+                await self.ctx.absolute_input(instance)._handle_event(payload)
 
             case IsOccupied(target, instance_num):
                 instance = self._ecd_instance(ctrl, target, ZenInstanceType.OCCUPANCY_SENSOR, instance_num)
                 if instance is None:
                     return
-                await self.ctx.motion_sensor(instance)._event_received()
+                await self.ctx.motion_sensor(instance)._handle_event()
 
             case LevelChangeV2(target, _current, level):
                 address = self._ecg_or_group(ctrl, target)
@@ -119,9 +119,9 @@ class EventDispatcher:
                 if address.type == ZenAddressType.ECG:
                     gear = self.ctx.ecg_lookup(address)
                     if gear is not None:
-                        await gear._event_received_level(level)
+                        await gear._handle_level_changed(level)
                 elif address.type == ZenAddressType.GROUP:
-                    await self.ctx.group(address)._event_received_level(level)
+                    await self.ctx.group(address)._handle_level_changed(level)
 
             # LEVEL_CHANGE / GROUP_LEVEL_CHANGE / GROUP_OCCUPIED: not subscribed
             # (see ZenEventMask.all_events) and ignored here if they arrive.
@@ -136,12 +136,12 @@ class EventDispatcher:
                 if address.type == ZenAddressType.ECG:
                     gear = self.ctx.ecg_lookup(address)
                     if gear is not None and isinstance(gear, ZenLight):
-                        await gear._event_received_colour(colour)
+                        await gear._handle_colour_changed(colour)
                 elif address.type == ZenAddressType.GROUP:
                     group = self.ctx.group(address)
-                    await group._event_received_colour(colour)
+                    await group._handle_colour_changed(colour)
                     for light in group.lights:
-                        await light._event_received_colour(colour, cascaded_from=group)
+                        await light._handle_colour_changed(colour, cascaded_from=group)
 
             case SceneChange(target, scene, active):
                 address = self._ecg_or_group(ctrl, target)
@@ -151,22 +151,22 @@ class EventDispatcher:
                 if address.type == ZenAddressType.ECG:
                     gear = self.ctx.ecg_lookup(address)
                     if gear is not None:
-                        await gear._event_received_scene(scene, active)
+                        await gear._handle_scene_changed(scene, active)
                 elif address.type == ZenAddressType.GROUP:
                     group = self.ctx.group(address)
-                    await group._event_received_scene(scene, active)
+                    await group._handle_scene_changed(scene, active)
                     for light in group.lights:
-                        await light._event_received_scene(scene, active, cascaded_from=group)
+                        await light._handle_scene_changed(scene, active, cascaded_from=group)
                     for fan in group.fans:
-                        await fan._event_received_scene(scene, active, cascaded_from=group)
+                        await fan._handle_scene_changed(scene, active, cascaded_from=group)
                     for blind in group.blinds:
-                        await blind._event_received_scene(scene, active, cascaded_from=group)
+                        await blind._handle_scene_changed(scene, active, cascaded_from=group)
 
             case SystemVariableChange(target, value):
-                await self.ctx.system_variable(ctrl, target)._event_received(value)
+                await self.ctx.system_variable(ctrl, target)._handle_event(value)
 
             case ProfileChange(profile):
-                await ctrl._event_received(profile=profile)
+                await ctrl._handle_event(profile=profile)
 
             case _:
                 return

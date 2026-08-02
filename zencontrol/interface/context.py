@@ -192,7 +192,7 @@ class EntityContext:
         self.logger = logger or commands.logger
         self.callbacks = ZenCallbacks()
         self.registry = EntityRegistry()
-        self._bg_tasks: set[asyncio.Task[Any]] = set()
+        self._background_tasks: set[asyncio.Task[Any]] = set()
 
     def clear_entity_caches(self) -> None:
         """Drop all interface entity singletons owned by this context."""
@@ -431,12 +431,12 @@ class EntityContext:
     def track_task(self, coro: Coroutine[Any, Any, Any]) -> asyncio.Task[Any]:
         """Schedule fire-and-forget work and track it for cancellation on shutdown."""
         task = asyncio.create_task(coro)
-        self._bg_tasks.add(task)
-        task.add_done_callback(self._bg_task_done)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_task_done)
         return task
 
-    def _bg_task_done(self, task: asyncio.Task[Any]) -> None:
-        self._bg_tasks.discard(task)
+    def _background_task_done(self, task: asyncio.Task[Any]) -> None:
+        self._background_tasks.discard(task)
         if task.cancelled():
             return
         exc = task.exception()
@@ -458,8 +458,8 @@ class EntityContext:
 
     async def cancel_background_tasks(self) -> None:
         """Cancel tracked fire-and-forget work (timers, deferred callbacks)."""
-        tasks = list(self._bg_tasks)
-        self._bg_tasks.clear()
+        tasks = list(self._background_tasks)
+        self._background_tasks.clear()
         for task in tasks:
             task.cancel()
         if tasks:

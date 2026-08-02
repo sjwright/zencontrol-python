@@ -84,7 +84,7 @@ class ZenEventWiring:
         self.on_identified: IdentifiedHandler | None = None
         self.on_lost: LostBindingHandler | None = None
         self._bindings: dict[str, ZenBinding] = {}
-        self._lost_tasks: set[asyncio.Task[None]] = set()
+        self._binding_loss_tasks: set[asyncio.Task[None]] = set()
 
     @property
     def bindings(self) -> dict[str, ZenBinding]:
@@ -118,8 +118,8 @@ class ZenEventWiring:
                 reason,
             )
             task = asyncio.create_task(self._handle_subscription_lost(ctrl, reason))
-            self._lost_tasks.add(task)
-            task.add_done_callback(self._lost_tasks.discard)
+            self._binding_loss_tasks.add(task)
+            task.add_done_callback(self._binding_loss_tasks.discard)
 
         # Resolve off the loop - never ctrl.ip / gethostbyname here (HA).
         ip = await resolve_host(ctrl.host)
@@ -135,7 +135,7 @@ class ZenEventWiring:
         try:
             lease = await self._receiver.acquire(mode.transport, toward=ip)
             try:
-                await self._program(ctrl, lease, mode)
+                await self._configure_event_delivery(ctrl, lease, mode)
             except Exception:
                 await lease.release()
                 raise
@@ -202,13 +202,13 @@ class ZenEventWiring:
         binding = self.get(ctrl)
         if binding is None:
             return
-        await self._program(binding.ctrl, binding.lease, binding.mode)
+        await self._configure_event_delivery(binding.ctrl, binding.lease, binding.mode)
 
     async def rearm_all(self) -> None:
         """Replay stored modes after the receiver restores leased endpoints."""
         for binding in list(self._bindings.values()):
             try:
-                await self._program(binding.ctrl, binding.lease, binding.mode)
+                await self._configure_event_delivery(binding.ctrl, binding.lease, binding.mode)
             except Exception as err:
                 self.logger.error(
                     "Failed to re-arm events for %s: %s",
@@ -222,7 +222,7 @@ class ZenEventWiring:
             except Exception as err:
                 self.logger.error(f"on_resync error: {err}", exc_info=True)
 
-    async def _program(self, ctrl: ZenController, lease: Lease, mode: ZenEventMode) -> None:
+    async def _configure_event_delivery(self, ctrl: ZenController, lease: Lease, mode: ZenEventMode) -> None:
         if mode.transport is Transport.UNICAST:
             advertise = lease.advertise
             if advertise is None:
