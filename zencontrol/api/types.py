@@ -1,6 +1,6 @@
 """
-API enums, constants, and typed query results
-=============================================
+API enums and typed query results
+=================================
 
 This module holds vocabulary shared by commands, models, and the event plane.
 
@@ -13,8 +13,6 @@ TPI error replies.
 
 Frozen dataclasses such as TpiEventUnicastAddress and ControlGearStatus
 type the structured replies from query commands.
-
-"Const" is a collection of constants and defaults used throughout the API.
 
 """
 
@@ -218,47 +216,3 @@ class ProfileState:
     last_scheduled_profile_utc: datetime
 
 
-# API-level constants
-class Const:
-    """API-level constants"""
-    # ZenControl.start() waits this long for the first successful event-listener connect
-    START_TIMEOUT = 30.0
-
-    # DALI limits
-    MAX_ECG = 64  # 0-63
-    MAX_ECD = 64  # 0-63
-    MAX_INSTANCE = 32  # 0-31
-    MAX_GROUP = 16  # 0-15
-    MAX_SCENE = 12  # DALI protocol is 16 (0-15) but zencontrol cloud is soft-limited to 12 (0-11)
-    MAX_SYSVAR = 148  # 0-147
-    MAX_LEVEL = 254  # highest dimming arc
-    MASK_LEVEL = 255  # DAPC mask (no change / stop fade on blinds)
-    MIN_KELVIN = 1000
-    MAX_KELVIN = 20000
-
-    # Color temperature defaults (only used if query_dali_colour_temp_limits fails)
-    DEFAULT_WARMEST_TEMP = 2700
-    DEFAULT_COOLEST_TEMP = 6500
-    
-    # RGB channel counts
-    RGB_CHANNELS = 3
-    RGBW_CHANNELS = 4
-    RGBWW_CHANNELS = 5
-    
-    # Button press constants
-    LONG_PRESS_COUNT = 2
-    DEFAULT_HOLD_TIME = 60
-
-    # Event-listener reconnect (ZenControl supervisor)
-    RECONNECT_MIN_DELAY = 1.0
-    RECONNECT_MAX_DELAY = 30.0
-    RECONNECT_HEALTHY_SECONDS = 60.0
-    
-    # Periodic emit-state check - controllers that reboot while our listener
-    # stays up lose TPI event config until we re-assert it.
-    EVENT_KEEPALIVE_INTERVAL = 30.0
-
-    # Event-plane silence: RECEIVING demotes to SILENT when last_seen is older
-    # than this. Absence is ambiguous - expose it for diagnostics, do not
-    # treat it as transport failure.
-    EVENT_SILENT_AFTER = 60.0

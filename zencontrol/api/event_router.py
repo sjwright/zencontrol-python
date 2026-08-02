@@ -53,7 +53,7 @@ from ..utils import is_ipv4_address, local_ip_for_remote
 from .event_decode import ZenDecodedEvent, decode_zen_event
 from .discovery import DiscoveryLog
 from .models import mac_bytes_to_str
-from .types import Const, Transport
+from .types import Transport
 
 # Handlers run on the funnel consumer. Contract: do not await device/command I/O.
 SubscriptionHandler = Callable[[ZenDecodedEvent], Awaitable[None]]
@@ -69,6 +69,9 @@ LOST_MAC_CONFLICT = "mac_conflict"
 # Funnel policy (API-owned; wire constants stay on EventConst).
 DEFAULT_MAX_QUEUE_SIZE = 1000
 DROP_LOG_INTERVAL = 5.0  # seconds between queue-full warnings
+# RECEIVING demotes to SILENT when last_seen is older than this. Absence is
+# ambiguous - expose it for diagnostics, do not treat it as transport failure.
+DEFAULT_EVENT_SILENT_AFTER = 60.0
 
 
 class EventHealth(Enum):
@@ -188,7 +191,7 @@ class ZenEventReceiver:
         max_queue_size: int = DEFAULT_MAX_QUEUE_SIZE,
         unicast_listen_ip: str = "0.0.0.0",
         unicast_port: int = 0,
-        event_silent_after: float = Const.EVENT_SILENT_AFTER,
+        event_silent_after: float = DEFAULT_EVENT_SILENT_AFTER,
         identities: DiscoveryLog | None = None,
     ) -> None:
         self.logger = logger or logging.getLogger(__name__)

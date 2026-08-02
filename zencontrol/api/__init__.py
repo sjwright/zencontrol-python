@@ -3,7 +3,7 @@ API layer: TPI command client, event receiver, and wire-facing models.
 """
 
 from .commands import ZenCommandClient
-from .event_decode import ZenEventCode, ZenEventMask
+from .event_decode import ZenEventCode, ZenEventMask, TpiEventFilter
 from .event_router import EventHealth, Lease, Subscription, ZenEventReceiver
 from .discovery import DiscoveryLog
 from .models import (
@@ -59,4 +59,5 @@ __all__ = [
     "ZenEventCode",
     "ZenEventMask",
     "ZenEventMode",
+    "TpiEventFilter",
 ]

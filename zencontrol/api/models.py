@@ -26,7 +26,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Protocol, Self
 
-from .types import Const, ZenAddressType, ZenColourType, ZenInstanceType
+from .const import Const
+from .types import ZenAddressType, ZenColourType, ZenInstanceType
 
 DEFAULT_CONTROLLER_PORT = 5108
 

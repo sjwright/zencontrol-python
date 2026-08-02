@@ -100,6 +100,7 @@ Each `create` / first fetch runs `interview()` (labels, features, membership, ti
 | `ZenFan` | Ceiling fan speeds via discrete ARC levels (`set_speed` / `speed`) |
 | `ZenBlind` | Position 0-100% |
 | `ZenGroup` | Group gear: mostly the same as lights, plus scene label helpers and group state assertions |
+| `ZenControlDeviceInstance` | Shared base for ECD instances: serial/ean/labels + interview triad |
 | `ZenButton` | Press / long-press via callbacks |
 | `ZenMotionSensor` | `occupied`; occupancy events |
 | `ZenAbsoluteInput` | 16-bit `value` |

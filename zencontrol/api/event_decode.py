@@ -14,6 +14,8 @@ is the wrong length. No exceptions are ever raised.
 "ZenEventMask" uses that vocabulary to build bitmasks to enable or filter
 events on the controller.
 
+"TpiEventFilter" is one QUERY_DALI_TPI_EVENT_FILTERS result row.
+
 -----------------------------------------------------
 Basic example:
 
@@ -38,7 +40,7 @@ from enum import IntEnum, IntFlag
 from typing import Self
 
 from ..io.event import ZenEvent
-from .types import Const
+from .const import Const
 
 
 class ZenEventCode(IntEnum):
@@ -92,6 +94,15 @@ class ZenEventMask(IntFlag):
 
     def lower(self) -> int:
         return int(self) & 0xFF
+
+
+@dataclass(frozen=True, slots=True)
+class TpiEventFilter:
+    """One entry from QUERY_DALI_TPI_EVENT_FILTERS."""
+
+    address: int
+    instance: int
+    event_mask: ZenEventMask
 
 
 @dataclass(frozen=True, slots=True)

@@ -210,7 +210,8 @@ async def test_start_receives_injected_and_control_events(live_zen):
     )
 
     live_sim.sim.inject_button_press(0, 0)
-    # Interface long-press fires after Const.LONG_PRESS_COUNT (2) holds.
+    # Interface long-press fires after Const.LONG_PRESS_COUNT (2) holds
+    # (zencontrol.interface.const).
     live_sim.sim.inject_button_hold(0, 1)
     live_sim.sim.inject_button_hold(0, 1)
     live_sim.sim.inject_occupancy(0, 2, occupied=True)

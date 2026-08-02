@@ -29,9 +29,11 @@ from ..api.commands import ZenCommandClient
 from ..api.event_decode import ZenDecodedEvent
 from ..api.event_router import EventHealth, Lease, ZenEventReceiver
 from ..api.models import DiscoveredController
-from ..api.types import Const, Transport, ZenEventMode
+from ..api.const import Const as ApiConst
+from ..api.types import Transport, ZenEventMode
 from ..api.types import TpiEventUnicastAddress
 from ..exceptions import ZenConnectionError
+from .const import Const
 from .context import ControllerRuntimeStatus, EntityContext, ZenCallbacks
 from .discovery import ControllerDiscovery
 from .dispatch import EventDispatcher
@@ -772,7 +774,7 @@ class ZenControl:
         controllers = [ctrl] if ctrl else self.controllers
         for ctrl in controllers:
             failed_attempts = 0
-            for variable in range(Const.MAX_SYSVAR):
+            for variable in range(ApiConst.MAX_SYSVAR):
                 label = await self.commands.query_system_variable_name(ctrl=ctrl, variable=variable)
                 if label:
                     failed_attempts = 0

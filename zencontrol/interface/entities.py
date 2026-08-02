@@ -21,7 +21,9 @@ from ..api import (
 )
 from ..api import ZenController as SuperZenController
 from ..api.commands import ZenCommandClient
-from ..api.types import Const, ZenCgType
+from ..api.const import Const as ApiConst
+from ..api.types import ZenCgType
+from .const import Const
 from .context import EntityContext
 
 
@@ -76,7 +78,7 @@ def _or_scene_label(label: str | None, scene: int) -> str:
 
 async def _group_scene_labels(commands: ZenCommandClient, address: ZenAddress) -> list[str | None]:
     """Scene labels for a group, with generic names when the controller has none."""
-    scenes: list[str | None] = [None] * Const.MAX_SCENE
+    scenes: list[str | None] = [None] * ApiConst.MAX_SCENE
     for scene in await commands.query_scene_numbers_for_group(address):
         label = await commands.query_scene_label_for_group(address, scene)
         scenes[scene] = _or_scene_label(label, scene)
@@ -178,8 +180,9 @@ class ZenControlGear:
     """Shared base for addressable DALI control gear (lights and groups).
 
     Holds runtime level/colour/scene state and the command helpers that drive
-    the controller. Subclasses own interview/identity and override the
-    notification and discoordination hooks used by _event_received.
+    the controller. Interview caches use _interview_serialize_parent /
+    _interview_hydrate_parent for shared label/scene_levels; subclasses own
+    interview_serialize / interview_hydrate.
     """
 
     ctx: EntityContext
@@ -193,14 +196,28 @@ class ZenControlGear:
     colour: ZenColour | None = None
     scene: int | None = None
 
-    def _reset_gear_state(self) -> None:
+    def _reset(self) -> None:
         self.label = None
-        self._scene_labels = [None] * Const.MAX_SCENE
-        self._scene_levels = [None] * Const.MAX_SCENE
-        self._scene_colours = [None] * Const.MAX_SCENE
+        self._scene_labels = [None] * ApiConst.MAX_SCENE
+        self._scene_levels = [None] * ApiConst.MAX_SCENE
+        self._scene_colours = [None] * ApiConst.MAX_SCENE
         self.level = None
         self.colour = None
         self.scene = None
+
+    def _interview_serialize_parent(self) -> dict[str, Any]:
+        return {
+            "label": self.label,
+            "scene_levels": list(self._scene_levels),
+        }
+
+    def _interview_hydrate_parent(self, data: dict[str, Any]) -> None:
+        self.label = data.get("label")
+        if "scene_levels" in data:
+            levels = data.get("scene_levels")
+            self._scene_levels = list(levels if levels is not None else [None] * ApiConst.MAX_SCENE)
+            if len(self._scene_levels) < ApiConst.MAX_SCENE:
+                self._scene_levels.extend([None] * (ApiConst.MAX_SCENE - len(self._scene_levels)))
 
     def supports_colour(self, colour: ZenColourType | ZenColour) -> bool:
         return False
@@ -342,7 +359,7 @@ class ZenLight(ZenControlGear):
     def __repr__(self) -> str:
         return f"ZenLight<{self.address.ctrl.name} ecg {self.address.number}: {self.label}>"
     def _reset(self) -> None:
-        self._reset_gear_state()
+        super()._reset()
         self.sub_label = None
         self.serial = None
         self.ean = None
@@ -372,8 +389,8 @@ class ZenLight(ZenControlGear):
             group.lights.add(self)
             self.groups.add(group)
     def interview_serialize(self) -> str:
-        return json.dumps({
-            "label": self.label,
+        data = self._interview_serialize_parent()
+        data.update({
             "sub_label": self.sub_label,
             "serial": self.serial,
             "ean": self.ean,
@@ -381,34 +398,34 @@ class ZenLight(ZenControlGear):
             "group_membership": [_serialize_group_address(group) for group in self.group_membership],
             "features": dict(self.features),
             "properties": dict(self.properties),
-            "scene_levels": list(self._scene_levels),
             "scene_colours": [
                 list(colour.to_bytes()) if colour is not None else None
                 for colour in self._scene_colours
             ],
         })
+        return json.dumps(data)
+
     def interview_hydrate(self, data: str | dict[str, Any]) -> bool:
         try:
-            data = _loads_interview_data(data)
-            self.label = data.get("label")
-            self.sub_label = data.get("sub_label")
-            self.serial = data.get("serial")
-            self.ean = data.get("ean")
-            self.cgtype = _cgtypes_from_data(list(data.get("cgtype", [])))
-            self.features.update(data.get("features", {}))
-            self.properties.update(data.get("properties", {}))
-            self._scene_levels = list(data.get("scene_levels", []))
+            loaded = _loads_interview_data(data)
+            self._interview_hydrate_parent(loaded)
+            self.sub_label = loaded.get("sub_label")
+            self.serial = loaded.get("serial")
+            self.ean = loaded.get("ean")
+            self.cgtype = _cgtypes_from_data(list(loaded.get("cgtype", [])))
+            self.features.update(loaded.get("features", {}))
+            self.properties.update(loaded.get("properties", {}))
             self._scene_colours = [
                 colour_from_bytes(bytes(raw)) if raw is not None else None
-                for raw in data.get("scene_colours", [])
+                for raw in loaded.get("scene_colours", [])
             ]
             membership = [
                 ZenAddress(ctrl=self.address.ctrl, type=ZenAddressType.GROUP, number=group["number"])
-                for group in data.get("group_membership", [])
+                for group in loaded.get("group_membership", [])
             ]
             self._apply_group_membership(membership)
             return True
-        except Exception: # pylint: disable=broad-exception-caught
+        except Exception:  # pylint: disable=broad-exception-caught
             return False
     async def interview(self) -> bool:
         cgstatus = await self.commands.dali_query_control_gear_status(self.address)
@@ -526,7 +543,7 @@ class ZenFan(ZenControlGear):
         return f"ZenFan<{self.address.ctrl.name} ecg {self.address.number}: {self.label}>"
 
     def _reset(self) -> None:
-        self._reset_gear_state()
+        super()._reset()
         self.serial = None
         self.ean = None
         self.bus_unit = None
@@ -546,33 +563,30 @@ class ZenFan(ZenControlGear):
             self.groups.add(group)
 
     def interview_serialize(self) -> str:
-        return json.dumps({
+        data = self._interview_serialize_parent()
+        data.update({
             "kind": self.kind,
-            "label": self.label,
             "serial": self.serial,
             "ean": self.ean,
             "bus_unit": self.bus_unit,
             "operating_mode": self.operating_mode,
             "cgtype": list(self.cgtype),
             "group_membership": [_serialize_group_address(group) for group in self.group_membership],
-            "scene_levels": list(self._scene_levels),
         })
+        return json.dumps(data)
 
     def interview_hydrate(self, data: str | dict[str, Any]) -> bool:
         try:
-            data = _loads_interview_data(data)
-            self.label = data.get("label")
-            self.serial = data.get("serial")
-            self.ean = data.get("ean")
-            self.bus_unit = data.get("bus_unit")
-            self.operating_mode = data.get("operating_mode")
-            self.cgtype = _cgtypes_from_data(list(data.get("cgtype", [])))
-            self._scene_levels = list(data.get("scene_levels", [None] * Const.MAX_SCENE))
-            if len(self._scene_levels) < Const.MAX_SCENE:
-                self._scene_levels.extend([None] * (Const.MAX_SCENE - len(self._scene_levels)))
+            loaded = _loads_interview_data(data)
+            self._interview_hydrate_parent(loaded)
+            self.serial = loaded.get("serial")
+            self.ean = loaded.get("ean")
+            self.bus_unit = loaded.get("bus_unit")
+            self.operating_mode = loaded.get("operating_mode")
+            self.cgtype = _cgtypes_from_data(list(loaded.get("cgtype", [])))
             membership = [
                 ZenAddress(ctrl=self.address.ctrl, type=ZenAddressType.GROUP, number=group["number"])
-                for group in data.get("group_membership", [])
+                for group in loaded.get("group_membership", [])
             ]
             self._apply_group_membership(membership)
             return True
@@ -591,7 +605,7 @@ class ZenFan(ZenControlGear):
             if self.operating_mode is None:
                 self.operating_mode = await self.commands.query_operating_mode_by_address(self.address)
             self.cgtype = await self.commands.dali_query_cg_type(self.address) or []
-            self._scene_levels = await self.commands.query_scene_levels_by_address(self.address) or [None] * Const.MAX_SCENE
+            self._scene_levels = await self.commands.query_scene_levels_by_address(self.address) or [None] * ApiConst.MAX_SCENE
             groups = await self.commands.query_group_membership_by_address(self.address)
             self._apply_group_membership(groups or [])
             return True
@@ -650,7 +664,7 @@ class ZenBlind(ZenControlGear):
         return f"ZenBlind<{self.address.ctrl.name} ecg {self.address.number}: {self.label}>"
 
     def _reset(self) -> None:
-        self._reset_gear_state()
+        super()._reset()
         self.serial = None
         self.ean = None
         self.bus_unit = None
@@ -670,33 +684,30 @@ class ZenBlind(ZenControlGear):
             self.groups.add(group)
 
     def interview_serialize(self) -> str:
-        return json.dumps({
+        data = self._interview_serialize_parent()
+        data.update({
             "kind": self.kind,
-            "label": self.label,
             "serial": self.serial,
             "ean": self.ean,
             "bus_unit": self.bus_unit,
             "operating_mode": self.operating_mode,
             "cgtype": list(self.cgtype),
             "group_membership": [_serialize_group_address(group) for group in self.group_membership],
-            "scene_levels": list(self._scene_levels),
         })
+        return json.dumps(data)
 
     def interview_hydrate(self, data: str | dict[str, Any]) -> bool:
         try:
-            data = _loads_interview_data(data)
-            self.label = data.get("label")
-            self.serial = data.get("serial")
-            self.ean = data.get("ean")
-            self.bus_unit = data.get("bus_unit")
-            self.operating_mode = data.get("operating_mode")
-            self.cgtype = _cgtypes_from_data(list(data.get("cgtype", [])))
-            self._scene_levels = list(data.get("scene_levels", [None] * Const.MAX_SCENE))
-            if len(self._scene_levels) < Const.MAX_SCENE:
-                self._scene_levels.extend([None] * (Const.MAX_SCENE - len(self._scene_levels)))
+            loaded = _loads_interview_data(data)
+            self._interview_hydrate_parent(loaded)
+            self.serial = loaded.get("serial")
+            self.ean = loaded.get("ean")
+            self.bus_unit = loaded.get("bus_unit")
+            self.operating_mode = loaded.get("operating_mode")
+            self.cgtype = _cgtypes_from_data(list(loaded.get("cgtype", [])))
             membership = [
                 ZenAddress(ctrl=self.address.ctrl, type=ZenAddressType.GROUP, number=group["number"])
-                for group in data.get("group_membership", [])
+                for group in loaded.get("group_membership", [])
             ]
             self._apply_group_membership(membership)
             return True
@@ -715,7 +726,7 @@ class ZenBlind(ZenControlGear):
             if self.operating_mode is None:
                 self.operating_mode = await self.commands.query_operating_mode_by_address(self.address)
             self.cgtype = await self.commands.dali_query_cg_type(self.address) or []
-            self._scene_levels = await self.commands.query_scene_levels_by_address(self.address) or [None] * Const.MAX_SCENE
+            self._scene_levels = await self.commands.query_scene_levels_by_address(self.address) or [None] * ApiConst.MAX_SCENE
             groups = await self.commands.query_group_membership_by_address(self.address)
             self._apply_group_membership(groups or [])
             return True
@@ -752,7 +763,7 @@ class ZenBlind(ZenControlGear):
         return await self.set(level=self.arc_for_position(position), fade=fade)
 
     async def open(self, fade: bool = True) -> bool | None:
-        return await self.set(level=Const.MAX_LEVEL, fade=fade)
+        return await self.set(level=ApiConst.MAX_LEVEL, fade=fade)
 
     async def close(self, fade: bool = True) -> bool | None:
         return await self.off(fade=fade)
@@ -804,21 +815,22 @@ class ZenGroup(ZenControlGear):
         return f"ZenGroup<{self.address.ctrl.name} group {self.address.number}: {self.label}>"
 
     def _reset(self) -> None:
-        self._reset_gear_state()
+        super()._reset()
 
     def interview_serialize(self) -> str:
-        return json.dumps({
-            "label": self.label,
-            "scene_labels": list(self._scene_labels),
-        })
+        data = self._interview_serialize_parent()
+        data["scene_labels"] = list(self._scene_labels)
+        return json.dumps(data)
+
     def interview_hydrate(self, data: str | dict[str, Any]) -> bool:
         try:
-            data = _loads_interview_data(data)
-            self.label = data.get("label")
-            self._scene_labels = list(data.get("scene_labels", []))
+            loaded = _loads_interview_data(data)
+            self._interview_hydrate_parent(loaded)
+            self._scene_labels = list(loaded.get("scene_labels", []))
             return True
-        except Exception: # pylint: disable=broad-exception-caught
+        except Exception:  # pylint: disable=broad-exception-caught
             return False
+
     async def interview(self) -> bool:
         if self.label is None:
             self.label = _or_group_label(await self.commands.query_group_label(self.address), self.address.number)
@@ -854,16 +866,21 @@ class ZenGroup(ZenControlGear):
         if callable(self.ctx.callbacks.group_change):
             await self.ctx.callbacks.group_change(group=self, discoordinated=True)
 
-class ZenButton:
+class ZenControlDeviceInstance:
+    """Shared base for ECD instance entities (button, absolute input, motion).
+
+    Owns device/instance identity (serial, ean, labels) and the interview
+    triad that keeps ZenInstance.address in sync. Subclasses add runtime
+    state and event handling.
+    """
+
     ctx: EntityContext
     commands: ZenCommandClient
     instance: ZenInstance
-    serial: (int | str) | None = None
+    serial: int | str | None = None
     ean: int | None = None
     label: str | None = None
     instance_label: str | None = None
-    last_press_time: float = 0.0
-    long_press_count: int = 0
 
     def __init__(self, ctx: EntityContext, instance: ZenInstance) -> None:
         self.ctx = ctx
@@ -871,36 +888,40 @@ class ZenButton:
         self.instance = instance
         self._reset()
 
+    def _entity_name(self) -> str:
+        return type(self).__name__
+
     def __repr__(self) -> str:
-        return f"ZenButton<{self.instance.address.ctrl.name} ecd {self.instance.address.number} inst {self.instance.number}: {self.label} / {self.instance_label}>"
+        return (
+            f"{self._entity_name()}<{self.instance.address.ctrl.name} "
+            f"ecd {self.instance.address.number} inst {self.instance.number}: "
+            f"{self.label} / {self.instance_label}>"
+        )
+
     def _reset(self) -> None:
         self.serial = None
         self.ean = None
         self.label = None
         self.instance_label = None
-        self.last_press_time = time.time()
-        self.long_press_count = 0
-    def interview_serialize(self) -> str:
-        return json.dumps({
+
+    def _interview_serialize_parent(self) -> dict[str, Any]:
+        return {
             "serial": self.serial,
             "ean": self.ean,
             "label": self.label,
             "instance_label": self.instance_label,
-        })
-    def interview_hydrate(self, data: str | dict[str, Any]) -> bool:
-        try:
-            data = _loads_interview_data(data)
-            self.serial = data.get("serial")
-            self.ean = data.get("ean")
-            self.label = data.get("label")
-            self.instance_label = data.get("instance_label")
-            self.instance.address.label = self.label
-            self.instance.address.serial = cast(str | None, self.serial)
-            self.instance.address.ean = self.ean
-            return True
-        except Exception: # pylint: disable=broad-exception-caught
-            return False
-    async def interview(self) -> bool:
+        }
+
+    def _interview_hydrate_parent(self, data: dict[str, Any]) -> None:
+        self.serial = data.get("serial")
+        self.ean = data.get("ean")
+        self.label = data.get("label")
+        self.instance_label = data.get("instance_label")
+        self.instance.address.label = self.label
+        self.instance.address.serial = cast(str | None, self.serial)
+        self.instance.address.ean = self.ean
+
+    async def _interview_parent(self) -> None:
         inst = self.instance
         addr = inst.address
         if addr.label is None:
@@ -914,7 +935,31 @@ class ZenButton:
         self.ean = addr.ean
         if self.instance_label is None:
             self.instance_label = _or_instance_label(await self.commands.query_dali_instance_label(inst), inst)
+
+
+class ZenButton(ZenControlDeviceInstance):
+    last_press_time: float = 0.0
+    long_press_count: int = 0
+
+    def _reset(self) -> None:
+        super()._reset()
+        self.last_press_time = time.time()
+        self.long_press_count = 0
+
+    def interview_serialize(self) -> str:
+        return json.dumps(self._interview_serialize_parent())
+
+    def interview_hydrate(self, data: str | dict[str, Any]) -> bool:
+        try:
+            self._interview_hydrate_parent(_loads_interview_data(data))
+            return True
+        except Exception:  # pylint: disable=broad-exception-caught
+            return False
+
+    async def interview(self) -> bool:
+        await self._interview_parent()
         return True
+
     async def _event_received(self, held: bool = False) -> None:
         if not held:
             if callable(self.ctx.callbacks.button_press):
@@ -933,7 +978,7 @@ class ZenButton:
                     await self.ctx.callbacks.button_long_press(button=self)
 
 
-class ZenAbsoluteInput:
+class ZenAbsoluteInput(ZenControlDeviceInstance):
     """DALI ECD absolute (numerical) input instance - dials, sliders, etc.
 
     Controllers emit value-change events only; TPI has no query/set command for
@@ -941,71 +986,24 @@ class ZenAbsoluteInput:
     Payload matches _protocol.txt: [instance, value_hi, value_lo].
     """
 
-    ctx: EntityContext
-    commands: ZenCommandClient
-    instance: ZenInstance
-    serial: (int | str) | None = None
-    ean: int | None = None
-    label: str | None = None
-    instance_label: str | None = None
     _value: int | None = None
 
-    def __init__(self, ctx: EntityContext, instance: ZenInstance) -> None:
-        self.ctx = ctx
-        self.commands = ctx.commands
-        self.instance = instance
-        self._reset()
-
-    def __repr__(self) -> str:
-        return (
-            f"ZenAbsoluteInput<{self.instance.address.ctrl.name} "
-            f"ecd {self.instance.address.number} inst {self.instance.number}: "
-            f"{self.label} / {self.instance_label}>"
-        )
-
     def _reset(self) -> None:
-        self.serial = None
-        self.ean = None
-        self.label = None
-        self.instance_label = None
+        super()._reset()
         self._value = None
 
     def interview_serialize(self) -> str:
-        return json.dumps({
-            "serial": self.serial,
-            "ean": self.ean,
-            "label": self.label,
-            "instance_label": self.instance_label,
-        })
+        return json.dumps(self._interview_serialize_parent())
 
     def interview_hydrate(self, data: str | dict[str, Any]) -> bool:
         try:
-            data = _loads_interview_data(data)
-            self.serial = data.get("serial")
-            self.ean = data.get("ean")
-            self.label = data.get("label")
-            self.instance_label = data.get("instance_label")
-            self.instance.address.label = self.label
-            self.instance.address.serial = cast(str | None, self.serial)
-            self.instance.address.ean = self.ean
+            self._interview_hydrate_parent(_loads_interview_data(data))
             return True
-        except Exception: # pylint: disable=broad-exception-caught
+        except Exception:  # pylint: disable=broad-exception-caught
             return False
 
     async def interview(self) -> bool:
-        inst = self.instance
-        addr = inst.address
-        if addr.label is None:
-            addr.label = _or_device_label(await self.commands.query_dali_device_label(addr), addr)
-        if addr.serial is None:
-            addr.serial = cast(str | None, await self.commands.query_dali_serial(addr))
-        if addr.ean is None:
-            addr.ean = await self.commands.query_dali_ean(addr)
-        self.label = addr.label
-        self.serial = addr.serial
-        self.ean = addr.ean
-        if self.instance_label is None:
-            self.instance_label = _or_instance_label(await self.commands.query_dali_instance_label(inst), inst)
+        await self._interview_parent()
         return True
 
     @property
@@ -1023,93 +1021,53 @@ class ZenAbsoluteInput:
             await self.ctx.callbacks.absolute_input_change(absolute_input=self)
 
 
-class ZenMotionSensor:
-    ctx: EntityContext
-    commands: ZenCommandClient
-    instance: ZenInstance
+class ZenMotionSensor(ZenControlDeviceInstance):
     hold_time: int = Const.DEFAULT_HOLD_TIME
     hold_expiry_task: asyncio.Task[None] | None = None
-    serial: (int | str) | None = None
-    ean: int | None = None
-    label: str | None = None
-    instance_label: str | None = None
     deadtime: int | None = None
     last_detect: float | None = None
     _occupied: bool | None = None
 
-    def __init__(self, ctx: EntityContext, instance: ZenInstance) -> None:
-        self.ctx = ctx
-        self.commands = ctx.commands
-        self.instance = instance
-        self._reset()
-
-    def __repr__(self) -> str:
-        return f"ZenMotionSensor<{self.instance.address.ctrl.name} ecd {self.instance.address.number} inst {self.instance.number}: {self.label} / {self.instance_label}>"
     def _reset(self) -> None:
+        super()._reset()
         self.hold_time = Const.DEFAULT_HOLD_TIME
         self.hold_expiry_task = None
-        #
-        self.serial = None
-        self.ean = None
-        self.label = None
-        self.instance_label = None
         self.deadtime = None
         self.last_detect = None
         self._occupied = None
+
     def interview_serialize(self) -> str:
-        return json.dumps({
-            "serial": self.serial,
-            "ean": self.ean,
-            "label": self.label,
-            "instance_label": self.instance_label,
-            "deadtime": self.deadtime,
-            "hold_time": self.hold_time,
-        })
+        data = self._interview_serialize_parent()
+        data["deadtime"] = self.deadtime
+        data["hold_time"] = self.hold_time
+        return json.dumps(data)
+
     def interview_hydrate(self, data: str | dict[str, Any]) -> bool:
         try:
-            data = _loads_interview_data(data)
-            self.serial = data.get("serial")
-            self.ean = data.get("ean")
-            self.label = data.get("label")
-            self.instance_label = data.get("instance_label")
-            self.deadtime = data.get("deadtime")
-            self.hold_time = data.get("hold_time", Const.DEFAULT_HOLD_TIME)
+            loaded = _loads_interview_data(data)
+            self._interview_hydrate_parent(loaded)
+            self.deadtime = loaded.get("deadtime")
+            self.hold_time = loaded.get("hold_time", Const.DEFAULT_HOLD_TIME)
             self._occupied = None
-            self.instance.address.label = self.label
-            self.instance.address.serial = cast(str | None, self.serial)
-            self.instance.address.ean = self.ean
             return True
-        except Exception: # pylint: disable=broad-exception-caught
+        except Exception:  # pylint: disable=broad-exception-caught
             return False
+
     async def interview(self) -> bool:
-        inst = self.instance
-        addr = inst.address
-        occupancy_timers = await self.commands.query_occupancy_instance_timers(inst)
-        if occupancy_timers is not None:
-            if addr.serial is None:
-                addr.serial = cast(str | None, await self.commands.query_dali_serial(addr))
-            if addr.ean is None:
-                addr.ean = await self.commands.query_dali_ean(addr)
-            if addr.label is None:
-                addr.label = _or_device_label(await self.commands.query_dali_device_label(addr), addr)
-            self.serial = addr.serial
-            self.ean = addr.ean
-            self.label = addr.label
-            if self.instance_label is None:
-                self.instance_label = _or_instance_label(await self.commands.query_dali_instance_label(inst), inst)
-            self.deadtime = occupancy_timers.deadtime
-            self.hold_time = occupancy_timers.hold
-            self.last_detect = time.time() - occupancy_timers.last_detect
-            self._occupied = None
-        else:
+        occupancy_timers = await self.commands.query_occupancy_instance_timers(self.instance)
+        if occupancy_timers is None:
             self._reset()
             return False
+        await self._interview_parent()
+        self.deadtime = occupancy_timers.deadtime
+        self.hold_time = occupancy_timers.hold
+        self.last_detect = time.time() - occupancy_timers.last_detect
+        self._occupied = None
         return True
 
     async def refresh_state_from_controller(self) -> bool:
         """Query controller and update runtime occupancy fields."""
-        inst = self.instance
-        occupancy_timers = await self.commands.query_occupancy_instance_timers(inst)
+        occupancy_timers = await self.commands.query_occupancy_instance_timers(self.instance)
         if occupancy_timers is None:
             self.last_detect = None
             self._occupied = None
@@ -1125,6 +1083,7 @@ class ZenMotionSensor:
         self.last_detect = time.time() - occupancy_timers.last_detect
         self._occupied = None
         return True
+
     @property
     def occupied(self) -> bool:
         if self.last_detect is None:
@@ -1137,7 +1096,7 @@ class ZenMotionSensor:
             self.hold_expiry_task = self.ctx.track_task(self._timeout_after_delay(seconds_until_hold_time_expires))
         return within_hold_time
 
-    @occupied.setter 
+    @occupied.setter
     def occupied(self, new_value: bool) -> None:
         old_value = self._occupied or False
         # Cancel any hold time task

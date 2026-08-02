@@ -38,7 +38,7 @@ import struct
 import time
 from datetime import datetime as dt
 from enum import IntEnum
-from typing import Any, Self
+from typing import Self
 
 from ..exceptions import ZenTimeoutError
 from ..io.command import (
@@ -49,7 +49,7 @@ from ..io.command import (
     ZenResponse,
     ZenResponseType,
 )
-from .event_decode import ZenEventMask
+from .event_decode import TpiEventFilter, ZenEventMask
 from .models import (
     ControllerRef,
     ZenAddress,
@@ -57,8 +57,8 @@ from .models import (
     ZenInstance,
     colour_from_bytes,
 )
+from .const import Const
 from .types import (
-    Const,
     ControlGearStatus,
     DaliColourFeatures,
     DaliColourTempLimits,
@@ -490,49 +490,44 @@ class ZenCommandClient:
                              address.ecg_or_ecd_or_broadcast(),
                              [instance_number, unfilter.upper(), unfilter.lower()]))
 
-    async def query_dali_tpi_event_filters(self, address: ZenAddress|ZenInstance) -> list[dict[str, Any]]:
-        """Query active event filters for an address (or a specific instance). Returns a list of dictionaries containing filter info, or None if query fails."""
+    async def query_dali_tpi_event_filters(self, address: ZenAddress|ZenInstance) -> list[TpiEventFilter]:
+        """Query active event filters for an address (or a specific instance)."""
         instance_number = 0xFF
         if isinstance(address, ZenInstance):
             instance: ZenInstance = address
             instance_number = instance.number
             address = instance.address
-        
-        # As the data payload can only be up to 64 bytes and there are up to 64 event filters, it may be necessary to query several times.
-        # If you have all 64 event filters active, you will receive results 0-14 in the first response.
-        results = []
+
+        # Payload max 64 bytes and up to 64 filters - page results 15 at a time.
+        results: list[TpiEventFilter] = []
         start_at = 0
         while True:
-        
-            response = self._response_to_bytes_or_none(await self._send_basic(address.ctrl, 
-                                    CMD.QUERY_DALI_TPI_EVENT_FILTERS,
-                                    address.ecg_or_ecd_or_broadcast(),
-                                    [start_at, 0x00, instance_number]))
-            
-            # Byte 0: TPI event modes active, ignored here.
-            # modes_active = response[0]
-                                    
-            if response and len(response) >= 5:  # Need at least modes + one result
+            response = self._response_to_bytes_or_none(await self._send_basic(
+                address.ctrl,
+                CMD.QUERY_DALI_TPI_EVENT_FILTERS,
+                address.ecg_or_ecd_or_broadcast(),
+                [start_at, 0x00, instance_number],
+            ))
 
+            # Byte 0: TPI event modes active, ignored here.
+            if response and len(response) >= 5:  # Need at least modes + one result
                 # Starting from the second byte (1), process results in groups of 4 bytes
-                for i in range(1, len(response)-3, 4):
-                    result = {
-                        'address': response[i],
-                        'instance': response[i+1],
-                        'event_mask': ZenEventMask.from_upper_lower(response[i+2], response[i+3])
-                    }
-                    results.append(result)
-                
+                for i in range(1, len(response) - 3, 4):
+                    results.append(TpiEventFilter(
+                        address=response[i],
+                        instance=response[i + 1],
+                        event_mask=ZenEventMask.from_upper_lower(response[i + 2], response[i + 3]),
+                    ))
+
                 page_results = (len(response) - 1) // 4
-                if page_results < 15: # fewer than 15 results in this page - no more pages
+                if page_results < 15:  # fewer than 15 results in this page - no more pages
                     break
-            
             else:
-                break # If there are no more results, stop querying
-            
-            # To complete the set, you would request 15, 30, 45, 60 as starting numbers or until you receive None (NO_ANSWER).
+                break  # If there are no more results, stop querying
+
+            # Next page starts at 15, 30, 45, 60 until NO_ANSWER.
             start_at += 15
-                
+
         return results
 
     async def tpi_event_emit(self, ctrl: ControllerRef, mode: ZenEventMode | None = None) -> bool:
@@ -609,9 +604,7 @@ class ZenCommandClient:
             return None
         return colour_from_bytes(response)
     
-    async def query_profile_information(
-        self, ctrl: ControllerRef
-    ) -> tuple[ProfileState, dict[int, ProfileBehaviour]] | None:
+    async def query_profile_information(self, ctrl: ControllerRef) -> tuple[ProfileState, dict[int, ProfileBehaviour]] | None:
         """Query a controller for profile information. Returns state + profiles, or None if query fails."""
         response = self._response_to_bytes_or_none(await self._send_basic(ctrl, CMD.QUERY_PROFILE_INFORMATION))
         if not response or len(response) < 12:
