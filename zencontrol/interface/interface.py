@@ -680,11 +680,10 @@ class ZenControl:
 
     async def get_control_gear(self, ctrl: ZenController | None = None) -> set[ZenControlGear]:
         """Interview all control gear, discriminating light / fan / blind."""
-        # (ean, bus_unit) → kind. Dummy placeholders until field/support seeds real GTINs.
-        # bus_unit None matches any bus unit for that EAN.
+        # (ean, bus_unit) → kind. bus_unit None matches any bus unit for that EAN.
         allowlist: dict[tuple[int, int | None], str] = {
-            (9990000000001, None): "fan", # dummy placeholder for fan
-            (9990000000002, None): "blind", # dummy placeholder for blind
+            (6971103534836, None): "fan",   # zencontrol smart fan controller
+            (6971103534829, None): "blind", # zencontrol smart blind controller
         }
         gear: set[ZenControlGear] = set()
         controllers = [ctrl] if ctrl else self.controllers

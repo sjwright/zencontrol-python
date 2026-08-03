@@ -23,6 +23,7 @@ Beyond basic lighting control, this library supports:
 * **UDP transport resilience** — request retries and queue-failure backoff
 * **Event keepalive** — periodic emit-state ping; re-enables TPI configuration and event emission if a controller reboots while the listener stays up
 * **Multicast controller discovery** — find controllers on the LAN without a preconfigured host
+* **Fans and blinds** — smart detection of fan and blind ECGs with a specific control plane for each
 * **Button events** — discovery of control-device button instances, plus press and long-press event callbacks
 * **Absolute inputs** — discovery of numerical ECD instances (dials/sliders) with 16-bit value-change event callbacks
 * **Event filtering** — configure which TPI events the controller emits

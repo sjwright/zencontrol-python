@@ -87,7 +87,7 @@ health = zen.event_health_for(ctrl)  # RECEIVING / SILENT / …
 
 `get_control_gear()` / `get_lights()` / `get_fans()` / `get_blinds()`, `get_groups()`, `get_instances()`, `get_profiles()`, and `get_system_variables()` scan the controller(s) and return **singletons** for this `ZenControl` (same address → same object). Passing `ctrl=ctrl` limits the scan. Prefer one `get_control_gear()` and partition when you need all ECG kinds. `get_buttons()` / `get_motion_sensors()` / `get_absolute_inputs()` remain as filters over `get_instances()`.
 
-Fans and blinds are classified by label suffix (`… Fan` / `… Blind`) or a GTIN+bus-unit allowlist when seeded; they are **not** returned from `get_lights()`.
+Fans and blinds are classified by GTIN allowlist (smart fan `6971103534836`, smart blind `6971103534829`) or label suffix (`… Fan` / `… Blind`).
 
 Identity is owned by `zen.ctx` factories (`ctx.light(address)`, `ctx.fan(address)`, `ctx.blind(address)`, `ctx.group(address)`, …). Prefer those (or the async `ctx.create_*` interview wrappers) over constructing entity classes directly.
 
