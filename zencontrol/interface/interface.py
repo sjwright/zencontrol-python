@@ -93,24 +93,21 @@ class ZenControl:
         self,
         logger: logging.Logger | None = None,
         print_traffic: bool = False,
-        unicast: bool = False,
         listen_ip: str | None = None,
         listen_port: int | None = None,
     ):
         self.logger = logger or logging.getLogger(__name__)
-        # Preferred TPI event emit transport (not a socket bind).
-        self.unicast = unicast
         self.commands: ZenCommandClient = ZenCommandClient(
             logger=self.logger,
             print_traffic=print_traffic,
         )
         self.ctx = EntityContext(commands=self.commands, logger=self.logger)
         self.controllers: list[ZenController] = []
-        listen_ip_val = listen_ip if listen_ip else "0.0.0.0"
+        # listen_* apply when any controller uses unicast events.
         self.event_receiver = ZenEventReceiver(
             logger=self.logger,
-            unicast_listen_ip=listen_ip_val if unicast else "0.0.0.0",
-            unicast_port=(listen_port if listen_port else 0) if unicast else 0,
+            unicast_listen_ip=listen_ip if listen_ip else "0.0.0.0",
+            unicast_port=listen_port if listen_port else 0,
         )
         self.identities = self.event_receiver.identities
         self.identities.on_discovered = self._forward_discovered
@@ -483,10 +480,27 @@ class ZenControl:
         )
 
     def add_controller(
-        self, id: int, name: str, label: str, host: str, port: int = 5108, mac: str | None = None, filtering: bool = False
+        self,
+        id: int,
+        name: str,
+        label: str,
+        host: str,
+        port: int = 5108,
+        mac: str | None = None,
+        filtering: bool = False,
+        tcp: bool = False,
+        unicast: bool = False,
     ) -> ZenController:
         ctrl = self.ctx.ctrl(
-            id=id, name=name, label=label, host=host, port=port, mac=mac, filtering=filtering
+            id=id,
+            name=name,
+            label=label,
+            host=host,
+            port=port,
+            mac=mac,
+            filtering=filtering,
+            tcp=tcp,
+            unicast=unicast,
         )
         self.controllers.append(ctrl)
         self.identities.forget(host=host, mac=mac)
@@ -509,14 +523,15 @@ class ZenControl:
             await self.commands._invalidate_client(ctrl)
 
     def _event_mode_for(self, ctrl: ZenController) -> ZenEventMode:
+        # Bool until IO: Transport is the lease/emit key used at the receiver.
         return ZenEventMode(
             enabled=True,
             filtering=ctrl.filtering,
-            transport=(Transport.UNICAST if self.unicast else Transport.MULTICAST),
+            transport=(Transport.UNICAST if ctrl.unicast else Transport.MULTICAST),
         )
 
     async def configure_controller_events(self, ctrl: ZenController) -> bool:
-        """Enable TPI event emit for one controller using this client's listen mode.
+        """Enable TPI event emit for one controller using its unicast/multicast setting.
 
         Call after add_controller when event monitoring is already running so a
         newly attached controller joins the shared listener. Returns True when the
@@ -577,7 +592,7 @@ class ZenControl:
             await self._notify_controller_status(ctrl, "starting")
             return True
 
-        unicast = self.unicast
+        unicast = ctrl.unicast
         needs_reassert = False
         info = await self.commands.query_tpi_event_unicast_address(ctrl)
         if info is not None:

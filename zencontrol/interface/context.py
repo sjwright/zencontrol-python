@@ -213,6 +213,8 @@ class EntityContext:
         port: int = 5108,
         mac: str | None = None,
         filtering: bool = False,
+        tcp: bool = False,
+        unicast: bool = False,
     ) -> ZenController:
         from .entities import ZenController
 
@@ -227,6 +229,8 @@ class EntityContext:
                 port=port,
                 mac=mac,
                 filtering=filtering,
+                tcp=tcp,
+                unicast=unicast,
             )
             return store[name]
 
@@ -239,6 +243,8 @@ class EntityContext:
         ctrl.port = port
         ctrl.mac = mac
         ctrl.filtering = filtering
+        ctrl.tcp = tcp
+        ctrl.unicast = unicast
         mac_to_bytes(mac)  # eager validate on config refresh
         return ctrl
 

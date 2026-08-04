@@ -44,6 +44,8 @@ class ControllerRef(Protocol):
     label: str
     host: str
     port: int
+    tcp: bool
+    unicast: bool
 
     @property
     def ip(self) -> str: ...
@@ -104,7 +106,7 @@ class ZenController:
     and what registered controllers always are. This base exists so the API
     layer can talk about controllers without importing the interface layer.
 
-    Transports live outside the model: "ZenCommandClient" owns UDP clients
+    Transports live outside the model: "ZenCommandClient" owns command clients
     keyed by controller name; "ZenControl" / "EntityContext" hold the
     command client and (for the high-level path) the event session.
 
@@ -121,6 +123,8 @@ class ZenController:
     startup_complete: bool = False
     dali_ready: bool = False
     filtering: bool = False
+    tcp: bool = False
+    unicast: bool = False
     last_seen: float = field(default_factory=time.time)
     _ip: str | None = field(init=False, repr=False, default=None)
 

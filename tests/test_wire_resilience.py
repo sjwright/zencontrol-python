@@ -14,14 +14,10 @@ from zencontrol.api.event_router import DEFAULT_MAX_QUEUE_SIZE, ZenEventReceiver
 from zencontrol.api.types import Transport
 from zencontrol.exceptions import ZenTimeoutError
 from zencontrol.interface import EntityContext
-from zencontrol.io.command import (
-    ClientConst,
-    ZenClient,
-    ZenRequest,
-    ZenResponse,
-    ZenResponseType,
-)
+from zencontrol.io.command import ZenClient
+from zencontrol.io.const import ClientConst
 from zencontrol.io.event import EventConst, ZenEndpoint, ZenEvent
+from zencontrol.io.models import ZenRequest, ZenResponse, ZenResponseType
 from zencontrol.utils import local_ip_for_remote
 
 

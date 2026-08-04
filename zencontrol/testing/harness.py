@@ -7,8 +7,8 @@ Example::
     from zencontrol.testing import ZenTestClient
     from zencontrol import ZenController
 
-    p = ZenTestClient(unicast=True, listen_ip="127.0.0.1", listen_port=0)
-    ctrl = p.ctx.ctrl(..., ...)
+    p = ZenTestClient(listen_ip="127.0.0.1", listen_port=0)
+    ctrl = p.ctx.ctrl(..., unicast=True)
     p.set_controllers([ctrl])
 """
 
@@ -55,11 +55,9 @@ class ZenTestClient:
         self,
         logger: logging.Logger | None = None,
         print_traffic: bool = False,
-        unicast: bool = False,
         listen_ip: str | None = None,
         listen_port: int | None = None,
     ) -> None:
-        self.unicast = unicast
         self.controllers: list[ControllerRef] = []
         self.commands = ZenCommandClient(
             logger=logger,
@@ -68,8 +66,8 @@ class ZenTestClient:
         self.ctx = EntityContext(commands=self.commands, logger=self.commands.logger)
         self.event_receiver = ZenEventReceiver(
             logger=self.commands.logger,
-            unicast_listen_ip=(listen_ip if listen_ip else "0.0.0.0") if unicast else "0.0.0.0",
-            unicast_port=(listen_port if listen_port is not None else 0) if unicast else 0,
+            unicast_listen_ip=listen_ip if listen_ip else "0.0.0.0",
+            unicast_port=listen_port if listen_port is not None else 0,
         )
         self._wiring: ZenEventWiring | None = None
 
@@ -128,7 +126,7 @@ class ZenTestClient:
         return ZenEventMode(
             enabled=True,
             filtering=ctrl.filtering,
-            transport=(Transport.UNICAST if self.unicast else Transport.MULTICAST),
+            transport=(Transport.UNICAST if ctrl.unicast else Transport.MULTICAST),
         )
 
     async def start_event_monitoring(self) -> None:

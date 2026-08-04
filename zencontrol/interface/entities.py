@@ -103,6 +103,8 @@ class ZenController(SuperZenController):
         port: int = 5108,
         mac: str | None = None,
         filtering: bool = False,
+        tcp: bool = False,
+        unicast: bool = False,
     ) -> None:
         super().__init__(
             id=str(id),
@@ -112,6 +114,8 @@ class ZenController(SuperZenController):
             port=port,
             mac=mac,
             filtering=filtering,
+            tcp=tcp,
+            unicast=unicast,
         )
         self.ctx = ctx
         self.profile = None

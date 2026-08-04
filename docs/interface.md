@@ -32,6 +32,8 @@ async def main() -> None:
             port=5108,
             # mac="AA:BB:CC:DD:EE:FF",  # optional; improves event binding
             # filtering=False,          # if True, ctrl only emits filtered events
+            # tcp=False,                # True = TCP commands (FW ≥ 2.2.32)
+            # unicast=False,            # True = events via unicast to this host
         )
         zen.callbacks.light_change = on_light_change
         zen.callbacks.on_resync = on_resync
@@ -47,7 +49,7 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-Constructor options worth knowing: `unicast=True` (events to this host instead of multicast), `listen_port=…` (unicast bind), `print_traffic=True`, `logger=…`.
+Constructor options worth knowing: `listen_ip` / `listen_port` (unicast event bind, used when any controller has `unicast=True`), `print_traffic=True`, `logger=…`.
 
 ## Lifecycle
 
@@ -65,7 +67,7 @@ Hot-plug: `await zen.remove_controller(...)` is safe while monitoring is running
 
 ## Controllers
 
-`add_controller` returns a `ZenController` (interface subclass). Treat `name` as the stable identity inside one `ZenControl` instance.
+`add_controller` returns a `ZenController` (interface subclass). Treat `name` as the stable identity inside one `ZenControl` instance. Optional per-controller bools: `tcp=True` (TCP command client; firmware ≥ 2.2.32) and `unicast=True` (events to this host instead of multicast). Both default false. Multicast and unicast controllers can run together on one `ZenControl`.
 
 Useful methods:
 

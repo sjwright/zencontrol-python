@@ -1,11 +1,11 @@
 # IO layer - get started
 
-`zencontrol.io` is the wire stack: UDP in and out, framing, checksums, sequence numbers.
+`zencontrol.io` is the wire stack: UDP or TCP commands out, UDP events in, framing, checksums, sequence numbers.
 It does **not** know TPI command names or event-code vocabulary - those live in `zencontrol.api`.
 
 | Plane | Shape |
 | --- | --- |
-| **Commands** | One connected `ZenClient` **per controller** (`ZenRequest` → `ZenResponse`) |
+| **Commands** | One connected client **per controller** — `ZenClient` (UDP) or `ZenTcpClient` (TCP); same `ZenRequest` → `ZenResponse` framing |
 | **Events** | Typically one shared `ZenEndpoint` for the process; parses envelopes and pushes `ZenEvent` to a sync sink |
 
 You probably don't want to be writing any code with these, other than for debugging purposes, or writing tests.
@@ -15,6 +15,7 @@ You probably don't want to be writing any code with these, other than for debugg
 | Piece | Role |
 | --- | --- |
 | `ZenClient` | Connected UDP client to one controller host:port |
+| `ZenTcpClient` | Connected TCP client (`io/command_tcp.py`; firmware ≥ 2.2.32) |
 | `ZenRequest` | Outbound command envelope |
 | `ZenResponse` | Inbound reply (`OK` / `ANSWER` / `TIMEOUT` / …) |
 | `ZenEndpoint` | Bind multicast or unicast; validate envelopes; sink `ZenEvent`s |
@@ -24,11 +25,12 @@ You probably don't want to be writing any code with these, other than for debugg
 
 ```python
 import asyncio
-from zencontrol.io import ZenRequest, ZenRequestType, ZenResponseType, ZenClient
+from zencontrol.io import ZenRequest, ZenRequestType, ZenClient, ZenTcpClient
 
 # QUERY_CONTROLLER_LABEL = 0x24 (see the CMD enum in api.commands)
 async def main() -> None:
     client = await ZenClient.create(("192.168.1.100", 5108))
+    # or: await ZenTcpClient.create(("192.168.1.100", 5108))
     try:
         req = ZenRequest(command=0x24, data=[0x00], request_type=ZenRequestType.BASIC)
         resp = await client.send_request_with_retries(req)
@@ -40,7 +42,9 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-`ZenRequestType.BASIC` pads the data field to 4 bytes. Sequence numbers, XOR checksums, datagram retries, and queue-full backoff are handled inside `ZenClient` / `send_request_with_retries`. Bad packets and transport death surface as `TIMEOUT` / `INVALID` rather than raising. Set `print_traffic=True` on the client to dump request/response bytes and RTT; timeouts are also logged there.
+`ZenRequestType.BASIC` pads the data field to 4 bytes. Sequence numbers, XOR checksums, and queue-full backoff are handled inside the client. UDP also retries lost datagrams; TCP does not retransmit. Bad packets and transport death surface as `TIMEOUT` / `INVALID` rather than raising. Set `print_traffic=True` on the client to dump request/response bytes and RTT.
+
+Via `ZenControl`, pass `tcp=True` and/or `unicast=True` to `add_controller` (command TCP uses the same port as UDP). Events stay UDP either way; multicast and unicast can run together.
 
 ## Listen for events
 
@@ -75,13 +79,7 @@ Use `accept_datagram(data, addr, sink)` when simulating the endpoint handoff wit
 
 ## Rules of thumb
 
-- Prefer `send_request_with_retries` for commands (datagram retries + queue-full backoff).
+- Prefer `send_request_with_retries` for commands (UDP datagram retries + queue-full backoff; TCP skips datagram retries).
+- Use `tcp=True` / `ZenTcpClient` when the controller firmware is ≥ 2.2.32 and UDP is unreliable or filtered.
 - Event codes stay opaque in `io`; vocabulary lives in `api.event_decode`.
 - Controllers must have TPI event emit enabled (command plane) or you will hear nothing.
-- Application code should use `ZenEventReceiver` / `ZenControl`, not a bare `ZenEndpoint`, unless you are debugging.
-
-## See also
-
-- [Overview](overview.md)
-- [API](api.md)
-- [Interface](interface.md)

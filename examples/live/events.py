@@ -73,7 +73,7 @@ async def main():
     """Test ZenControl event monitoring."""
     config = yaml.safe_load(CONFIG_PATH.read_text())
 
-    async with ZenControl(print_traffic=True, unicast=False, logger=logger) as zen:
+    async with ZenControl(print_traffic=True, logger=logger) as zen:
         zen.add_controller(**config.get("zencontrol")[0])
         ctrl = zen.controllers[0]
 

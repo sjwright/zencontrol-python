@@ -5,7 +5,7 @@ A Python library for interfacing with ZenControl DALI lighting controllers.
 
 Layers:
 
-1. **io** - wire-level UDP framing (ZenClient, request/response envelopes)
+1. **io** - wire-level UDP/TCP framing (ZenClient, ZenTcpClient, request/response envelopes)
 2. **api** - TPI command client + event receiver (ZenCommandClient, ZenEventReceiver)
 3. **interface** - high-level entities and session orchestration (ZenControl)
 
@@ -83,6 +83,7 @@ from .interface import (
 # Low-level models
 from .io import (
     ZenClient,
+    ZenTcpClient,
     ZenEvent,
     ZenRequest,
     ZenRequestType,
@@ -127,6 +128,7 @@ __all__ = [
 
     # Low-level models (for advanced users)
     "ZenClient",
+    "ZenTcpClient",
     "ZenEvent",
     "ZenRequest",
     "ZenRequestType",

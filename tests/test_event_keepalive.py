@@ -13,8 +13,8 @@ from zencontrol.api.types import TpiEventUnicastAddress, Transport, ZenEventMode
 from zencontrol.interface.interface import ZenControl
 
 
-def _controller(name: str = "ctrl") -> SimpleNamespace:
-    return SimpleNamespace(name=name, filtering=False, mac="AA:BB:CC:DD:EE:01")
+def _controller(name: str = "ctrl", *, unicast: bool = False) -> SimpleNamespace:
+    return SimpleNamespace(name=name, filtering=False, mac="AA:BB:CC:DD:EE:01", unicast=unicast)
 
 
 @pytest.mark.asyncio
@@ -90,9 +90,9 @@ async def test_assert_noop_when_emit_enabled() -> None:
 async def test_assert_reconfigures_on_unicast_target_mismatch() -> None:
     from unittest.mock import MagicMock
 
-    zen = ZenControl(unicast=True)
+    zen = ZenControl()
     zen.is_event_monitoring_active = lambda: True  # type: ignore[method-assign]
-    ctrl = _controller()
+    ctrl = _controller(unicast=True)
     zen.commands.query_controller_startup_complete = AsyncMock(return_value=True)
 
     lease = SimpleNamespace(advertise=("192.168.1.10", 6970))
@@ -118,12 +118,12 @@ async def test_assert_compares_per_binding_advertise() -> None:
     """Multi-homed: each controller's expected unicast target is its own lease."""
     from unittest.mock import MagicMock
 
-    zen = ZenControl(unicast=True)
+    zen = ZenControl()
     zen.is_event_monitoring_active = lambda: True  # type: ignore[method-assign]
 
-    ctrl_a = _controller("ctrl-a")
+    ctrl_a = _controller("ctrl-a", unicast=True)
     zen.commands.query_controller_startup_complete = AsyncMock(return_value=True)
-    ctrl_b = _controller("ctrl-b")
+    ctrl_b = _controller("ctrl-b", unicast=True)
     
     lease_a = SimpleNamespace(advertise=("10.0.0.1", 6970))
     lease_b = SimpleNamespace(advertise=("192.168.1.10", 6970))

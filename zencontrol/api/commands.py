@@ -41,14 +41,9 @@ from enum import IntEnum
 from typing import Self
 
 from ..exceptions import ZenTimeoutError
-from ..io.command import (
-    ClientConst,
-    ZenClient,
-    ZenRequest,
-    ZenRequestType,
-    ZenResponse,
-    ZenResponseType,
-)
+from ..io.command import ZenClient
+from ..io.command_tcp import ZenTcpClient
+from ..io.models import ZenRequest, ZenRequestType, ZenResponse, ZenResponseType
 from .event_decode import TpiEventFilter, ZenEventMask
 from .models import (
     ControllerRef,
@@ -195,7 +190,7 @@ class ZenCommandClient:
             self.logger.addHandler(logging.NullHandler())
         self.print_traffic = print_traffic
         # Command-plane UDP clients keyed by controller name (not on the model).
-        self._clients: dict[str, ZenClient] = {}
+        self._clients: dict[str, ZenClient | ZenTcpClient] = {}
         # When set, _send_packet appends wall-clock msec per TPI command name.
         self._api_timings: dict[str, list[float]] | None = None
 
@@ -257,11 +252,11 @@ class ZenCommandClient:
     # CLIENT MANAGEMENT
     # ============================
 
-    def client_for(self, ctrl: ControllerRef) -> ZenClient | None:
-        """Return the command-plane UDP client for "controller", if any."""
+    def client_for(self, ctrl: ControllerRef) -> ZenClient | ZenTcpClient | None:
+        """Return the command-plane client for "controller", if any."""
         return self._clients.get(ctrl.name)
 
-    def set_client(self, ctrl: ControllerRef, client: ZenClient | None) -> None:
+    def set_client(self, ctrl: ControllerRef, client: ZenClient | ZenTcpClient | None) -> None:
         """Install or clear a command client without touching the model."""
         if client is None:
             self._clients.pop(ctrl.name, None)
@@ -280,17 +275,25 @@ class ZenCommandClient:
                 pass
 
     async def _ensure_client(self, ctrl: ControllerRef) -> None:
-        """Create or replace the UDP client when missing or disconnected."""
+        """Create or replace the command client when missing or disconnected."""
         client = self._clients.get(ctrl.name)
         if client is not None and client.is_connected():
             return
         if client is not None:
             await self._invalidate_client(ctrl)
-        self._clients[ctrl.name] = await ZenClient.create(
-            (ctrl.ip, ctrl.port),
-            logger=self.logger,
-            print_traffic=self.print_traffic,
-        )
+        # Bool until IO: pick ZenTcpClient vs ZenClient here.
+        if ctrl.tcp:
+            self._clients[ctrl.name] = await ZenTcpClient.create(
+                (ctrl.ip, ctrl.port),
+                logger=self.logger,
+                print_traffic=self.print_traffic,
+            )
+        else:
+            self._clients[ctrl.name] = await ZenClient.create(
+                (ctrl.ip, ctrl.port),
+                logger=self.logger,
+                print_traffic=self.print_traffic,
+            )
 
     async def _invalidate_client(self, ctrl: ControllerRef) -> None:
         """Close and drop a stale client so the next send recreates it."""
@@ -337,7 +340,7 @@ class ZenCommandClient:
         assert client is not None
         t0 = time.perf_counter()
         try:
-            response = await client.send_request_with_retries(request, retries=ClientConst.DEFAULT_RETRIES)
+            response = await client.send_request_with_retries(request)
         finally:
             self._record_api_timing(request.command, (time.perf_counter() - t0) * 1000)
         if response.response_type == ZenResponseType.TIMEOUT:

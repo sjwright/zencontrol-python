@@ -10,7 +10,7 @@ from zencontrol import ZenRgbColour, ZenTcColour, ZenXyColour, colour_from_bytes
 from zencontrol.api.commands import CMD, ZenCommandClient
 from zencontrol.api.const import Const
 from zencontrol.api.models import ZenController
-from zencontrol.io.command import ZenRequest, ZenRequestType
+from zencontrol.io.models import ZenRequest, ZenRequestType
 
 
 def _padded(colour: ZenTcColour | ZenXyColour | ZenRgbColour) -> bytes:

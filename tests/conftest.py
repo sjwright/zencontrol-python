@@ -160,7 +160,7 @@ async def live_sim() -> LiveSimulator:
     port = sim.bind_port
     mac = ":".join(f"{b:02x}" for b in world.mac)
 
-    protocol = ZenTestClient(unicast=True, listen_ip="127.0.0.1", listen_port=0)
+    protocol = ZenTestClient(listen_ip="127.0.0.1", listen_port=0)
     ctrl = protocol.ctx.ctrl(
         id=1,
         name="sim",
@@ -168,6 +168,7 @@ async def live_sim() -> LiveSimulator:
         host="127.0.0.1",
         port=port,
         mac=mac,
+        unicast=True,
     )
     protocol.set_controllers([ctrl])
 
@@ -184,7 +185,7 @@ async def live_zen(live_sim: LiveSimulator):
     """ZenControl high-level client pointed at the running simulator."""
     from zencontrol import ZenControl
 
-    async with ZenControl(unicast=True, listen_ip="127.0.0.1", listen_port=0) as zen:
+    async with ZenControl(listen_ip="127.0.0.1", listen_port=0) as zen:
         zen.add_controller(
             id=1,
             name="sim",
@@ -192,5 +193,6 @@ async def live_zen(live_sim: LiveSimulator):
             host="127.0.0.1",
             port=live_sim.port,
             mac=live_sim.mac,
+            unicast=True,
         )
         yield zen, live_sim
