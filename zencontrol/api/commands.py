@@ -316,7 +316,12 @@ class ZenCommandClient:
 
     async def _send_colour(self, ctrl: ControllerRef, command: int, address: int, colour: ZenColour, level: int = 255) -> ZenResponse:
         """Send a DALI colour request. Returns the raw ZenResponse."""
-        data = [address, level & 0xFF] + list(colour.command_payload())
+        # Fixed frame: addr + arc + type + COLOUR_DATA_LEN colour-data bytes (pad 0xFF).
+        payload = colour.to_bytes()
+        need = 1 + Const.COLOUR_DATA_LEN
+        if len(payload) < need:
+            payload = payload + bytes([0xFF] * (need - len(payload)))
+        data = [address, level & 0xFF] + list(payload)
         request = ZenRequest(command=command, data=data, request_type=ZenRequestType.DALI_COLOUR)
         return await self._send_packet(ctrl, request)
 

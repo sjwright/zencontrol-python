@@ -18,3 +18,5 @@ class Const:
     MASK_LEVEL = 255  # DAPC mask (no change / stop fade on blinds)
     MIN_KELVIN = 1000
     MAX_KELVIN = 20000
+    # DALI_COLOUR colour-data field width (unused channels are 0xFF)
+    COLOUR_DATA_LEN = 7

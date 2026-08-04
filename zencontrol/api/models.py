@@ -293,10 +293,6 @@ class ZenTcColour:
         """Encode as returned by QUERY_DALI_COLOUR (no address or arc level)."""
         return struct.pack(">BH", ZenColourType.TC.value, self.kelvin)
 
-    def command_payload(self) -> bytes:
-        """Colour type and channel bytes for DALI_COLOUR (follows address and arc level)."""
-        return self.to_bytes()
-
 
 @dataclass(frozen=True, slots=True)
 class ZenXyColour:
@@ -314,10 +310,6 @@ class ZenXyColour:
     def to_bytes(self) -> bytes:
         """Encode as returned by QUERY_DALI_COLOUR (no address or arc level)."""
         return struct.pack(">BHH", ZenColourType.XY.value, self.x, self.y)
-
-    def command_payload(self) -> bytes:
-        """Colour type and channel bytes for DALI_COLOUR (follows address and arc level)."""
-        return self.to_bytes()
 
 
 @dataclass(frozen=True, slots=True)
@@ -361,10 +353,6 @@ class ZenRgbColour:
             self.f if self.f is not None else 0xFF,
         )
 
-    def command_payload(self) -> bytes:
-        """Colour type and channel bytes for DALI_COLOUR (follows address and arc level)."""
-        return self.to_bytes()
-
 
 ZenColour = ZenTcColour | ZenXyColour | ZenRgbColour
 
@@ -372,20 +360,21 @@ ZenColour = ZenTcColour | ZenXyColour | ZenRgbColour
 def colour_from_bytes(data: bytes) -> ZenColour | None:
     """Decode a DALI colour payload; None if the bytes are not a known colour."""
     match list(data):
-        case [ZenColourType.RGBWAF.value, r, g, b, *rest] if len(rest) <= 3:
+        case [ZenColourType.RGBWAF.value, r, g, b, *rest] if len(rest) <= 4:
             # COLOUR_CHANGED_EVENT from a fixture with fewer than six channels
             # carries only channels + 1 bytes, so an RGB fixture sends
             # [0x80, R, G, B]. Channels the fixture does not have stay None.
+            # A trailing Control byte (DALI_COLOUR set form) is ignored.
             w, a, f = (list(rest) + [None, None, None])[:3]
             return ZenRgbColour(r=r, g=g, b=b, w=w, a=a, f=f)
         case [ZenColourType.TC.value, hi, lo] | [ZenColourType.TC.value, hi, lo, *_]:
-            if len(data) not in (3, 7):
+            # Compact query (3), scene blob (7), or padded set form (type + 7 = 8).
+            if len(data) not in (3, 7, 8):
                 return None
             return ZenTcColour(kelvin=(hi << 8) | lo)
         case [ZenColourType.XY.value, xh, xl, yh, yl] | [ZenColourType.XY.value, xh, xl, yh, yl, *_]:
-            if len(data) not in (5, 7):
+            if len(data) not in (5, 7, 8):
                 return None
             return ZenXyColour(x=(xh << 8) | xl, y=(yh << 8) | yl)
         case _:
             return None
-

@@ -87,8 +87,7 @@ class ZenRequest:
                 if len(self.data) != 4:
                     raise ValueError("ZenRequest.data must be exactly 4 bytes when request type is BASIC")
             case ZenRequestType.DALI_COLOUR:
-                if n > 9:
-                    raise ValueError("ZenRequest.data must be at most 9 bytes when request type is DALI_COLOUR")
+                pass
             case ZenRequestType.DYNAMIC:
                 # Prepend data length to data
                 self.data = bytes([n]) + self.data
