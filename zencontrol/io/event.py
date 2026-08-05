@@ -147,11 +147,11 @@ class ZenEventProtocol(asyncio.DatagramProtocol):
         accept_datagram(data, addr, self.sink, self.logger)
 
     def error_received(self, exc: Exception) -> None:
-        self.logger.error(f"Event protocol error: {exc}")
+        self.logger.warning(f"Event protocol error: {exc}")
 
     def connection_lost(self, exc: Exception | None) -> None:
         if exc:
-            self.logger.error(f"Event connection lost: {exc}")
+            self.logger.warning(f"Event connection lost: {exc}")
         else:
             self.logger.info("Event connection closed")
 

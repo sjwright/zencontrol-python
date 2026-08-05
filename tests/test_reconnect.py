@@ -375,7 +375,7 @@ async def test_supervisor_exits_when_unexpected_death_has_no_leases() -> None:
     dead = zen.event_receiver.consumer_task
     assert supervisor is not None and dead is not None
 
-    # Race shape: last lease already gone; consumer exit is still unexpected.
+    # Race shape: last lease already gone; consumer cancel is expected then.
     zen.event_receiver._refcounts[Transport.MULTICAST] = 0
     zen.event_receiver._refcounts[Transport.UNICAST] = 0
     dead.cancel()
@@ -387,7 +387,7 @@ async def test_supervisor_exits_when_unexpected_death_has_no_leases() -> None:
     await asyncio.wait_for(supervisor, timeout=1.0)
     assert supervisor.done()
     cancelled_logs = [e for e in errors if "cancelled unexpectedly" in e or "Event monitor task error" in e]
-    assert len(cancelled_logs) <= 1, f"supervisor spun: {cancelled_logs}"
+    assert cancelled_logs == [], f"supervisor logged unexpected cancel: {cancelled_logs}"
     assert zen.event_task is None
     await zen.aclose()
 
@@ -400,6 +400,16 @@ async def test_supervisor_exits_when_last_lease_releases_cleanly() -> None:
     zen.commands.set_tpi_event_unicast_address = AsyncMock()
     zen.commands.tpi_event_emit = AsyncMock(return_value=True)
 
+    errors: list[str] = []
+    real_error = zen.logger.error
+
+    def capture_error(msg, *args, **kwargs):
+        text = msg % args if args else str(msg)
+        errors.append(text)
+        return real_error(msg, *args, **kwargs)
+
+    zen.logger.error = capture_error  # type: ignore[method-assign]
+
     ctrl = zen.add_controller(id=1, name="ctrl-a", label="A", host="127.0.0.1", mac="02:00:00:00:00:01")
     await zen.start()
     supervisor = zen._supervisor_task
@@ -409,6 +419,7 @@ async def test_supervisor_exits_when_last_lease_releases_cleanly() -> None:
     await asyncio.wait_for(supervisor, timeout=1.0)
     assert supervisor.done()
     assert not zen._has_event_leases()
+    assert not any("cancelled unexpectedly" in e for e in errors), errors
     await zen.aclose()
 
 

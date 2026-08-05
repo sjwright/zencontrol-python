@@ -64,13 +64,13 @@ class ZenDatagramProtocol(asyncio.DatagramProtocol):
             self.logger.error(f"Response handler failed: {exc}", exc_info=exc)
         
     def error_received(self, exc: Exception) -> None:
-        self.logger.error(f"Request protocol error: {exc}")
+        self.logger.warning(f"Request protocol error: {exc}")
         if self.on_transport_lost:
             self.on_transport_lost(exc)
         
     def connection_lost(self, exc: Exception | None) -> None:
         if exc:
-            self.logger.error(f"Request connection lost: {exc}")
+            self.logger.warning(f"Request connection lost: {exc}")
         else:
             self.logger.info("Request connection closed")
         if self.on_transport_lost:

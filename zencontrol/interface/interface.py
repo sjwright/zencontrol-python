@@ -294,7 +294,7 @@ class ZenControl:
             self._session_restored.set()
 
     async def _on_binding_lost(self, ctrl: ZenController, reason: str) -> None:
-        self.logger.error(
+        self.logger.warning(
             "Event binding lost for %s (%s)",
             ctrl.name,
             reason,
@@ -314,7 +314,7 @@ class ZenControl:
             except asyncio.CancelledError:
                 raise
             except Exception as err:
-                self.logger.error(f"Failed to attach event bindings: {err}")
+                self.logger.warning(f"Failed to attach event bindings: {err}")
                 if self._stopping:
                     return
                 await asyncio.sleep(delay)
@@ -344,7 +344,12 @@ class ZenControl:
                 self._event_task = None
 
             if event_task.cancelled():
-                self.logger.error("Event monitor consumer cancelled unexpectedly")
+                # Lease release / stop cancels the consumer on purpose; only
+                # treat it as unexpected while leases are still held.
+                if self._stopping or not self._has_event_leases():
+                    self.logger.debug("Event monitor consumer cancelled")
+                else:
+                    self.logger.error("Event monitor consumer cancelled unexpectedly")
             elif (exc := event_task.exception()) is not None:
                 self.logger.error(f"Event monitor task error: {exc}")
 
