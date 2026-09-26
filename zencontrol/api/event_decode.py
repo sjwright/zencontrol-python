@@ -154,7 +154,7 @@ class IsOccupied:
 @dataclass(frozen=True, slots=True)
 class SystemVariableChange:
     target: int
-    value: int
+    value: int | float  # float when the controller sends a negative magnitude (decimals)
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,10 +261,9 @@ def decode_zen_event(event: ZenEvent) -> ZenDecodedEvent | None:
                 return None
             raw_value = int.from_bytes(payload[0:4], byteorder="big", signed=True)
             magnitude = int.from_bytes(payload[4:5], byteorder="big", signed=True)
-            return SystemVariableChange(
-                target=target,
-                value=raw_value * (10**magnitude),
-            )
+            # Divide for negative magnitudes: 3 / 10 == 0.3, but 3 * 10**-1 == 0.30000000000000004
+            value = raw_value * 10**magnitude if magnitude >= 0 else raw_value / 10**-magnitude
+            return SystemVariableChange(target=target, value=value)
 
         case ZenEventCode.COLOUR_CHANGE:
             # TC=3, RGB=4..RGBWAF=7, XY=5; padded forms up to 7

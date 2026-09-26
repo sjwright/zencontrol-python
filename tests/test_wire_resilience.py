@@ -215,7 +215,7 @@ def test_mark_disconnected_unblocks_pending_with_timeout() -> None:
 
 
 @pytest.mark.asyncio
-async def test_send_packet_timeout_invalidates_client_and_refreshes_ip() -> None:
+async def test_send_packet_timeout_invalidates_client_without_blocking_dns() -> None:
     protocol = ZenCommandClient()
     ctrl = EntityContext(commands=protocol).ctrl(
         id=1,
@@ -232,16 +232,41 @@ async def test_send_packet_timeout_invalidates_client_and_refreshes_ip() -> None
     protocol.set_client(ctrl, fake_client)
     ctrl.set_resolved_ip("192.0.2.10")
 
-    with patch.object(ctrl, "refresh_ip", wraps=ctrl.refresh_ip) as refresh:
+    # Timeout path must not do a synchronous gethostbyname on the event loop.
+    with patch("zencontrol.utils.socket.gethostbyname") as blocking_dns:
         with pytest.raises(ZenTimeoutError):
             await protocol._send_packet(
                 ctrl,
                 ZenRequest(command=0x10, data=[0x00, 0x00, 0x00, 0x00]),
             )
 
-    refresh.assert_called_once()
+    blocking_dns.assert_not_called()
     fake_client.close.assert_awaited()
     assert protocol.client_for(ctrl) is None
+
+
+@pytest.mark.asyncio
+async def test_ensure_client_resolves_host_asynchronously() -> None:
+    protocol = ZenCommandClient()
+    ctrl = EntityContext(commands=protocol).ctrl(
+        id=1,
+        name="ctrl",
+        label="Ctrl",
+        host="zen.local",
+        port=5108,
+    )
+    ctrl.set_resolved_ip("192.0.2.10")  # stale cached address
+
+    new_client = MagicMock()
+    with (
+        patch("zencontrol.api.commands.resolve_host", new=AsyncMock(return_value="192.0.2.99")) as resolve,
+        patch("zencontrol.api.commands.ZenClient.create", new=AsyncMock(return_value=new_client)) as create,
+    ):
+        await protocol._ensure_client(ctrl)
+
+    resolve.assert_awaited_once_with("zen.local")
+    assert create.await_args.args[0] == ("192.0.2.99", 5108)
+    assert ctrl.ip == "192.0.2.99"
 
 
 @pytest.mark.asyncio

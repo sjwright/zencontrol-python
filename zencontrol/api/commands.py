@@ -36,11 +36,12 @@ Basic example:
 import logging
 import struct
 import time
-from datetime import datetime as dt
+from datetime import UTC, datetime as dt
 from enum import IntEnum
 from typing import Self
 
 from ..exceptions import ZenTimeoutError
+from ..utils import resolve_host
 from ..io.command import ZenClient
 from ..io.command_tcp import ZenTcpClient
 from ..io.models import ZenRequest, ZenRequestType, ZenResponse, ZenResponseType
@@ -185,9 +186,7 @@ class ZenCommandClient:
     def __init__(self,
                  logger: logging.Logger | None = None,
                  print_traffic: bool = False) -> None:
-        self.logger = logger or logging.getLogger('null')
-        if logger is None:
-            self.logger.addHandler(logging.NullHandler())
+        self.logger = logger or logging.getLogger(__name__)
         self.print_traffic = print_traffic
         # Command-plane UDP clients keyed by controller name (not on the model).
         self._clients: dict[str, ZenClient | ZenTcpClient] = {}
@@ -281,16 +280,20 @@ class ZenCommandClient:
             return
         if client is not None:
             await self._invalidate_client(ctrl)
+        # Fresh lookup (off the event loop) so a controller whose hostname now
+        # resolves to a different address is found after a timeout.
+        ip = await resolve_host(ctrl.host)
+        ctrl.set_resolved_ip(ip)
         # Bool until IO: pick ZenTcpClient vs ZenClient here.
         if ctrl.tcp:
             self._clients[ctrl.name] = await ZenTcpClient.create(
-                (ctrl.ip, ctrl.port),
+                (ip, ctrl.port),
                 logger=self.logger,
                 print_traffic=self.print_traffic,
             )
         else:
             self._clients[ctrl.name] = await ZenClient.create(
-                (ctrl.ip, ctrl.port),
+                (ip, ctrl.port),
                 logger=self.logger,
                 print_traffic=self.print_traffic,
             )
@@ -344,8 +347,7 @@ class ZenCommandClient:
         finally:
             self._record_api_timing(request.command, (time.perf_counter() - t0) * 1000)
         if response.response_type == ZenResponseType.TIMEOUT:
-            await self._invalidate_client(ctrl)
-            ctrl.refresh_ip() # check if hostname resolves to a different IP address
+            await self._invalidate_client(ctrl)  # next send re-resolves the host
             wait_time_ms = (time.time() - request.timestamp) * 1000
             raise ZenTimeoutError(f"No response from {ctrl.host}:{ctrl.port} after {wait_time_ms:.0f}ms")
         return response
@@ -626,8 +628,8 @@ class ZenCommandClient:
         state = ProfileState(
             current_active_profile=unpacked[0],
             last_scheduled_profile=unpacked[1],
-            last_overridden_profile_utc=dt.fromtimestamp(unpacked[2]),
-            last_scheduled_profile_utc=dt.fromtimestamp(unpacked[3]),
+            last_overridden_profile_utc=dt.fromtimestamp(unpacked[2], tz=UTC),
+            last_scheduled_profile_utc=dt.fromtimestamp(unpacked[3], tz=UTC),
         )
         # Process profiles in groups of 3 bytes (2 bytes for profile number, 1 byte for profile behaviour)
         profiles: dict[int, ProfileBehaviour] = {}
@@ -735,7 +737,7 @@ class ZenCommandClient:
         """
         response = self._response_to_list_or_none(await self._send_basic(address.ctrl, CMD.QUERY_SCENE_LEVELS_BY_ADDRESS, address.ecg()))
         if response:
-            return [None if x == 255 else x for x in response]
+            return [None if x == 255 else x for x in response[:Const.MAX_SCENE]]
         return [None] * Const.MAX_SCENE
     
     async def query_colour_scene_membership_by_address(self, address: ZenAddress) -> list[int]:
@@ -1158,8 +1160,10 @@ class ZenCommandClient:
         Returns DaliColourFeatures, or a zeroed instance when the controller
         answers with no payload. Returns None only when the query fails.
         """
-        response = self._response_to_bytes_or_none(await self._send_basic(address.ctrl, CMD.QUERY_DALI_COLOUR_FEATURES, address.ecg()))
-        if response and len(response) == 1:
+        reply = await self._send_basic(address.ctrl, CMD.QUERY_DALI_COLOUR_FEATURES, address.ecg())
+        response = reply.data or b""
+        answered = reply.response_type is ZenResponseType.ANSWER
+        if answered and len(response) == 1:
             features = response[0]
             return DaliColourFeatures(
                 supports_xy=bool(features & 0x01),  # Bit 0
@@ -1167,7 +1171,7 @@ class ZenCommandClient:
                 primary_count=(features & 0x1C) >> 2,  # Bits 2-4
                 rgbwaf_channels=(features & 0xE0) >> 5,  # Bits 5-7
             )
-        if response is None:
+        if reply.response_type is ZenResponseType.NO_ANSWER or (answered and not response):
             return DaliColourFeatures(
                 supports_xy=False,
                 supports_tunable=False,

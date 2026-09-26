@@ -370,9 +370,12 @@ class EntityContext:
         port: int = 5108,
         mac: str | None = None,
         filtering: bool = False,
+        tcp: bool = False,
+        unicast: bool = False,
     ) -> ZenController:
         ctrl = self.ctrl(
-            id=id, name=name, label=label, host=host, port=port, mac=mac, filtering=filtering
+            id=id, name=name, label=label, host=host, port=port, mac=mac,
+            filtering=filtering, tcp=tcp, unicast=unicast,
         )
         await ctrl.interview()
         return ctrl

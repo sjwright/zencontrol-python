@@ -224,17 +224,15 @@ class ZenTcpClient:
 
     def _maybe_print_traffic(self, response: ZenResponse) -> None:
         req = response.request
-        if not self.print_traffic:
+        if not self.print_traffic or req is None or not req.raw_sent:
             return
-        elif req is None or not req.raw_sent or not response.raw_rcvd:
-            return
-        elif response.response_type is ZenResponseType.TIMEOUT:
-            wait_time_ms = (time.time() - req.timestamp) * 1000 if req else 0.0
+        if response.response_type is ZenResponseType.TIMEOUT:
+            wait_time_ms = (time.time() - req.timestamp) * 1000
             self.logger.info(
                 f"REQUEST: [{' '.join(f'0x{b:02X}' for b in req.raw_sent)}]  "
                 f"RESPONSE TIMEOUT after {wait_time_ms:.0f}ms"
             )
-        else:
+        elif response.raw_rcvd:
             rtt_ms = (response.timestamp - req.timestamp) * 1000
             self.logger.info(
                 f"REQUEST: [{' '.join(f'0x{b:02X}' for b in req.raw_sent)}]  "

@@ -1151,8 +1151,8 @@ class ZenSystemVariable:
     ctrl: ZenController
     id: int
     label: str | None = None
-    _value: int | None = None
-    _anticipated_value: int | None = None
+    _value: int | float | None = None
+    _anticipated_value: int | float | None = None
 
     def __init__(
         self,
@@ -1194,7 +1194,7 @@ class ZenSystemVariable:
         if self._value is None:
             self._value = await self.commands.query_system_variable(ctrl, self.id)
         return True
-    async def _handle_event(self, new_value: int | None) -> None:
+    async def _handle_event(self, new_value: int | float | None) -> None:
         changed = new_value != self._value
         by_me = new_value == self._anticipated_value
         self._value = new_value
@@ -1211,11 +1211,11 @@ class ZenSystemVariable:
     #   The events update the internal state.
     # -----------------------------------------------------------------------------------------
     @property
-    def value(self) -> int | None:
+    def value(self) -> int | float | None:
         """Return the last-known value without querying the controller."""
         return self._value
 
-    async def get_value(self) -> int | None:
+    async def get_value(self) -> int | float | None:
         """Get the current value of the system variable, querying the controller if unknown."""
         if self._value is None:
             self._value = await self.commands.query_system_variable(self.ctrl, self.id)

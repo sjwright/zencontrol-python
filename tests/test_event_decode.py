@@ -156,6 +156,12 @@ def test_decode_sysvar_with_magnitude() -> None:
     assert decode_zen_event(_event(0x07, b"\x00\x00\x00\x05\x02", target=1)) == SystemVariableChange(target=1, value=500)
 
 
+def test_system_variable_negative_magnitude_is_exact_decimal() -> None:
+    # 3 x 10^-1 must be 0.3, not 0.30000000000000004
+    assert decode_zen_event(_event(0x07, b"\x00\x00\x00\x03\xff", target=1)) == SystemVariableChange(target=1, value=0.3)
+    assert decode_zen_event(_event(0x07, b"\xff\xff\xff\x85\xfe", target=1)) == SystemVariableChange(target=1, value=-1.23)
+
+
 def test_decode_rejects_unknown_code() -> None:
     assert decode_zen_event(_event(0xFF, b"\x00")) is None
 

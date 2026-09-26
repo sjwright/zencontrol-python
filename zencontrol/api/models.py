@@ -52,6 +52,8 @@ class ControllerRef(Protocol):
 
     def refresh_ip(self) -> str: ...
 
+    def set_resolved_ip(self, ip: str) -> None: ...
+
 
 def mac_to_bytes(mac: str | None) -> bytes | None:
     """Parse a colon/hyphen MAC string to 6 bytes, or None."""
