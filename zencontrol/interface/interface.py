@@ -32,7 +32,7 @@ from ..api.models import DiscoveredController
 from ..api.const import Const as ApiConst
 from ..api.types import Transport, ZenEventMode
 from ..api.types import TpiEventUnicastAddress
-from ..exceptions import ZenConnectionError
+from ..exceptions import ZenConnectionError, ZenTimeoutError
 from .const import Const
 from .context import ControllerRuntimeStatus, EntityContext, ZenCallbacks
 from .discovery import ControllerDiscovery
@@ -570,6 +570,19 @@ class ZenControl:
         Never re-asserts while query_controller_startup_complete() is false - the startup
         sequence can take several minutes after a reboot.
         """
+        try:
+            return await self._assert_controller_events(ctrl)
+        except ZenTimeoutError:
+            # Queries raise on timeout (they never return None for it), so an
+            # offline controller lands here rather than in the None branches.
+            self.logger.debug(
+                "No response from %s during event keepalive ping",
+                ctrl.name,
+            )
+            await self._notify_controller_status(ctrl, "unreachable")
+            return False
+
+    async def _assert_controller_events(self, ctrl: ZenController) -> bool:
         if not self.is_event_monitoring_active():
             return False
         if self._wiring is not None and self._wiring.get(ctrl) is None:

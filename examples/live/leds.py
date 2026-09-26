@@ -9,7 +9,8 @@ from run_main import run_with_keyboard_interrupt
 import asyncio
 import yaml
 from pathlib import Path
-from zencontrol import ZenCommandClient, ZenAddress, ZenAddressType
+from zencontrol import ZenAddress, ZenAddressType
+from zencontrol.api import ZenCommandClient
 from zencontrol.interface import EntityContext
 
 async def main():

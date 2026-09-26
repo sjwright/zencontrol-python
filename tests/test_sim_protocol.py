@@ -477,7 +477,7 @@ async def test_group_by_number_and_scenes_list(live_sim):
     live_sim.world.lights[1].set_level(77)
     info = await p.query_group_by_number(live_sim.group(0))
     assert info is not None
-    assert info.number == 0 and info.occupied is True and info.level == 77
+    assert info.number == 0 and info.occupied is False and info.level == 77  # no motion yet
     assert await p.query_group_by_number(live_sim.group(15)) is None
 
     scenes = await p.query_scenes_for_group(live_sim.group(0))
@@ -524,8 +524,10 @@ async def test_readiness_flags_and_unknown_sysvars(live_sim):
     live_sim.world.startup_complete = False
     assert await p.query_controller_startup_complete(c) is not True
     live_sim.world.startup_complete = True
-    live_sim.world.dali_ready = False  # simulator ignores - DALI always ready
     assert await p.query_is_dali_ready(c) is True
+    live_sim.world.dali_ready = False  # simulator replies ERROR (DALI fault)
+    assert await p.query_is_dali_ready(c) is False
+    live_sim.world.dali_ready = True
 
     assert await p.query_system_variable_name(c, 99) is None
     assert await p.query_system_variable(c, 99) is None

@@ -10,6 +10,7 @@ import pytest
 from helpers_endpoints import fake_endpoint_factory
 
 from zencontrol.api.types import TpiEventUnicastAddress, Transport, ZenEventMode
+from zencontrol.exceptions import ZenTimeoutError
 from zencontrol.interface.interface import ZenControl
 
 
@@ -178,6 +179,30 @@ async def test_assert_returns_false_when_ping_fails() -> None:
     zen.configure_controller_events = AsyncMock()
 
     assert await zen.assert_controller_events(ctrl) is False  # type: ignore[arg-type]
+    zen.configure_controller_events.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failing_query", ["startup", "unicast", "emit_state"])
+async def test_assert_marks_unreachable_on_timeout(failing_query: str) -> None:
+    """A powered-off controller times out (raises) - it must be reported unreachable."""
+    zen = ZenControl()
+    zen.is_event_monitoring_active = lambda: True  # type: ignore[method-assign]
+    ctrl = _controller()
+    timeout = AsyncMock(side_effect=ZenTimeoutError("no reply"))
+    zen.commands.query_controller_startup_complete = (
+        timeout if failing_query == "startup" else AsyncMock(return_value=True)
+    )
+    zen.commands.query_tpi_event_unicast_address = (
+        timeout if failing_query == "unicast" else AsyncMock(return_value=None)
+    )
+    zen.commands.query_tpi_event_emit_state = timeout
+    zen.configure_controller_events = AsyncMock()
+    status_cb = AsyncMock()
+    zen.callbacks.controller_status_change = status_cb
+
+    assert await zen.assert_controller_events(ctrl) is False  # type: ignore[arg-type]
+    status_cb.assert_awaited_once_with(ctrl, "unreachable")
     zen.configure_controller_events.assert_not_awaited()
 
 

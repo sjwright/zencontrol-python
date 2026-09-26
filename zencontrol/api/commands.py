@@ -1105,7 +1105,10 @@ class ZenCommandClient:
 
     async def query_is_dali_ready(self, ctrl: ControllerRef) -> bool | None:
         """Query whether the DALI line is ready or has a fault. Returns True if DALI line is ready, False if there is a fault."""
-        return self._response_ok_no_none(await self._send_basic(ctrl, CMD.QUERY_IS_DALI_READY))
+        response = await self._send_basic(ctrl, CMD.QUERY_IS_DALI_READY)
+        if response.response_type is ZenResponseType.ERROR:
+            return False  # PDF: "REPLY_OK if DALI ready, or an error otherwise"
+        return self._response_ok_no_none(response)
     
     async def query_controller_startup_complete(self, ctrl: ControllerRef) -> bool | None:
         """Query whether the controller has finished its startup sequence. Returns True if startup is complete, False if still in progress, None if the query fails.
