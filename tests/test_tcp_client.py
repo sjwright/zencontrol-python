@@ -68,12 +68,17 @@ async def test_tcp_add_controller_option(live_sim) -> None:
 
 @pytest.mark.asyncio
 async def test_tcp_default_retries_is_zero() -> None:
+    received = bytearray()
+    disconnected = asyncio.Event()
+
     async def _silent(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
-            await reader.read(64)
-            await asyncio.sleep(10)
+            while chunk := await reader.read(64):
+                received.extend(chunk)
         finally:
             writer.close()
+            await writer.wait_closed()
+            disconnected.set()
 
     server = await asyncio.start_server(_silent, "127.0.0.1", 0)
     port = server.sockets[0].getsockname()[1]
@@ -86,5 +91,10 @@ async def test_tcp_default_retries_is_zero() -> None:
         assert resp.response_type is ZenResponseType.TIMEOUT
     finally:
         await client.close()
+        await asyncio.wait_for(disconnected.wait(), 1)
         server.close()
         await server.wait_closed()
+
+    # One BASIC command is eight bytes. A timeout must not replay it over TCP.
+    assert bytes(received) == resp.request.raw_sent
+    assert len(received) == 8

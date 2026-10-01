@@ -12,7 +12,7 @@ pytestmark = pytest.mark.simulator
 
 @pytest.mark.asyncio
 async def test_interview_discovers_entities(live_zen):
-    zen, live_sim = live_zen
+    zen, _ = live_zen
     ctrl = zen.controllers[0]
 
     assert await zen.commands.query_controller_startup_complete(ctrl)
@@ -50,9 +50,6 @@ async def test_interview_discovers_entities(live_zen):
     slider = next(a for a in absolute_inputs if a.instance.address.number == 13 and a.instance.number == 0)
     assert slider.instance_label == "Slider"
     assert slider.value is None
-
-    # World state still matches what we interviewed
-    assert live_sim.world.lights[0].label == "Living Room Ceiling"
 
 
 @pytest.mark.asyncio

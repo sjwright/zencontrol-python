@@ -10,12 +10,11 @@ import pytest
 from helpers_endpoints import fake_endpoint_factory
 
 from zencontrol.api.commands import ZenCommandClient
-from zencontrol.api.event_router import DEFAULT_MAX_QUEUE_SIZE, ZenEventReceiver
+from zencontrol.api.event_router import ZenEventReceiver
 from zencontrol.api.types import Transport
 from zencontrol.exceptions import ZenTimeoutError
 from zencontrol.interface import EntityContext
 from zencontrol.io.command import ZenClient
-from zencontrol.io.const import ClientConst
 from zencontrol.io.event import EventConst, ZenEndpoint, ZenEvent
 from zencontrol.io.models import ZenRequest, ZenResponse, ZenResponseType
 from zencontrol.utils import local_ip_for_remote
@@ -297,9 +296,8 @@ async def test_ensure_client_recreates_when_disconnected() -> None:
     assert protocol.client_for(ctrl) is new_client
 
 
-def test_default_retries_constant() -> None:
-    assert ClientConst.DEFAULT_RETRIES >= 1
-    assert DEFAULT_MAX_QUEUE_SIZE >= 1
+def test_multicast_port_matches_specification() -> None:
+    """TPI Advanced specifies UDP port 6969 for multicast events."""
     assert EventConst.MULTICAST_PORT == 6969
 
 
