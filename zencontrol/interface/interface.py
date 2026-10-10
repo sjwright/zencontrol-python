@@ -496,6 +496,10 @@ class ZenControl:
         tcp: bool = False,
         unicast: bool = False,
     ) -> ZenController:
+        # ctx.ctrl() returns the cached object for a known name, so a second add
+        # would list the same controller twice (double keepalive, double scans).
+        if any(c.name == name for c in self.controllers):
+            raise ValueError(f"Controller {name!r} is already added; remove_controller() it first")
         ctrl = self.ctx.ctrl(
             id=id,
             name=name,

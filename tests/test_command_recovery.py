@@ -233,7 +233,14 @@ async def test_close_unblocks_all_waiters_and_releases_pending_requests(wire_cli
     first, _, _ = await _send(client, sent)
     second, _, _ = await _send(client, sent)
     await client.close()
-    results = await asyncio.wait_for(asyncio.gather(first, second, return_exceptions=True), 1)
-    assert all(isinstance(result, RuntimeError) and "closed" in str(result) for result in results)
+    results = await asyncio.wait_for(asyncio.gather(first, second), 1)
+    assert [r.response_type for r in results] == [ZenResponseType.TIMEOUT] * 2
     assert client._pending == {}
     await client.close()
+
+
+async def test_send_on_closed_client_returns_timeout(wire_client):
+    client, _ = wire_client
+    await client.close()
+    response = await client.send_request(ZenRequest(command=0x24, data=[0]), timeout=1)
+    assert response.response_type is ZenResponseType.TIMEOUT

@@ -139,3 +139,11 @@ def test_clear_entity_caches_clears_context_registry() -> None:
     assert zen.ctx.registry.controllers == {}
     assert zen.ctx.registry.lights == {}
     assert zen.ctx.registry.groups == {}
+
+
+def test_add_controller_rejects_duplicate_name() -> None:
+    zen = ZenControl()
+    zen.add_controller(id=1, name="ctrl-a", label="A", host="127.0.0.1")
+    with pytest.raises(ValueError, match="already added"):
+        zen.add_controller(id=2, name="ctrl-a", label="A", host="127.0.0.1")
+    assert len(zen.controllers) == 1

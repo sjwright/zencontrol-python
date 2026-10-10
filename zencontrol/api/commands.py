@@ -33,6 +33,7 @@ Basic example:
 -----------------------------------------------------
 """
 
+import asyncio
 import logging
 import struct
 import time
@@ -190,6 +191,9 @@ class ZenCommandClient:
         self.print_traffic = print_traffic
         # Command-plane UDP clients keyed by controller name (not on the model).
         self._clients: dict[str, ZenClient | ZenTcpClient] = {}
+        # Per-controller creation lock. Client creation awaits, so without it
+        # concurrent first sends each create a client and all but one leak.
+        self._client_locks: dict[str, asyncio.Lock] = {}
         # When set, _send_packet appends wall-clock msec per TPI command name.
         self._api_timings: dict[str, list[float]] | None = None
 
@@ -273,38 +277,46 @@ class ZenCommandClient:
             except Exception:
                 pass
 
-    async def _ensure_client(self, ctrl: ControllerRef) -> None:
-        """Create or replace the command client when missing or disconnected."""
-        client = self._clients.get(ctrl.name)
-        if client is not None and client.is_connected():
-            return
-        if client is not None:
-            await self._invalidate_client(ctrl)
-        # Fresh lookup (off the event loop) so a controller whose hostname now
-        # resolves to a different address is found after a timeout.
-        ip = await resolve_host(ctrl.host)
-        ctrl.set_resolved_ip(ip)
-        # Bool until IO: pick ZenTcpClient vs ZenClient here.
-        if ctrl.tcp:
-            self._clients[ctrl.name] = await ZenTcpClient.create(
-                (ip, ctrl.port),
-                logger=self.logger,
-                print_traffic=self.print_traffic,
-            )
-        else:
-            self._clients[ctrl.name] = await ZenClient.create(
-                (ip, ctrl.port),
-                logger=self.logger,
-                print_traffic=self.print_traffic,
-            )
+    async def _ensure_client(self, ctrl: ControllerRef) -> ZenClient | ZenTcpClient:
+        """Return a connected command client, creating or replacing it if needed."""
+        async with self._client_locks.setdefault(ctrl.name, asyncio.Lock()):
+            client = self._clients.get(ctrl.name)
+            if client is not None and client.is_connected():
+                return client
+            if client is not None:
+                await self._invalidate_client(ctrl)
+            # Fresh lookup (off the event loop) so a controller whose hostname now
+            # resolves to a different address is found after a timeout.
+            ip = await resolve_host(ctrl.host)
+            ctrl.set_resolved_ip(ip)
+            # Bool until IO: pick ZenTcpClient vs ZenClient here.
+            if ctrl.tcp:
+                client = await ZenTcpClient.create(
+                    (ip, ctrl.port),
+                    logger=self.logger,
+                    print_traffic=self.print_traffic,
+                )
+            else:
+                client = await ZenClient.create(
+                    (ip, ctrl.port),
+                    logger=self.logger,
+                    print_traffic=self.print_traffic,
+                )
+            self._clients[ctrl.name] = client
+            return client
 
-    async def _invalidate_client(self, ctrl: ControllerRef) -> None:
-        """Close and drop a stale client so the next send recreates it."""
-        client = self._clients.pop(ctrl.name, None)
-        if client is None:
+    async def _invalidate_client(self, ctrl: ControllerRef, client: ZenClient | ZenTcpClient | None = None) -> None:
+        """Close and drop the controller's client so the next send recreates it.
+
+        When "client" is given, only act if it is still the current one: a late
+        timeout on an old client must not close its replacement.
+        """
+        current = self._clients.get(ctrl.name)
+        if current is None or (client is not None and current is not client):
             return
+        del self._clients[ctrl.name]
         try:
-            await client.close()
+            await current.close()
         except Exception:
             pass
 
@@ -337,19 +349,19 @@ class ZenCommandClient:
         return await self._send_packet(ctrl, request)
 
     async def _send_packet(self, ctrl: ControllerRef, request: ZenRequest) -> ZenResponse:
-        # Ensure client is properly initialized and not closed
-        await self._ensure_client(ctrl)
-        client = self._clients.get(ctrl.name)
-        assert client is not None
+        client = await self._ensure_client(ctrl)
         t0 = time.perf_counter()
         try:
             response = await client.send_request_with_retries(request)
         finally:
-            self._record_api_timing(request.command, (time.perf_counter() - t0) * 1000)
+            elapsed_ms = (time.perf_counter() - t0) * 1000  # all attempts, not just the last
+            self._record_api_timing(request.command, elapsed_ms)
         if response.response_type == ZenResponseType.TIMEOUT:
-            await self._invalidate_client(ctrl)  # next send re-resolves the host
-            wait_time_ms = (time.time() - request.timestamp) * 1000
-            raise ZenTimeoutError(f"No response from {ctrl.host}:{ctrl.port} after {wait_time_ms:.0f}ms")
+            # Closing makes the next send re-resolve the host. Other requests still
+            # in flight on this client resolve as TIMEOUT too, so they also raise
+            # ZenTimeoutError below rather than some other exception.
+            await self._invalidate_client(ctrl, client)
+            raise ZenTimeoutError(f"No response from {ctrl.host}:{ctrl.port} after {elapsed_ms:.0f}ms")
         return response
 
     def _log_soft_failure(self, response: ZenResponse) -> None:

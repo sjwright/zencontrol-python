@@ -411,3 +411,44 @@ def test_mac_requires_six_bytes() -> None:
         mac="aa:bb:cc:dd:ee:ff",
     )
     assert ctrl.mac_bytes == bytes.fromhex("aabbccddeeff")
+
+
+@pytest.mark.asyncio
+async def test_concurrent_first_sends_create_one_client() -> None:
+    protocol = ZenCommandClient()
+    ctrl = EntityContext(commands=protocol).ctrl(id=1, name="ctrl", label="Ctrl", host="127.0.0.1", port=5108)
+    client = MagicMock()
+    client.is_connected.return_value = True
+
+    async def slow_create(*args: object, **kwargs: object) -> MagicMock:
+        await asyncio.sleep(0.01)  # let every caller reach the creation path
+        return client
+
+    with patch("zencontrol.api.commands.ZenClient.create", new=AsyncMock(side_effect=slow_create)) as create:
+        results = await asyncio.gather(*(protocol._ensure_client(ctrl) for _ in range(5)))
+
+    create.assert_awaited_once()
+    assert all(result is client for result in results)
+
+
+@pytest.mark.asyncio
+async def test_timeout_fails_concurrent_requests_with_zen_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """One request's timeout closes the client; in-flight siblings must still raise ZenTimeoutError."""
+    from zencontrol.io.const import ClientConst
+
+    monkeypatch.setattr(ClientConst, "DEFAULT_TIMEOUT", 0.05)
+    loop = asyncio.get_running_loop()
+    silent, _ = await loop.create_datagram_endpoint(asyncio.DatagramProtocol, local_addr=("127.0.0.1", 0))
+    port = silent.get_extra_info("sockname")[1]
+    protocol = ZenCommandClient()
+    ctrl = EntityContext(commands=protocol).ctrl(id=1, name="ctrl", label="Ctrl", host="127.0.0.1", port=port)
+    try:
+        first = asyncio.create_task(protocol.query_controller_label(ctrl))
+        await asyncio.sleep(0.03)  # second is mid-flight when first times out
+        second = asyncio.create_task(protocol.query_controller_label(ctrl))
+        results = await asyncio.gather(first, second, return_exceptions=True)
+    finally:
+        await protocol.aclose()
+        silent.close()
+
+    assert [type(r) for r in results] == [ZenTimeoutError, ZenTimeoutError]

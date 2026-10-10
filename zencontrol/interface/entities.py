@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from collections.abc import Coroutine
 from typing import Any, cast
 
 from ..api import (
@@ -22,7 +21,7 @@ from ..api import (
 from ..api import ZenController as SuperZenController
 from ..api.commands import ZenCommandClient
 from ..api.const import Const as ApiConst
-from ..api.types import ZenCgType
+from ..api.types import OccupancyInstanceTimers, ZenCgType
 from .const import Const
 from .context import EntityContext
 
@@ -1026,19 +1025,28 @@ class ZenAbsoluteInput(ZenControlDeviceInstance):
 
 
 class ZenMotionSensor(ZenControlDeviceInstance):
+    """DALI occupancy-sensor instance.
+
+    TPI only reports motion (IS_OCCUPIED); "vacant" is inferred here when
+    hold_time passes with no further event. State is one bool plus one expiry
+    timer, and every transition goes through _set_occupied, which cancels the
+    previous timer - so a stale timer can never clear a newer hold.
+
+    last_detect is a wall-clock timestamp (time.time()) of the last motion.
+    """
+
     hold_time: int = Const.DEFAULT_HOLD_TIME
     hold_expiry_task: asyncio.Task[None] | None = None
     deadtime: int | None = None
     last_detect: float | None = None
-    _occupied: bool | None = None
+    _occupied: bool = False
 
     def _reset(self) -> None:
         super()._reset()
+        self._set_occupied(False)
         self.hold_time = Const.DEFAULT_HOLD_TIME
-        self.hold_expiry_task = None
         self.deadtime = None
         self.last_detect = None
-        self._occupied = None
 
     def interview_serialize(self) -> str:
         data = self._interview_serialize_parent()
@@ -1052,7 +1060,6 @@ class ZenMotionSensor(ZenControlDeviceInstance):
             self._interview_hydrate_parent(loaded)
             self.deadtime = loaded.get("deadtime")
             self.hold_time = loaded.get("hold_time", Const.DEFAULT_HOLD_TIME)
-            self._occupied = None
             return True
         except Exception:  # pylint: disable=broad-exception-caught
             return False
@@ -1063,86 +1070,58 @@ class ZenMotionSensor(ZenControlDeviceInstance):
             self._reset()
             return False
         await self._interview_parent()
-        self.deadtime = occupancy_timers.deadtime
-        self.hold_time = occupancy_timers.hold
-        self.last_detect = time.time() - occupancy_timers.last_detect
-        self._occupied = None
+        self._apply_timers(occupancy_timers)
         return True
 
     async def refresh_state_from_controller(self) -> bool:
-        """Query controller and update runtime occupancy fields."""
+        """Re-read timers from the controller; fire motion_event if occupancy changed."""
         occupancy_timers = await self.commands.query_occupancy_instance_timers(self.instance)
         if occupancy_timers is None:
-            self.last_detect = None
-            self._occupied = None
-            self.hold_expiry_task = None
-            self.deadtime = None
-            self.hold_time = Const.DEFAULT_HOLD_TIME
+            # A failed query says nothing about occupancy: keep state and timer.
             return False
-
-        # last_detect is stored as "time when last motion happened"
-        # converted into a duration since last motion (same as interview()).
-        self.deadtime = occupancy_timers.deadtime
-        self.hold_time = occupancy_timers.hold
-        self.last_detect = time.time() - occupancy_timers.last_detect
-        self._occupied = None
+        if self._apply_timers(occupancy_timers):
+            await self._notify()
         return True
 
     @property
     def occupied(self) -> bool:
-        if self.last_detect is None:
-            return False
-        seconds_since_last_motion = time.time() - self.last_detect
-        within_hold_time = seconds_since_last_motion < self.hold_time
-        # if occupied but a hold task isn't running, start one with the time remaining
-        if within_hold_time and self.hold_expiry_task is None:
-            seconds_until_hold_time_expires = self.hold_time - seconds_since_last_motion
-            self.hold_expiry_task = self.ctx.track_task(self._timeout_after_delay(seconds_until_hold_time_expires))
-        return within_hold_time
+        return self._occupied
 
-    @occupied.setter
-    def occupied(self, new_value: bool) -> None:
-        old_value = self._occupied or False
-        # Cancel any hold time task
+    def _apply_timers(self, timers: OccupancyInstanceTimers) -> bool:
+        """Adopt controller timers; return True if occupancy changed."""
+        self.deadtime = timers.deadtime
+        self.hold_time = timers.hold
+        # Wire last_detect is seconds since the last motion, not a timestamp.
+        self.last_detect = time.time() - timers.last_detect
+        remaining = timers.hold - timers.last_detect
+        return self._set_occupied(remaining > 0, hold_for=remaining)
+
+    def _set_occupied(self, occupied: bool, *, hold_for: float = 0.0) -> bool:
+        """Set occupancy, replacing the expiry timer. Return True if it changed."""
         if self.hold_expiry_task is not None:
             self.hold_expiry_task.cancel()
             self.hold_expiry_task = None
-        # Start a new task
-        if new_value:
-            # Update last detect time, begin a task, and set occupied to True.
-            # The occupied=True callback is fired by _handle_event (which is
-            # async and can await it properly).
-            self.last_detect = time.time()
-            self.hold_expiry_task = self.ctx.track_task(self._timeout_after_delay(self.hold_time))
-            self._occupied = True
-        else:
-            self._occupied = False
-            self.last_detect = None
-            # If we're going from True to False, trigger motion event callback.
-            # This branch is only reached when occupied is set to False directly
-            # (not via _timeout_after_delay which handles the callback itself).
-            if old_value is True:
-                cb = self.ctx.callbacks.motion_event
-                if callable(cb):
-                    self.ctx.track_task(cast(Coroutine[Any, Any, None], cb(sensor=self)))
+        if occupied:
+            self.hold_expiry_task = self.ctx.track_task(self._expire_hold(hold_for))
+        changed = occupied != self._occupied
+        self._occupied = occupied
+        return changed
 
-    async def _timeout_after_delay(self, delay: float) -> None:
-        """Async method to handle motion sensor timeout"""
+    async def _expire_hold(self, delay: float) -> None:
         await asyncio.sleep(delay)
-        self._occupied = False
-        self.last_detect = None
+        # Drop our own reference first: _set_occupied would cancel this task.
         self.hold_expiry_task = None
-        # Trigger motion event callback
+        self._occupied = False
+        await self._notify()
+
+    async def _notify(self) -> None:
         if callable(self.ctx.callbacks.motion_event):
             await self.ctx.callbacks.motion_event(sensor=self)
 
     async def _handle_event(self) -> None:
-        # Capture old state before the setter updates it so we can fire the
-        # callback with await instead of asyncio.create_task (fire-and-forget).
-        was_occupied = self._occupied or False
-        self.occupied = True
-        if not was_occupied and callable(self.ctx.callbacks.motion_event):
-            await self.ctx.callbacks.motion_event(sensor=self)
+        self.last_detect = time.time()
+        if self._set_occupied(True, hold_for=self.hold_time):
+            await self._notify()
 
 
 class ZenSystemVariable:

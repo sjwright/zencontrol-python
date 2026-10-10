@@ -104,7 +104,11 @@ class ZenTcpClient:
             self._mark_disconnected(exc)
 
     def _mark_disconnected(self, exc: Exception | None = None) -> None:
-        """Mark the client dead after transport loss (must not await or take _lock)."""
+        """Mark the client dead after transport loss or close (must not await or take _lock).
+
+        Pending requests resolve as TIMEOUT, never as an exception (same contract
+        as ZenClient).
+        """
         if self._closed:
             return
         self._closed = True
@@ -136,11 +140,6 @@ class ZenTcpClient:
         retries: int = 0,
     ) -> ZenResponse:
         # TCP is reliable — default retries=0 (no retransmit / duplicate commands).
-        if self._closed:
-            raise RuntimeError("Client is closed")
-        if self._writer is None:
-            raise RuntimeError("Transport is none?!")
-
         if timeout is None:
             timeout = ClientConst.DEFAULT_TIMEOUT
         timeout = max(ClientConst.MIN_TIMEOUT, min(timeout, ClientConst.MAX_TIMEOUT))
@@ -150,7 +149,8 @@ class ZenTcpClient:
         loop = asyncio.get_running_loop()
         fut: asyncio.Future[ZenResponse]
 
-        # Hold the lock only for seq allocation + pending registration (not RTT)
+        # Hold the lock only for seq allocation + pending registration (not RTT).
+        # A closed client answers TIMEOUT rather than raising (see _mark_disconnected).
         async with self._lock:
             if self._is_disconnected():
                 return ZenResponse(ZenResponseType.TIMEOUT, request=req)
@@ -165,13 +165,13 @@ class ZenTcpClient:
 
         try:
             for i in range(retries + 1):
-                if self._is_disconnected():
+                writer = self._writer
+                if self._closed or writer is None:
                     return ZenResponse(ZenResponseType.TIMEOUT, request=req)
                 try:
                     req.timestamp = time.time()
-                    assert self._writer is not None
-                    self._writer.write(wire)
-                    await self._writer.drain()
+                    writer.write(wire)
+                    await writer.drain()
                 except Exception as e:
                     self.logger.debug(f"Send failed (attempt {i + 1}): {e}")
                     self._mark_disconnected(e)
@@ -353,28 +353,15 @@ class ZenTcpClient:
         )
 
     async def close(self) -> None:
-        """Close the client"""
-        async with self._lock:
-            if self._closed and self._writer is None:
-                return
-            self._closed = True
-            for future, _request in self._pending.values():
-                if not future.done():
-                    future.set_exception(RuntimeError("ZenTcpClient closed"))
-            self._pending.clear()
-            writer = self._writer
-            self._writer = None
-            self._reader = None
-            reader_task = self._reader_task
-            self._reader_task = None
-        if reader_task is not None and not reader_task.done():
-            reader_task.cancel()
+        """Close the client. Idempotent; pending requests resolve as TIMEOUT."""
+        reader_task, writer = self._reader_task, self._writer
+        self._mark_disconnected()  # cancels the reader and closes the writer
+        if reader_task is not None:
             try:
                 await reader_task
             except asyncio.CancelledError:
                 pass
         if writer is not None:
-            writer.close()
             try:
                 await writer.wait_closed()
             except Exception:

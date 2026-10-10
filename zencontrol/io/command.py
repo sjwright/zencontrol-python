@@ -127,7 +127,12 @@ class ZenClient:
         return self
 
     def _mark_disconnected(self, exc: Exception | None = None) -> None:
-        """Mark the client dead after transport loss (must not await or take _lock)."""
+        """Mark the client dead after transport loss or close (must not await or take _lock).
+
+        Pending requests resolve as TIMEOUT, never as an exception: callers above
+        (ZenCommandClient) turn TIMEOUT into ZenTimeoutError, so a close triggered
+        by one request's timeout fails its concurrent siblings the same way.
+        """
         if self._closed:
             return
         self._closed = True
@@ -153,11 +158,6 @@ class ZenClient:
         timeout: float | None = None,
         retries: int = ClientConst.DEFAULT_RETRIES,
     ) -> ZenResponse:
-        if self._closed:
-            raise RuntimeError("Client is closed")
-        if self._transport is None:
-            raise RuntimeError("Transport is none?!")
-
         if timeout is None:
             timeout = ClientConst.DEFAULT_TIMEOUT
         timeout = max(ClientConst.MIN_TIMEOUT, min(timeout, ClientConst.MAX_TIMEOUT))
@@ -167,7 +167,8 @@ class ZenClient:
         loop = asyncio.get_running_loop()
         fut: asyncio.Future[ZenResponse]
 
-        # Hold the lock only for seq allocation + pending registration (not RTT)
+        # Hold the lock only for seq allocation + pending registration (not RTT).
+        # A closed client answers TIMEOUT rather than raising (see _mark_disconnected).
         async with self._lock:
             if self._is_disconnected():
                 return ZenResponse(ZenResponseType.TIMEOUT, request=req)
@@ -182,11 +183,12 @@ class ZenClient:
 
         try:
             for i in range(retries + 1):
-                if self._is_disconnected():
+                transport = self._transport
+                if self._closed or transport is None:
                     return ZenResponse(ZenResponseType.TIMEOUT, request=req)
                 try:
                     req.timestamp = time.time()
-                    self._transport.sendto(wire)
+                    transport.sendto(wire)
                 except Exception as e:
                     self.logger.debug(f"Send failed (attempt {i + 1}): {e}")
                 # asyncio.wait does not cancel fut on timeout (unlike wait_for)
@@ -349,16 +351,5 @@ class ZenClient:
         return not self._closed and self._transport is not None and not self._transport.is_closing()
 
     async def close(self) -> None:
-        """Close the client"""
-        async with self._lock:
-            if self._closed and self._transport is None:
-                return
-            self._closed = True
-            for future, _request in self._pending.values():
-                if not future.done():
-                    future.set_exception(RuntimeError("ZenClient closed"))
-            self._pending.clear()
-            transport = self._transport
-            self._transport = None
-        if transport is not None and not transport.is_closing():
-            transport.close()
+        """Close the client. Idempotent; pending requests resolve as TIMEOUT."""
+        self._mark_disconnected()
